@@ -1,0 +1,5 @@
+node_modules/
+dist/
+*.tgz
+.harness/metrics.jsonl
+.DS_Store
