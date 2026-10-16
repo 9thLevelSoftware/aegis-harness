@@ -1,0 +1,10 @@
+{
+  "name": "a smiley in echo is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo ':)'"
+    }
+  },
+  "near": "shell.fork-bomb"
+}

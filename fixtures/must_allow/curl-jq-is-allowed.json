@@ -1,0 +1,10 @@
+{
+  "name": "curl | jq is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -s https://api.example.com/items | jq '.[0]'"
+    }
+  },
+  "near": "shell.pipe-to-shell"
+}

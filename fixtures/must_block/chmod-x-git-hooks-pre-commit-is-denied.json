@@ -1,0 +1,10 @@
+{
+  "name": "chmod -x .git/hooks/pre-commit is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "chmod -x .git/hooks/pre-commit"
+    }
+  },
+  "rule": "shell.hook-tamper"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "Write of a file inside the project is allowed",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/home/dev/project/docs/ssh-notes.md",
+      "content": "# SSH\n"
+    }
+  },
+  "near": "edit.home-config"
+}

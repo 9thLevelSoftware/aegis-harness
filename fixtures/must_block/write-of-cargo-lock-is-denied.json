@@ -1,0 +1,11 @@
+{
+  "name": "Write of Cargo.lock is denied",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "Cargo.lock",
+      "content": "# generated\n"
+    }
+  },
+  "rule": "edit.lockfile"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "Read of .env (project, local) is allowed",
+  "payload": {
+    "tool_name": "Read",
+    "tool_input": {
+      "file_path": ".env"
+    }
+  },
+  "near": "tool.read-private-key"
+}

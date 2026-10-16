@@ -1,0 +1,10 @@
+{
+  "name": "rm .git/index is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm .git/index"
+    }
+  },
+  "rule": "shell.rm-git-dir"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "rm -rf \"$BUILD_DIR\"/out asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf \"$BUILD_DIR\"/out"
+    }
+  },
+  "rule": "shell.rm-unresolved-variable"
+}

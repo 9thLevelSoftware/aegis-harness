@@ -1,0 +1,10 @@
+{
+  "name": "git clean -f is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git clean -f"
+    }
+  },
+  "rule": "shell.git-clean"
+}

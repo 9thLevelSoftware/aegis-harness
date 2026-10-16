@@ -1,0 +1,10 @@
+{
+  "name": "git clean -fdx is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git clean -fdx"
+    }
+  },
+  "rule": "shell.git-clean"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "psql DROP DATABASE asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "psql -c \"DROP DATABASE app_dev\""
+    }
+  },
+  "rule": "shell.database-destroy"
+}

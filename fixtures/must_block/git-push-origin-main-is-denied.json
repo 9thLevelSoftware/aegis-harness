@@ -1,0 +1,10 @@
+{
+  "name": "git push origin +main is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push origin +main"
+    }
+  },
+  "rule": "shell.git-force-push"
+}

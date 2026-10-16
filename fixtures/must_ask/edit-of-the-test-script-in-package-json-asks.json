@@ -1,0 +1,13 @@
+{
+  "name": "Edit of the test script in package.json asks",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "package.json",
+      "old_string": "\"test\": \"vitest run\"",
+      "new_string": "\"test\": \"vitest run --reporter dot\"",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.manifest-gate-script"
+}

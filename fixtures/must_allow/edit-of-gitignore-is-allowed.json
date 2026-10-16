@@ -1,0 +1,13 @@
+{
+  "name": "Edit of .gitignore is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": ".gitignore",
+      "old_string": "dist/",
+      "new_string": "dist/\ncoverage/",
+      "replace_all": false
+    }
+  },
+  "near": "edit.git-internals"
+}

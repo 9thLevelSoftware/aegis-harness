@@ -1,0 +1,10 @@
+{
+  "name": "cat ~/.ssh/id_rsa is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.ssh/id_rsa"
+    }
+  },
+  "rule": "shell.credential-read"
+}

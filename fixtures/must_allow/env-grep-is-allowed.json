@@ -1,0 +1,10 @@
+{
+  "name": "env | grep is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "env | grep -i proxy"
+    }
+  },
+  "near": "shell.credential-exfil"
+}

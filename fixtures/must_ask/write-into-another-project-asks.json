@@ -1,0 +1,11 @@
+{
+  "name": "Write into another project asks",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/home/dev/other-project/notes.md",
+      "content": "# notes\n"
+    }
+  },
+  "rule": "edit.outside-project"
+}

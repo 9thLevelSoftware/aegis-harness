@@ -1,0 +1,10 @@
+{
+  "name": "dd into a regular file is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "dd if=/dev/urandom of=random.bin bs=1k count=4"
+    }
+  },
+  "near": "shell.disk-destroy"
+}

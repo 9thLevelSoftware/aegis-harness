@@ -1,0 +1,13 @@
+{
+  "name": "Edit putting a real-looking token into a fixture asks",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "tests/fixtures/token.json",
+      "old_string": "\"token\": \"\"",
+      "new_string": "\"token\": \"ghp_K9v2nR7qT4wZ8xL1mB6cJ3pF5hD0sYaGuEoIqw\"",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.secret-literal-suspect"
+}

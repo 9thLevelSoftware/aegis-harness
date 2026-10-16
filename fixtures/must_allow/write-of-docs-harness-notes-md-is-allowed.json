@@ -1,0 +1,11 @@
+{
+  "name": "Write of docs/harness-notes.md is allowed",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "docs/harness-notes.md",
+      "content": "# Notes\n"
+    }
+  },
+  "near": "edit.harness-dir"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "Edit appending || true to a CI run step is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": ".github/workflows/ci.yml",
+      "old_string": "      - run: npm run lint",
+      "new_string": "      - run: npm run lint || true",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.ci-gate-weakened"
+}

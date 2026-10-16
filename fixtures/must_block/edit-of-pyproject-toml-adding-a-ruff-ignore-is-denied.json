@@ -1,0 +1,13 @@
+{
+  "name": "Edit of pyproject.toml adding a ruff ignore is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "pyproject.toml",
+      "old_string": "[tool.ruff]\nline-length = 100",
+      "new_string": "[tool.ruff]\nline-length = 100\nignore = [\"F401\"]",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.manifest-lint-section"
+}

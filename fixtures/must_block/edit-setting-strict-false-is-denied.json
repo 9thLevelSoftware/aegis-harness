@@ -1,0 +1,13 @@
+{
+  "name": "Edit setting strict false is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "tsconfig.json",
+      "old_string": "\"strict\": true",
+      "new_string": "\"strict\": false",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.compiler-strictness"
+}

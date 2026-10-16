@@ -1,0 +1,13 @@
+{
+  "name": "Edit adding fit( is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "spec/sync.spec.js",
+      "old_string": "it('syncs', () => {",
+      "new_string": "fit('syncs', () => {",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.test-only"
+}

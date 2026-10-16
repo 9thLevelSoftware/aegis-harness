@@ -1,0 +1,10 @@
+{
+  "name": "rm -rf node_modules && npm ci is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf node_modules && npm ci"
+    }
+  },
+  "near": "shell.rm-recursive-cwd"
+}

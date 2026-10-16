@@ -1,0 +1,10 @@
+{
+  "name": "git reflog expire --expire=now is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git reflog expire --expire=now --all && git gc --prune=now"
+    }
+  },
+  "rule": "shell.git-rewrite-history"
+}

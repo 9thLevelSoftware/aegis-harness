@@ -1,0 +1,10 @@
+{
+  "name": "rm -rf .git is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf .git"
+    }
+  },
+  "rule": "shell.rm-git-dir"
+}

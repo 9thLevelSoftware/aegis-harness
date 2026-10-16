@@ -1,0 +1,41 @@
+incident_id: BUG-2026-001
+date_recorded: 2026-10-16
+status: open
+title: Restart instead of extract
+observed_on: process (the maintainer, across seven attempts)
+source:
+  - kind: statement
+    who: Devil (maintainer)
+    date: 2026-10-16
+    note: >-
+      "Nothing really wrong with them, I just think I went off the rails too many times so wanted to
+      start fresh with newer tech and approaches for the most modern LLMs."
+  - kind: repo
+    repo: 9thLevelSoftware/legion-cli
+    ref: 581f1f5
+    note: last commit 2026-10-07; superseded by legion-flow within a week
+  - kind: repo
+    repo: 9thLevelSoftware/legion-flow
+    ref: ad5cb42
+    path: README.md:46
+    note: calls itself "the third sibling of legion-cli and legion-ascended"; last commit 2026-10-12
+  - kind: repo
+    repo: 9thLevelSoftware/ouroboros
+    ref: e655fd0
+    note: started 2026-10-13, parked 2026-10-16
+root_cause: >-
+  Each attempt grew faster than it could be verified (20k to 65k lines in weeks), scope widened
+  until the maintainer lost confidence in the whole, and the response was a fresh repository that
+  re-derived the same primitives rather than extracting the working parts.
+impact: >-
+  Seven harnesses, none in daily use. Codex and Claude Code launch flags were re-derived five times.
+  Nothing from any attempt protects a real session today.
+countermeasure:
+  kind: process
+  ref: CONTRIBUTING.md#grow-by-incident
+  change: >-
+    ah grows only when a record in this directory asks for it. v0 is one guard, two agents, one
+    fixture corpus. Anything not in daily use within two weeks of landing is removed, not rewritten.
+must_block_fixture: ""
+must_allow_fixture: ""
+expiry_policy: "retire when ah has been in daily use for 90 days without a restart"

@@ -1,0 +1,10 @@
+{
+  "name": "npm install (regenerates the lockfile) is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "npm install"
+    }
+  },
+  "near": "shell.write-lockfile"
+}

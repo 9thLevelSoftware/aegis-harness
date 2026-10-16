@@ -1,0 +1,10 @@
+{
+  "name": "echo > package-lock.json is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo '{}' > package-lock.json"
+    }
+  },
+  "rule": "shell.write-lockfile"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "Edit adding noqa with a code is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "src/app.py",
+      "old_string": "x = compute()",
+      "new_string": "x = compute()  # noqa: E501",
+      "replace_all": false
+    }
+  },
+  "near": "edit.lint-suppression-untargeted"
+}

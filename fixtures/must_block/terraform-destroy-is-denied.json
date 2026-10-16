@@ -1,0 +1,10 @@
+{
+  "name": "terraform destroy is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "terraform destroy -auto-approve"
+    }
+  },
+  "rule": "shell.remote-destroy"
+}

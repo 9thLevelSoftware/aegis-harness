@@ -1,0 +1,10 @@
+{
+  "name": "prisma migrate reset asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "npx prisma migrate reset --force"
+    }
+  },
+  "rule": "shell.database-destroy"
+}

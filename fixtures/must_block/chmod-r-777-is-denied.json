@@ -1,0 +1,10 @@
+{
+  "name": "chmod -R 777 / is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "chmod -R 777 /"
+    }
+  },
+  "rule": "shell.permissions-sweep"
+}

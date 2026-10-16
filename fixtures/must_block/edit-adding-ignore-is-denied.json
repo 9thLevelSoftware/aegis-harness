@@ -1,0 +1,14 @@
+{
+  "name": "Edit adding #[ignore] is denied",
+  "cwd": "/home/dev/project",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "src/lib_test.rs",
+      "old_string": "#[test]\nfn roundtrip() {",
+      "new_string": "#[test]\n#[ignore]\nfn roundtrip() {",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.test-skip"
+}

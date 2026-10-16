@@ -1,0 +1,10 @@
+{
+  "name": "cat ~/.aws/config is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.aws/config"
+    }
+  },
+  "near": "shell.credential-read"
+}

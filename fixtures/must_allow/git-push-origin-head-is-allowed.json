@@ -1,0 +1,10 @@
+{
+  "name": "git push origin HEAD is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push origin HEAD"
+    }
+  },
+  "near": "shell.git-force-push"
+}

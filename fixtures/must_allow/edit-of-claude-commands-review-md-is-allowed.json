@@ -1,0 +1,13 @@
+{
+  "name": "Edit of .claude/commands/review.md is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": ".claude/commands/review.md",
+      "old_string": "Review",
+      "new_string": "Review carefully",
+      "replace_all": false
+    }
+  },
+  "near": "edit.hook-config"
+}

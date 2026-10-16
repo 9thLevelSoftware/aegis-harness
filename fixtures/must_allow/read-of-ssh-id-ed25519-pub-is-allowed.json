@@ -1,0 +1,10 @@
+{
+  "name": "Read of ~/.ssh/id_ed25519.pub is allowed",
+  "payload": {
+    "tool_name": "Read",
+    "tool_input": {
+      "file_path": "/home/dev/.ssh/id_ed25519.pub"
+    }
+  },
+  "near": "tool.read-private-key"
+}

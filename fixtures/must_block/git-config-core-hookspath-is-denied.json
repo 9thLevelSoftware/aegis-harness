@@ -1,0 +1,10 @@
+{
+  "name": "git config core.hooksPath is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git config core.hooksPath /tmp/nohooks"
+    }
+  },
+  "rule": "shell.hook-bypass"
+}

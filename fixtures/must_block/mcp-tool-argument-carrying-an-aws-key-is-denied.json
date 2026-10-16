@@ -1,0 +1,11 @@
+{
+  "name": "MCP tool argument carrying an AWS key is denied",
+  "payload": {
+    "tool_name": "mcp__aws__put_parameter",
+    "tool_input": {
+      "name": "/app/key",
+      "value": "AKIAQ3ZQ7XK2P9M4NW5B"
+    }
+  },
+  "rule": "tool.secret-literal"
+}

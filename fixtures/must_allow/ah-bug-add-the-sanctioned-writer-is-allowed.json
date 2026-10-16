@@ -1,0 +1,10 @@
+{
+  "name": "ah bug add (the sanctioned writer) is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ah bug add --rule edit.lint-config --title \"biome rule blocks a legitimate pattern\""
+    }
+  },
+  "near": "shell.write-harness"
+}

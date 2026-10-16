@@ -1,0 +1,10 @@
+{
+  "name": "git filter-branch is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git filter-branch --index-filter 'git rm --cached --ignore-unmatch secrets.json' HEAD"
+    }
+  },
+  "rule": "shell.git-rewrite-history"
+}

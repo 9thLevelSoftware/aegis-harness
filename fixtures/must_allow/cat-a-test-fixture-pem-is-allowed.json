@@ -1,0 +1,10 @@
+{
+  "name": "cat a test fixture .pem is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat tests/fixtures/dev-cert.pem"
+    }
+  },
+  "near": "shell.credential-read"
+}

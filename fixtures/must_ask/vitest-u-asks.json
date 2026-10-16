@@ -1,0 +1,10 @@
+{
+  "name": "vitest -u asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "npx vitest run -u"
+    }
+  },
+  "rule": "shell.write-baseline"
+}

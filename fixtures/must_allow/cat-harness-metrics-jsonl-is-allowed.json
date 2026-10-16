@@ -1,0 +1,10 @@
+{
+  "name": "cat .harness/metrics.jsonl is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat .harness/metrics.jsonl"
+    }
+  },
+  "near": "shell.write-harness"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "find . -name '*.pyc' -delete is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . -name '*.pyc' -delete"
+    }
+  },
+  "near": "shell.rm-recursive-cwd"
+}

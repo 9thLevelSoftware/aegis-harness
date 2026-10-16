@@ -1,0 +1,10 @@
+{
+  "name": "chmod +x scripts/run.sh is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "chmod +x scripts/run.sh"
+    }
+  },
+  "near": "shell.permissions-world-writable"
+}

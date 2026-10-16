@@ -1,0 +1,10 @@
+{
+  "name": "base64 -d | sh is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo cm0gLXJmIH4K | base64 -d | sh"
+    }
+  },
+  "rule": "shell.pipe-to-shell"
+}

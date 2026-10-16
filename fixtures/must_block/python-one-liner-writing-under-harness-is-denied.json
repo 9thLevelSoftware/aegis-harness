@@ -1,0 +1,10 @@
+{
+  "name": "python one-liner writing under .harness is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 -c \"open('.harness/state.json','w').write('{}')\""
+    }
+  },
+  "rule": "shell.write-harness"
+}

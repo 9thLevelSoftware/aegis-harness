@@ -1,0 +1,12 @@
+{
+  "name": "rmdir /s /q on the project root is denied (Codex, Windows)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cmd /c rmdir /s /q C:\\Users\\dev\\project"
+    }
+  },
+  "rule": "shell.rm-recursive-cwd"
+}

@@ -1,0 +1,41 @@
+incident_id: BUG-2026-010
+date_recorded: 2026-10-16
+status: open
+title: Documentation and plans outgrew the code; design authority lived off the repository
+observed_on: process (legion-flow, legion-ascended, legion, ouroboros)
+source:
+  - kind: repo
+    repo: 9thLevelSoftware/legion-flow
+    ref: ad5cb42
+    path: CLAUDE.md
+    note: 66 KB agent instruction file
+  - kind: repo
+    repo: 9thLevelSoftware/legion
+    ref: 30662e3
+    path: .planning/
+    note: 63k-line planning tree, 429 plan files
+  - kind: repo
+    repo: 9thLevelSoftware/legion-ascended
+    ref: 84fbc9a
+    path: docs/legion-next-roadmap.md:7-30
+    note: '"remain in the rebuild prompt package under" a local Documents folder'
+  - kind: repo
+    repo: 9thLevelSoftware/ouroboros
+    ref: e655fd0
+    path: docs/superpowers/plans/2026-10-13-ouroboros-implementation.md
+    note: a 500-line plan authored before the first working command
+root_cause: >-
+  Planning with an agent is cheap and feels like progress; the plans then became the agent's
+  context budget and the maintainer's source of truth, off the repository.
+impact: >-
+  Agents read tens of thousands of lines of stale instruction; humans could not find the current
+  design.
+countermeasure:
+  kind: process
+  ref: CONTRIBUTING.md#docs
+  change: >-
+    README under 300 lines, enforced by test. Design reasoning lives in this directory as records
+    and in commit messages. There is no plans/ directory.
+must_block_fixture: ""
+must_allow_fixture: ""
+expiry_policy: "permanent"

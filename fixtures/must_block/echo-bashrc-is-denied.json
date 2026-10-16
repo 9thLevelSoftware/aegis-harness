@@ -1,0 +1,10 @@
+{
+  "name": "echo >> ~/.bashrc is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo 'alias ll=\"ls -la\"' >> ~/.bashrc"
+    }
+  },
+  "rule": "shell.write-home-config"
+}

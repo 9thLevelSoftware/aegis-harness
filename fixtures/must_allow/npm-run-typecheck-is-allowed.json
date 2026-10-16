@@ -1,0 +1,10 @@
+{
+  "name": "npm run typecheck is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "npm run typecheck"
+    }
+  },
+  "near": "shell.write-baseline"
+}

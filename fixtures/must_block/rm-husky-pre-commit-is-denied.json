@@ -1,0 +1,10 @@
+{
+  "name": "rm .husky/pre-commit is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm .husky/pre-commit"
+    }
+  },
+  "rule": "shell.hook-tamper"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "Write of certs/README.md is allowed",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "certs/README.md",
+      "content": "# Dev certificates\n"
+    }
+  },
+  "near": "edit.key-material"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "git clean --dry-run -d is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git clean --dry-run -d"
+    }
+  },
+  "near": "shell.git-clean"
+}

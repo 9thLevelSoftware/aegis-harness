@@ -1,0 +1,13 @@
+{
+  "name": "Edit adding describe.only is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "tests/sync.test.ts",
+      "old_string": "describe('sync', () => {",
+      "new_string": "describe.only('sync', () => {",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.test-only"
+}

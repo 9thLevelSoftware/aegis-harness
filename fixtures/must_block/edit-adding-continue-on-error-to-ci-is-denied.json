@@ -1,0 +1,13 @@
+{
+  "name": "Edit adding continue-on-error to CI is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": ".github/workflows/ci.yml",
+      "old_string": "      - run: npm test",
+      "new_string": "      - run: npm test\n        continue-on-error: true",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.ci-gate-weakened"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "git push --delete of a feature branch asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push origin --delete feature/old"
+    }
+  },
+  "rule": "shell.git-branch-delete"
+}

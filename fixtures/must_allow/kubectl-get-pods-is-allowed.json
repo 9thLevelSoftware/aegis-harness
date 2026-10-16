@@ -1,0 +1,10 @@
+{
+  "name": "kubectl get pods is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "kubectl get pods -n production"
+    }
+  },
+  "near": "shell.remote-destroy"
+}

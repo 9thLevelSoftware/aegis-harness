@@ -1,0 +1,13 @@
+{
+  "name": "Edit of a test that already had .skip is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "tests/sync.test.ts",
+      "old_string": "it.skip('old', () => {\n  expect(1).toBe(1);",
+      "new_string": "it.skip('old', () => {\n  expect(2).toBe(2);",
+      "replace_all": false
+    }
+  },
+  "near": "edit.test-skip"
+}

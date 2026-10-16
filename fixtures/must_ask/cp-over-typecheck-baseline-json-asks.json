@@ -1,0 +1,10 @@
+{
+  "name": "cp over typecheck-baseline.json asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp /tmp/baseline.json typecheck-baseline.json"
+    }
+  },
+  "rule": "shell.write-baseline"
+}

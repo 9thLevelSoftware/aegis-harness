@@ -1,0 +1,20 @@
+{
+  "name": "MultiEdit with one bad edit is denied",
+  "payload": {
+    "tool_name": "MultiEdit",
+    "tool_input": {
+      "file_path": "tests/sync.test.ts",
+      "edits": [
+        {
+          "old_string": "const a = 1;",
+          "new_string": "const a = 2;"
+        },
+        {
+          "old_string": "it('x', () => {",
+          "new_string": "it.skip('x', () => {"
+        }
+      ]
+    }
+  },
+  "rule": "edit.test-skip"
+}

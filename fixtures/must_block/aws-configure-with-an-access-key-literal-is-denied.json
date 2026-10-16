@@ -1,0 +1,10 @@
+{
+  "name": "aws configure with an access key literal is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "aws configure set aws_access_key_id AKIAQ3ZQ7XK2P9M4NW5B"
+    }
+  },
+  "rule": "shell.secret-literal"
+}

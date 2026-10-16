@@ -1,0 +1,10 @@
+{
+  "name": "kill -9 -1 is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "kill -9 -1"
+    }
+  },
+  "rule": "shell.kill-all"
+}

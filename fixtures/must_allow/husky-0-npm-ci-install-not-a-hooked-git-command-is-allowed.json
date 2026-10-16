@@ -1,0 +1,10 @@
+{
+  "name": "HUSKY=0 npm ci (install, not a hooked git command) is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "HUSKY=0 npm ci"
+    }
+  },
+  "near": "shell.hook-bypass"
+}

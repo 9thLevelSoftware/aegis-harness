@@ -1,0 +1,13 @@
+{
+  "name": "Edit of a workflow bumping Node asks",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": ".github/workflows/ci.yml",
+      "old_string": "node-version: 20",
+      "new_string": "node-version: 22",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.ci-config"
+}

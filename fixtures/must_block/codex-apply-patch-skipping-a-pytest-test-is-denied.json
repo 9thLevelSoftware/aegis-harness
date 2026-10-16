@@ -1,0 +1,11 @@
+{
+  "name": "Codex apply_patch skipping a pytest test is denied",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "apply_patch",
+    "tool_input": {
+      "command": "*** Begin Patch\n*** Update File: tests/test_sync.py\n@@\n+@pytest.mark.skip(reason=\"flaky\")\n def test_sync_roundtrip():\n     assert sync() == expected\n*** End Patch"
+    }
+  },
+  "rule": "edit.test-skip"
+}

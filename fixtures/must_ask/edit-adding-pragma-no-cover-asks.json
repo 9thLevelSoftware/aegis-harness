@@ -1,0 +1,13 @@
+{
+  "name": "Edit adding pragma no cover asks",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "src/app.py",
+      "old_string": "if TYPE_CHECKING:",
+      "new_string": "if TYPE_CHECKING:  # pragma: no cover",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.coverage-exclusion"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "Edit adding a platform skipif is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "tests/test_sync.py",
+      "old_string": "def test_symlinks():",
+      "new_string": "@pytest.mark.skipif(sys.platform == 'win32', reason='no symlinks')\ndef test_symlinks():",
+      "replace_all": false
+    }
+  },
+  "near": "edit.test-skip"
+}

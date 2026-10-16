@@ -1,0 +1,12 @@
+{
+  "name": "Codex apply_patch fixing an unused import is allowed",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "apply_patch",
+    "tool_input": {
+      "command": "*** Begin Patch\n*** Update File: src/auth/service.py\n@@\n-import os\n import sys\n*** End Patch"
+    }
+  },
+  "near": "edit.lint-config",
+  "source": "blueprint §4 sample bug record"
+}

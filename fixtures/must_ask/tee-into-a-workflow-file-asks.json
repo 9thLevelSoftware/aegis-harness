@@ -1,0 +1,10 @@
+{
+  "name": "tee into a workflow file asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tee .github/workflows/ci.yml < /tmp/ci.yml"
+    }
+  },
+  "rule": "shell.write-ask-path"
+}

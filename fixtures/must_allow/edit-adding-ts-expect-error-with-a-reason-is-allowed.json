@@ -1,0 +1,13 @@
+{
+  "name": "Edit adding @ts-expect-error with a reason is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "src/app.ts",
+      "old_string": "const v = api.call();",
+      "new_string": "// @ts-expect-error upstream types lag the runtime\nconst v = api.call();",
+      "replace_all": false
+    }
+  },
+  "near": "edit.lint-suppression-untargeted"
+}

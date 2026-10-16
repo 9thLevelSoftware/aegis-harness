@@ -1,0 +1,10 @@
+{
+  "name": "cp over vitest.config.ts is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp /tmp/vitest.config.ts vitest.config.ts"
+    }
+  },
+  "rule": "shell.write-test-config"
+}

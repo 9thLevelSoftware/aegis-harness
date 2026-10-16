@@ -1,0 +1,10 @@
+{
+  "name": "git push --force with no branch named asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push --force"
+    }
+  },
+  "rule": "shell.git-force-push-review"
+}

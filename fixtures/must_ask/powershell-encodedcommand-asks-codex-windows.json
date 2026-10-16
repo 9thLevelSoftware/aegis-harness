@@ -1,0 +1,12 @@
+{
+  "name": "powershell -EncodedCommand asks (Codex, Windows)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "powershell -EncodedCommand UwB0AGEAcgB0AC0AUwBsAGUAZQBwACAAMQA="
+    }
+  },
+  "rule": "shell.encoded-command"
+}

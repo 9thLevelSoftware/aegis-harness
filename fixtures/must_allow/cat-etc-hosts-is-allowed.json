@@ -1,0 +1,10 @@
+{
+  "name": "cat /etc/hosts is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat /etc/hosts"
+    }
+  },
+  "near": "shell.write-system-path"
+}

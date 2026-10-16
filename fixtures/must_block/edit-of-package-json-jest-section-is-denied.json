@@ -1,0 +1,13 @@
+{
+  "name": "Edit of package.json jest section is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "package.json",
+      "old_string": "\"jest\": {\n    \"testPathIgnorePatterns\": []",
+      "new_string": "\"jest\": {\n    \"testPathIgnorePatterns\": [\"tests/integration\"]",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.manifest-lint-section"
+}

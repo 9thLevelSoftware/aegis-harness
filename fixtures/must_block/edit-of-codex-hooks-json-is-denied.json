@@ -1,0 +1,14 @@
+{
+  "name": "Edit of .codex/hooks.json is denied",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": ".codex/hooks.json",
+      "old_string": "\"PreToolUse\"",
+      "new_string": "\"PreToolUse_off\"",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.hook-config"
+}

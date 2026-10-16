@@ -1,0 +1,11 @@
+{
+  "name": "Write of a private key block into a source file is denied",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "src/keys.ts",
+      "content": "export const KEY = `-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----`;\n"
+    }
+  },
+  "rule": "edit.secret-literal"
+}

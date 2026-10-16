@@ -1,0 +1,10 @@
+{
+  "name": "cp into ~/.claude/settings.json is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp settings.json ~/.claude/settings.json"
+    }
+  },
+  "rule": "shell.write-home-config"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "rm -f *.log (non-recursive glob on files) is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -f *.log"
+    }
+  },
+  "near": "shell.rm-recursive-cwd"
+}

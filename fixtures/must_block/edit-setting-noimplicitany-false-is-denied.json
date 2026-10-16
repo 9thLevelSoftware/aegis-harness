@@ -1,0 +1,13 @@
+{
+  "name": "Edit setting noImplicitAny false is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "tsconfig.app.json",
+      "old_string": "\"noImplicitAny\": true",
+      "new_string": "\"noImplicitAny\": false",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.compiler-strictness"
+}

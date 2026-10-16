@@ -1,0 +1,10 @@
+{
+  "name": "git push --delete origin main is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push --delete origin main"
+    }
+  },
+  "rule": "shell.git-force-push"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "Edit turning the test script into echo is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "package.json",
+      "old_string": "\"test\": \"vitest run\"",
+      "new_string": "\"test\": \"echo skipping tests\"",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.manifest-gate-disabled"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "apt-get install without sudo is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "apt-get install -y jq"
+    }
+  },
+  "near": "shell.privilege-escalation"
+}

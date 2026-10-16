@@ -1,0 +1,10 @@
+{
+  "name": "git hook runs via pre-commit run --all-files is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "pre-commit run --all-files"
+    }
+  },
+  "near": "shell.hook-tamper"
+}

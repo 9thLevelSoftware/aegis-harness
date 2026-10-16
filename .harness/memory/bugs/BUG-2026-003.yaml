@@ -1,0 +1,34 @@
+incident_id: BUG-2026-003
+date_recorded: 2026-10-16
+status: mitigated
+title: Tool hooks rejected on latency grounds without measurement
+observed_on: process (clodex)
+source:
+  - kind: repo
+    repo: 9thLevelSoftware/Clodex
+    ref: acde030
+    path: clodex/clodex/hooks.py:21-23
+    note: >-
+      "Tool events (PreToolUse / PostToolUse) are left out on purpose: each hook starts a process,
+      which would slow every tool call"
+  - kind: measurement
+    date: 2026-10-16
+    note: >-
+      on a 4-core Linux container, `node -e 0` takes 37 to 92 ms warm (one cold 257 ms);
+      `python3 -I -S -c 0` takes 13 to 19 ms
+root_cause: >-
+  The objection is real but was never quantified, so it became a reason to build nothing instead of
+  a budget to build within.
+impact: >-
+  clodex shipped session and prompt hooks only; the tool-call boundary, where every destructive
+  action happens, stayed unguarded.
+countermeasure:
+  kind: test
+  ref: tests/guard-process.test.ts
+  change: >-
+    The guard is a single dependency-free bundle. CI fails when p95 per-call latency exceeds
+    150 ms on Linux or 400 ms on the Windows runner. If the budget cannot be held in Node, the
+    decision core is ported to a native binary; the fixture corpus stays the same.
+must_block_fixture: ""
+must_allow_fixture: ""
+expiry_policy: "revisit if the budget is broken on two consecutive CI runs"

@@ -1,0 +1,10 @@
+{
+  "name": "aws s3 rb --force is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "aws s3 rb s3://prod-assets --force"
+    }
+  },
+  "rule": "shell.remote-destroy"
+}

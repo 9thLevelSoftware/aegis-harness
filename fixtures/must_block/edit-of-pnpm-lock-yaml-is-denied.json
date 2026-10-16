@@ -1,0 +1,13 @@
+{
+  "name": "Edit of pnpm-lock.yaml is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "pnpm-lock.yaml",
+      "old_string": "version: 1.0.0",
+      "new_string": "version: 1.0.1",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.lockfile"
+}

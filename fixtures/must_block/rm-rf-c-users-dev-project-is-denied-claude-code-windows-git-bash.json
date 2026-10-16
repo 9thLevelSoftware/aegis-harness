@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf C:/Users/dev/project is denied (Claude Code, Windows Git Bash)",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf C:/Users/dev/project"
+    }
+  },
+  "rule": "shell.rm-recursive-cwd"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "Edit writing a GitHub token into config is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "src/config.ts",
+      "old_string": "token: process.env.GITHUB_TOKEN",
+      "new_string": "token: \"ghp_K9v2nR7qT4wZ8xL1mB6cJ3pF5hD0sYaGuEoIqw\"",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.secret-literal"
+}

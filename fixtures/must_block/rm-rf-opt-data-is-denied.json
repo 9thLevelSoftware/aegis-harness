@@ -1,0 +1,10 @@
+{
+  "name": "rm -rf /opt/data is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf /opt/data"
+    }
+  },
+  "rule": "shell.rm-outside-project"
+}

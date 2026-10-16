@@ -1,0 +1,10 @@
+{
+  "name": "sed -i on a source file is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sed -i 's/foo/bar/' src/app.ts"
+    }
+  },
+  "near": "shell.write-lint-config"
+}

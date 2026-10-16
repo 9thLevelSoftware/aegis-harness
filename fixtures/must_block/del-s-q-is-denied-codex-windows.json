@@ -1,0 +1,12 @@
+{
+  "name": "del /s /q * is denied (Codex, Windows)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cmd /c del /s /q *"
+    }
+  },
+  "rule": "shell.rm-recursive-cwd"
+}

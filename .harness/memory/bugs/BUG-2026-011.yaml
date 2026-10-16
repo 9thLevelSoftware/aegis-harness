@@ -1,0 +1,40 @@
+incident_id: BUG-2026-011
+date_recorded: 2026-10-16
+status: mitigated
+title: Credentials and the environment leave the machine through the agent
+observed_on: process (legion-flow built a proxy for it; the blueprint names it; no attempt guarded native tool calls)
+source:
+  - kind: repo
+    repo: 9thLevelSoftware/legion-flow
+    ref: ad5cb42
+    path: packages/egress/src/policy.ts, packages/egress/src/proxy.ts
+    note: per-run egress proxy that injects secret headers so "the agent only ever holds a placeholder key"
+  - kind: repo
+    repo: 9thLevelSoftware/legion-ascended
+    ref: 84fbc9a
+    path: packages/cli/src/workflow/adapters.ts:60-283
+    note: output redaction for bearer, JWT, PEM, sk- and credential-assignment patterns, applied after the fact
+  - kind: document
+    path: unified_agentic_harness_implementation_plan.pdf §3.2
+    note: secret_mcp_guard scans tool arguments for credential patterns on every tool
+root_cause: >-
+  Agents cat private keys to "check" them, pipe .env into curl to "test" an endpoint and paste
+  tokens into commands. The egress proxy caught network traffic only inside a Docker run; the
+  redactor caught output only after it existed.
+impact: >-
+  Private keys and tokens in transcripts, logs and third-party endpoints.
+countermeasure:
+  kind: rule
+  ref:
+    - shell.credential-read
+    - shell.credential-exfil
+    - shell.secret-literal
+    - edit.secret-literal
+    - tool.read-private-key
+    - tool.secret-literal
+  change: >-
+    Deny before the call: printing private keys or credential stores, piping them or the
+    environment to the network, and credential literals in any tool argument or file write.
+must_block_fixture: fixtures/must_block/cat-env-curl-is-denied.json
+must_allow_fixture: fixtures/must_allow/env-grep-is-allowed.json
+expiry_policy: "re-evaluate on the next major model upgrade"

@@ -1,0 +1,13 @@
+{
+  "name": "Edit of tsconfig.json adding a path alias asks",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "tsconfig.json",
+      "old_string": "\"paths\": {",
+      "new_string": "\"paths\": {\n      \"@guard/*\": [\"src/guard/*\"],",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.compiler-config"
+}

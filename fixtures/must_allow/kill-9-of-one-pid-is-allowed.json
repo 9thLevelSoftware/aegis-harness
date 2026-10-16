@@ -1,0 +1,10 @@
+{
+  "name": "kill -9 of one pid is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "kill -9 12345"
+    }
+  },
+  "near": "shell.kill-all"
+}

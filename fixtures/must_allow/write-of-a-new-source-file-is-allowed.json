@@ -1,0 +1,11 @@
+{
+  "name": "Write of a new source file is allowed",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "src/guard/rules/new.ts",
+      "content": "export const x = 1;\n"
+    }
+  },
+  "near": "edit.lint-config"
+}

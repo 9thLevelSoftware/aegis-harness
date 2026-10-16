@@ -1,0 +1,10 @@
+{
+  "name": "sed -i on biome.json is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sed -i 's/\"error\"/\"off\"/' biome.json"
+    }
+  },
+  "rule": "shell.write-lint-config"
+}

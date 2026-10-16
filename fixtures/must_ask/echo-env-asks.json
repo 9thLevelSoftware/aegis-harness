@@ -1,0 +1,10 @@
+{
+  "name": "echo >> .env asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo 'API_KEY=changeme' >> .env"
+    }
+  },
+  "rule": "shell.write-ask-path"
+}

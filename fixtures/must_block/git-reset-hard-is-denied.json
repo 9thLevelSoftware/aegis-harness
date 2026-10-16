@@ -1,0 +1,10 @@
+{
+  "name": "git reset --hard is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git reset --hard HEAD"
+    }
+  },
+  "rule": "shell.git-discard-changes"
+}

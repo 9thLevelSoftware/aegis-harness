@@ -1,0 +1,10 @@
+{
+  "name": "rm -rf build (inside the project) is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf build"
+    }
+  },
+  "near": "shell.rm-outside-project"
+}

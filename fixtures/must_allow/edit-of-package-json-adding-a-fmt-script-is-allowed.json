@@ -1,0 +1,13 @@
+{
+  "name": "Edit of package.json adding a fmt script is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "package.json",
+      "old_string": "\"scripts\": {",
+      "new_string": "\"scripts\": {\n    \"fmt\": \"biome format --write .\",",
+      "replace_all": false
+    }
+  },
+  "near": "edit.manifest-gate-script"
+}

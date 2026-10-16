@@ -1,0 +1,10 @@
+{
+  "name": "curl with a token from the environment is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -H \"Authorization: Bearer $GITHUB_TOKEN\" https://api.github.com/user"
+    }
+  },
+  "near": "shell.secret-literal"
+}

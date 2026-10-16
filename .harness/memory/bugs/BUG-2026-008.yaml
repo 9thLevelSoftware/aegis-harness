@@ -1,0 +1,42 @@
+incident_id: BUG-2026-008
+date_recorded: 2026-10-16
+status: mitigated
+title: Inconsistent or missing licenses across the family
+observed_on: process (seven of nine repositories)
+source:
+  - kind: repo
+    repo: 9thLevelSoftware/Clodex
+    ref: acde030
+    path: package.json
+    note: '"license": "UNLICENSED"'
+  - kind: repo
+    repo: 9thLevelSoftware/legion-ide
+    ref: 28928fe
+    path: Cargo.toml:44-45
+    note: license = "Proprietary", publish = false, on work intended to seed a public tool
+  - kind: repo
+    repo: 9thLevelSoftware/legion-cli
+    ref: 581f1f5
+    note: no LICENSE file
+  - kind: repo
+    repo: 9thLevelSoftware/legion
+    ref: 30662e3
+    note: package.json declares MIT; no LICENSE text shipped
+  - kind: statement
+    who: Devil (maintainer)
+    date: 2026-10-16
+    note: '"They are all my work, so license is irrelevant presently."'
+root_cause: >-
+  License was set per repository by whatever scaffold ran first.
+impact: >-
+  A public tool could not safely copy from its own predecessors until the maintainer confirmed
+  ownership.
+countermeasure:
+  kind: process
+  ref: LICENSE
+  change: >-
+    MIT LICENSE file at the root and "license": "MIT" in package.json from the first commit. Code
+    ported from the earlier repositories is noted in the file header where it happens.
+must_block_fixture: ""
+must_allow_fixture: ""
+expiry_policy: "permanent"

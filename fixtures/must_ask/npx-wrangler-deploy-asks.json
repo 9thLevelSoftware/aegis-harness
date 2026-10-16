@@ -1,0 +1,10 @@
+{
+  "name": "npx wrangler deploy asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "npx wrangler deploy"
+    }
+  },
+  "rule": "shell.deploy-or-publish"
+}

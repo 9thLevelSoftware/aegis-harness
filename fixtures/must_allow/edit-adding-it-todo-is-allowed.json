@@ -1,0 +1,13 @@
+{
+  "name": "Edit adding it.todo is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "tests/sync.test.ts",
+      "old_string": "describe('sync', () => {",
+      "new_string": "describe('sync', () => {\n  it.todo('handles conflicts');",
+      "replace_all": false
+    }
+  },
+  "near": "edit.test-skip"
+}

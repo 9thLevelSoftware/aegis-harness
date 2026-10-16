@@ -1,0 +1,11 @@
+{
+  "name": "Agent prompt carrying an Anthropic key is denied",
+  "payload": {
+    "tool_name": "Agent",
+    "tool_input": {
+      "description": "call api",
+      "prompt": "Use sk-ant-api03-R7qT4wZ8xL1mB6cJ3pF5hD0sYaGuEoIqwK9v2n to call the API"
+    }
+  },
+  "rule": "tool.secret-literal"
+}

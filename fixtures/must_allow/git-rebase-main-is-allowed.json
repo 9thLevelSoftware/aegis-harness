@@ -1,0 +1,10 @@
+{
+  "name": "git rebase main is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git rebase main"
+    }
+  },
+  "near": "shell.git-rewrite-history"
+}

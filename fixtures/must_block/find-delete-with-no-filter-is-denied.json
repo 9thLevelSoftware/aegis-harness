@@ -1,0 +1,10 @@
+{
+  "name": "find . -delete with no filter is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . -delete"
+    }
+  },
+  "rule": "shell.rm-recursive-cwd"
+}

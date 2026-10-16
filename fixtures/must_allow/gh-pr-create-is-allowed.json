@@ -1,0 +1,10 @@
+{
+  "name": "gh pr create is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gh pr create --fill"
+    }
+  },
+  "near": "shell.deploy-or-publish"
+}

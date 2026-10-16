@@ -1,0 +1,10 @@
+{
+  "name": "bash -c 'rm -rf /' is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash -c 'rm -rf /'"
+    }
+  },
+  "rule": "shell.rm-recursive-root"
+}

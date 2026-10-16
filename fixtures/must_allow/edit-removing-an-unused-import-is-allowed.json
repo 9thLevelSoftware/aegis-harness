@@ -1,0 +1,14 @@
+{
+  "name": "Edit removing an unused import is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "src/auth/service.py",
+      "old_string": "import os\nimport sys\n",
+      "new_string": "import sys\n",
+      "replace_all": false
+    }
+  },
+  "near": "edit.lint-config",
+  "source": "blueprint §4 sample bug record"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "Edit of a file that already had eslint-disable is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "src/legacy.ts",
+      "old_string": "/* eslint-disable */\nconst a = 1;",
+      "new_string": "/* eslint-disable */\nconst a = 2;",
+      "replace_all": false
+    }
+  },
+  "near": "edit.lint-suppression-blanket"
+}

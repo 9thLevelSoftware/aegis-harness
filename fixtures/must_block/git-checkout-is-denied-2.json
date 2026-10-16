@@ -1,0 +1,10 @@
+{
+  "name": "git checkout . is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git checkout ."
+    }
+  },
+  "rule": "shell.git-discard-changes"
+}

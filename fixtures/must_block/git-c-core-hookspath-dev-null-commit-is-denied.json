@@ -1,0 +1,10 @@
+{
+  "name": "git -c core.hooksPath=/dev/null commit is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git -c core.hooksPath=/dev/null commit -m x"
+    }
+  },
+  "rule": "shell.hook-bypass"
+}

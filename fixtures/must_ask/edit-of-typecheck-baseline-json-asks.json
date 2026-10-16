@@ -1,0 +1,13 @@
+{
+  "name": "Edit of typecheck-baseline.json asks",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "typecheck-baseline.json",
+      "old_string": "\"TS2322\": 1",
+      "new_string": "\"TS2322\": 3",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.baseline-refresh"
+}

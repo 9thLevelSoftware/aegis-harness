@@ -1,0 +1,12 @@
+{
+  "name": "Remove-Item -Recurse -Force on the user profile is denied (Codex, Windows)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "Remove-Item -Recurse -Force C:\\Users\\dev"
+    }
+  },
+  "rule": "shell.rm-recursive-home"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "rm -rf of the project root by absolute path is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf /home/dev/project"
+    }
+  },
+  "rule": "shell.rm-recursive-cwd"
+}

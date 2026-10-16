@@ -1,0 +1,10 @@
+{
+  "name": "git checkout -- one file asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git checkout -- src/index.ts"
+    }
+  },
+  "rule": "shell.git-discard-file"
+}

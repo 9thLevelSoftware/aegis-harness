@@ -1,0 +1,32 @@
+incident_id: BUG-2026-005
+date_recorded: 2026-10-16
+status: mitigated
+title: A baseline refreshed to make a red gate green is a deleted regression test
+observed_on: process (legion-ide; phoenix-portal has the same mechanism)
+source:
+  - kind: repo
+    repo: 9thLevelSoftware/legion-ide
+    ref: 28928fe
+    path: evals/legion-bench/, xtask/src/legion_bench_recorded.rs
+    note: recorded-cassette CI gate with a hashed baseline; refreshing the baseline is how a red gate became green
+  - kind: repo
+    repo: 9thLevelSoftware/phoenix-portal
+    note: >-
+      `npm run typecheck:baseline` rewrites typecheck-baseline.json from the current state; the
+      README itself warns to "review the diff"
+root_cause: >-
+  Baselines, snapshots and recorded expectations encode what "correct" looked like. Rewriting
+  them is one command and leaves the suite green by definition.
+impact: >-
+  Regressions became the new baseline with no record that anything changed.
+countermeasure:
+  kind: rule
+  ref:
+    - edit.baseline-refresh
+    - shell.write-baseline
+  change: >-
+    Hand edits of baseline and snapshot files, and refresh commands (vitest -u, jest -u,
+    cargo insta accept, npm run *baseline*), need a human with the diff in front of them.
+must_block_fixture: fixtures/must_ask/edit-of-typecheck-baseline-json-asks.json
+must_allow_fixture: fixtures/must_allow/npm-run-typecheck-is-allowed.json
+expiry_policy: "re-evaluate on the next major model upgrade"

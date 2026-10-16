@@ -1,0 +1,10 @@
+{
+  "name": "git clean -n is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git clean -n"
+    }
+  },
+  "near": "shell.git-clean"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "npx vitest run on one file is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "npx vitest run tests/guard.test.ts"
+    }
+  },
+  "near": "shell.write-test-config"
+}

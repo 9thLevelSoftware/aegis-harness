@@ -1,0 +1,10 @@
+{
+  "name": "terraform plan is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "terraform plan"
+    }
+  },
+  "near": "shell.deploy-or-publish"
+}

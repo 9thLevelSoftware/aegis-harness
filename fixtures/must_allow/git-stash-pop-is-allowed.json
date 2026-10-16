@@ -1,0 +1,10 @@
+{
+  "name": "git stash pop is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git stash pop"
+    }
+  },
+  "near": "shell.git-stash-drop"
+}

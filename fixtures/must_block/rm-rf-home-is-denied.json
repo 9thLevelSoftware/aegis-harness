@@ -1,0 +1,10 @@
+{
+  "name": "rm -rf $HOME/ is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf $HOME/"
+    }
+  },
+  "rule": "shell.rm-recursive-home"
+}

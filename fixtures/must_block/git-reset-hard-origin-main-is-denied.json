@@ -1,0 +1,10 @@
+{
+  "name": "git reset --hard origin/main is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git reset --hard origin/main"
+    }
+  },
+  "rule": "shell.git-discard-changes"
+}

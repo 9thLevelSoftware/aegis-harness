@@ -1,0 +1,11 @@
+{
+  "name": "Codex apply_patch adding a source file is allowed",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "apply_patch",
+    "tool_input": {
+      "command": "*** Begin Patch\n*** Add File: src/guard/new_rule.py\n+def new_rule():\n+    return True\n*** End Patch"
+    }
+  },
+  "near": "edit.lint-config"
+}

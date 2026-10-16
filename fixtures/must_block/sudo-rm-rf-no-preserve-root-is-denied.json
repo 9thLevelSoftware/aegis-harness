@@ -1,0 +1,10 @@
+{
+  "name": "sudo rm -rf --no-preserve-root / is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sudo rm -rf --no-preserve-root /"
+    }
+  },
+  "rule": "shell.rm-recursive-root"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "chown -R on /usr is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sudo chown -R dev:dev /usr"
+    }
+  },
+  "rule": "shell.permissions-sweep"
+}

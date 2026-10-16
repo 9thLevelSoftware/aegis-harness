@@ -1,0 +1,10 @@
+{
+  "name": "docker rm of one container is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "docker rm -f app-db-1"
+    }
+  },
+  "near": "shell.docker-destroy"
+}

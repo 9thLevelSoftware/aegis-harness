@@ -1,0 +1,10 @@
+{
+  "name": "docker compose up -d is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "docker compose up -d"
+    }
+  },
+  "near": "shell.docker-destroy"
+}

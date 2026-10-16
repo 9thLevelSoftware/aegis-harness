@@ -1,0 +1,10 @@
+{
+  "name": "biome check . is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "biome check ."
+    }
+  },
+  "near": "shell.write-lint-config"
+}

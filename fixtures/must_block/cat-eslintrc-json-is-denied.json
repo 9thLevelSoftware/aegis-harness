@@ -1,0 +1,10 @@
+{
+  "name": "cat > .eslintrc.json is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat > .eslintrc.json <<'EOF'\n{ \"rules\": {} }\nEOF"
+    }
+  },
+  "rule": "shell.write-lint-config"
+}

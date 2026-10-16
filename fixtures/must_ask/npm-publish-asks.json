@@ -1,0 +1,10 @@
+{
+  "name": "npm publish asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "npm publish"
+    }
+  },
+  "rule": "shell.deploy-or-publish"
+}
