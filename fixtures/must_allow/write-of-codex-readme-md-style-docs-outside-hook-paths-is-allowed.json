@@ -1,0 +1,12 @@
+{
+  "name": "Write of .codex/README.md-style docs outside hook paths is allowed",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "docs/codex-setup.md",
+      "content": "# Codex setup\n"
+    }
+  },
+  "near": "edit.hook-config"
+}

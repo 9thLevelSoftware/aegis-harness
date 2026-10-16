@@ -1,0 +1,13 @@
+{
+  "name": "Edit adding an ordinary comment is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "src/app.ts",
+      "old_string": "if (rare) {",
+      "new_string": "// ignore the next branch when the cache is cold\nif (rare) {",
+      "replace_all": false
+    }
+  },
+  "near": "edit.coverage-exclusion"
+}

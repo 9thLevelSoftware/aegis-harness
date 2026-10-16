@@ -1,0 +1,10 @@
+{
+  "name": "python -c shutil.rmtree asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 -c \"import shutil; shutil.rmtree('build')\""
+    }
+  },
+  "rule": "shell.interpreter-destructive"
+}

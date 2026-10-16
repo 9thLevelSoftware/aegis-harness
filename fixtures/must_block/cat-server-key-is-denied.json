@@ -1,0 +1,10 @@
+{
+  "name": "cat server.key is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat certs/server.key"
+    }
+  },
+  "rule": "shell.credential-read"
+}

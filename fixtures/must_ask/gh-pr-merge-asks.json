@@ -1,0 +1,10 @@
+{
+  "name": "gh pr merge asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gh pr merge 42 --squash"
+    }
+  },
+  "rule": "shell.deploy-or-publish"
+}

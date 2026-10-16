@@ -1,0 +1,10 @@
+{
+  "name": "cat .husky/pre-commit is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat .husky/pre-commit"
+    }
+  },
+  "near": "shell.hook-tamper"
+}

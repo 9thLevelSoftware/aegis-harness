@@ -1,0 +1,10 @@
+{
+  "name": "git checkout of a branch is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git checkout feature/guard"
+    }
+  },
+  "near": "shell.git-discard-file"
+}

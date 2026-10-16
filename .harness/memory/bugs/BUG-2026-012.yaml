@@ -1,0 +1,29 @@
+incident_id: BUG-2026-012
+date_recorded: 2026-10-16
+status: mitigated
+title: Breadth across fourteen hosts instead of depth on the agents actually used
+observed_on: process (legion-ascended, legion-flow)
+source:
+  - kind: repo
+    repo: 9thLevelSoftware/legion-ascended
+    ref: 84fbc9a
+    path: bin/runtime-metadata.js:68-815
+    note: installer blocks for 14 host CLIs
+  - kind: statement
+    who: Devil (maintainer)
+    date: 2026-10-16
+    note: '"I primarily use Codex with Claude Code as a close second, and Hermes Agent as the third."'
+root_cause: >-
+  Host support was a feature count. Hermes, the maintainer's third agent, was never exercised as an
+  executor by any attempt that listed it.
+impact: >-
+  Fourteen half-verified integrations; none the maintainer relied on.
+countermeasure:
+  kind: process
+  ref: README.md
+  change: >-
+    v0 supports Codex and Claude Code, which both send the same PreToolUse payload. Hermes, Cursor,
+    Gemini and others are issues, opened when someone needs them and closed with a fixture.
+must_block_fixture: ""
+must_allow_fixture: ""
+expiry_policy: "revisit when a third agent has a hook contract and a user"

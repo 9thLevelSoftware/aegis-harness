@@ -1,0 +1,10 @@
+{
+  "name": "rm -f .gitattributes.orig is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -f .gitattributes.orig"
+    }
+  },
+  "near": "shell.rm-git-dir"
+}

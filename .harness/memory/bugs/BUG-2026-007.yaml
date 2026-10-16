@@ -1,0 +1,34 @@
+incident_id: BUG-2026-007
+date_recorded: 2026-10-16
+status: mitigated
+title: Verified on one Windows 11 machine only
+observed_on: process (legion-flow, ouroboros)
+source:
+  - kind: repo
+    repo: 9thLevelSoftware/legion-flow
+    ref: ad5cb42
+    note: no .github directory; qualification was a maintainer-run checklist
+  - kind: repo
+    repo: 9thLevelSoftware/ouroboros
+    ref: e655fd0
+    path: docs/operations/qualification-codex-windows.md
+    note: win32-only supervisor and a WSL bridge; qualification doc describes requested, not observed, controls
+  - kind: statement
+    who: Devil (maintainer)
+    date: 2026-10-16
+    note: '"WSL is fine, whatever works best."'
+root_cause: >-
+  Without CI the only venue was the maintainer's laptop, so Windows-specific behaviour (.cmd shims,
+  path casing, PowerShell quoting) was both the only thing tested and the thing never tested
+  elsewhere.
+impact: >-
+  Neither repository can be shown to work on a second machine.
+countermeasure:
+  kind: test
+  ref: .github/workflows/ci.yml
+  change: >-
+    Linux CI is the gate of record and a Windows job runs the same build, tests and fixture corpus
+    with a wider latency budget. Fixtures include PowerShell and cmd commands and Windows paths.
+must_block_fixture: fixtures/must_block/remove-item-recurse-force-on-the-user-profile-is-denied-codex-windows.json
+must_allow_fixture: fixtures/must_allow/remove-item-recurse-force-dist-is-allowed-codex-windows.json
+expiry_policy: "permanent"

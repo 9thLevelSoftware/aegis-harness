@@ -1,0 +1,10 @@
+{
+  "name": "git push -f to a feature branch asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push -f origin feature/guard"
+    }
+  },
+  "rule": "shell.git-force-push-review"
+}

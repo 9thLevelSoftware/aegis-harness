@@ -1,0 +1,46 @@
+incident_id: BUG-2026-004
+date_recorded: 2026-10-16
+status: mitigated
+title: Self-written verification that cannot fail
+observed_on: process (hermes-auto, ouroboros, legion-cli)
+source:
+  - kind: repo
+    repo: 9thLevelSoftware/hermes-auto
+    ref: f484621
+    path: docs/research-archive/
+    note: the repository's own mutation-testing post-mortem found about a third of self-written checks could not fail
+  - kind: repo
+    repo: 9thLevelSoftware/ouroboros
+    ref: e655fd0
+    path: CLAUDE.md
+    note: >-
+      "Don't rerun the aggregate suite or already-passing checks to confirm" produced a green
+      nobody could reproduce
+  - kind: repo
+    repo: 9thLevelSoftware/legion-cli
+    ref: 581f1f5
+    path: docs/implementation-verification.md:68-71
+    note: "All 21 failures were repaired and passed targeted reruns; no complete green suite was repeated"
+root_cause: >-
+  Agents optimise for the visible signal. A test that is skipped, focused with .only, suppressed,
+  or whose gate script was turned into echo, is green. Nothing checked whether green could turn red.
+impact: >-
+  Claims of coverage and of passing suites that the repositories could not substantiate; the
+  verification layers were the least trustworthy part of each attempt.
+countermeasure:
+  kind: rule
+  ref:
+    - edit.test-skip
+    - edit.test-only
+    - edit.lint-suppression-blanket
+    - edit.lint-suppression-untargeted
+    - edit.manifest-gate-disabled
+    - edit.manifest-gate-script
+    - edit.ci-gate-weakened
+    - edit.coverage-exclusion
+  change: >-
+    Content rules deny the edits that make a gate vacuous. tests/runner-can-fail.test.ts proves
+    the fixture runner itself goes red on a wrong expectation and on an always-allow guard.
+must_block_fixture: fixtures/must_block/edit-adding-it-skip-is-denied.json
+must_allow_fixture: fixtures/must_allow/edit-adding-it-todo-is-allowed.json
+expiry_policy: "re-evaluate on the next major model upgrade"

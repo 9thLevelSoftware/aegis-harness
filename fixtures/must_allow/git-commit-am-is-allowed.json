@@ -1,0 +1,10 @@
+{
+  "name": "git commit -am is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git commit -am \"fix: tighten the guard\""
+    }
+  },
+  "near": "shell.hook-bypass"
+}

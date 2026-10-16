@@ -1,0 +1,13 @@
+{
+  "name": "Edit of lefthook.yml is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "lefthook.yml",
+      "old_string": "pre-commit:",
+      "new_string": "pre-commit-disabled:",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.hook-config"
+}

@@ -1,0 +1,15 @@
+{
+  "name": "Codex argv-array force push is denied",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": [
+        "bash",
+        "-lc",
+        "git push --force origin main"
+      ]
+    }
+  },
+  "rule": "shell.git-force-push"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "rm -f \"$FILE\" (non-recursive) is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -f \"$FILE\""
+    }
+  },
+  "near": "shell.rm-unresolved-variable"
+}

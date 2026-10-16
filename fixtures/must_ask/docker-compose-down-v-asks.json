@@ -1,0 +1,10 @@
+{
+  "name": "docker compose down -v asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "docker compose down -v"
+    }
+  },
+  "rule": "shell.docker-destroy"
+}

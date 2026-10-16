@@ -1,0 +1,11 @@
+{
+  "name": "Write of biome.json is denied",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "biome.json",
+      "content": "{ \"linter\": { \"enabled\": false } }"
+    }
+  },
+  "rule": "edit.lint-config"
+}

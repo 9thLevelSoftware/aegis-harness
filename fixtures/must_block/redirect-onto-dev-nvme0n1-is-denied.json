@@ -1,0 +1,10 @@
+{
+  "name": "redirect onto /dev/nvme0n1 is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat image.iso > /dev/nvme0n1"
+    }
+  },
+  "rule": "shell.disk-destroy"
+}

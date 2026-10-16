@@ -1,0 +1,11 @@
+{
+  "name": "rm --recursive --force / is denied (long flags)",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm --recursive --force /"
+    }
+  },
+  "rule": "shell.rm-recursive-root",
+  "source": "blueprint §5 governance example"
+}

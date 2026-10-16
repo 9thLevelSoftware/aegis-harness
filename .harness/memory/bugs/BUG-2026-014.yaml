@@ -1,0 +1,36 @@
+incident_id: BUG-2026-014
+date_recorded: 2026-10-16
+status: mitigated
+title: Windows .cmd shims and bare-PATH launches broke hooks and installs
+observed_on: process (legion-cli, legion-flow, clodex)
+source:
+  - kind: repo
+    repo: 9thLevelSoftware/legion-cli
+    ref: 581f1f5
+    path: packages/agents/src/which.ts
+    note: Windows-safe binary resolution with .cmd shim unwrapping and no cwd exe search
+  - kind: repo
+    repo: 9thLevelSoftware/Clodex
+    ref: acde030
+    path: clodex/launcher.py
+    note: environment-independent launcher because hooks and MCP servers are spawned without the developer's shell env
+  - kind: repo
+    repo: 9thLevelSoftware/legion-flow
+    ref: ad5cb42
+    path: packages/gates/src/checks.ts
+    note: shell-free check runner with .cmd shim handling
+root_cause: >-
+  A hook command is launched by the agent, not by the developer's shell: PATH, shims and node
+  version managers differ, and on Windows an npm bin is a .cmd file.
+impact: >-
+  Three attempts each wrote their own launcher; hooks that worked in a terminal failed inside the
+  agent.
+countermeasure:
+  kind: process
+  ref: README.md#wiring-the-hook
+  change: >-
+    Hook wiring uses an absolute path to the node binary and to dist/guard.mjs, never a bare
+    command on PATH. Codex gets commandWindows; Claude Code gets the exec form with args.
+must_block_fixture: ""
+must_allow_fixture: ""
+expiry_policy: "revisit when ah init exists and can verify the wiring with a canary"

@@ -1,0 +1,13 @@
+{
+  "name": "Edit of a nested .eslintrc.json is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "packages/web/.eslintrc.json",
+      "old_string": "\"extends\"",
+      "new_string": "\"extends_\"",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.lint-config"
+}

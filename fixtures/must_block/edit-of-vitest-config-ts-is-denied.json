@@ -1,0 +1,13 @@
+{
+  "name": "Edit of vitest.config.ts is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "vitest.config.ts",
+      "old_string": "include: ['tests/**/*.test.ts']",
+      "new_string": "include: ['tests/unit/**/*.test.ts']",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.test-config"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "Edit of ~/.claude/settings.json is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "/home/dev/.claude/settings.json",
+      "old_string": "{}",
+      "new_string": "{\"hooks\":{}}",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.home-config"
+}

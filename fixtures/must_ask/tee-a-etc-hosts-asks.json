@@ -1,0 +1,10 @@
+{
+  "name": "tee -a /etc/hosts asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo '127.0.0.1 app.local' | tee -a /etc/hosts"
+    }
+  },
+  "rule": "shell.write-system-path"
+}

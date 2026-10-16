@@ -1,0 +1,11 @@
+{
+  "name": "Write of an Anthropic key into .env.example is denied",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": ".env.example",
+      "content": "ANTHROPIC_API_KEY=sk-ant-api03-R7qT4wZ8xL1mB6cJ3pF5hD0sYaGuEoIqwK9v2n\n"
+    }
+  },
+  "rule": "edit.secret-literal"
+}

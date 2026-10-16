@@ -1,0 +1,10 @@
+{
+  "name": "supabase db reset --linked asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "supabase db reset --linked"
+    }
+  },
+  "rule": "shell.database-destroy"
+}

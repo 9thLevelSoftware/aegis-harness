@@ -1,0 +1,10 @@
+{
+  "name": "rm /tmp/ah-test/out.txt (single file outside) is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm /tmp/ah-test/out.txt"
+    }
+  },
+  "near": "shell.rm-outside-project"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "rm -rf dist coverage is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf dist coverage"
+    }
+  },
+  "near": "shell.rm-recursive-cwd"
+}

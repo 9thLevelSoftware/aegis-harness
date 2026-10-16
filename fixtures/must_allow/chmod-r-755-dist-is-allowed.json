@@ -1,0 +1,10 @@
+{
+  "name": "chmod -R 755 dist is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "chmod -R 755 dist"
+    }
+  },
+  "near": "shell.permissions-sweep"
+}

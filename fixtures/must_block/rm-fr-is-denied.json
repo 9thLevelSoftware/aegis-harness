@@ -1,0 +1,10 @@
+{
+  "name": "rm -fr /* is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -fr /*"
+    }
+  },
+  "rule": "shell.rm-recursive-root"
+}

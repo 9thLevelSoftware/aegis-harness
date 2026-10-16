@@ -1,0 +1,11 @@
+{
+  "name": "Write of ~/.ssh/config is denied",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/home/dev/.ssh/config",
+      "content": "Host *\n  StrictHostKeyChecking no\n"
+    }
+  },
+  "rule": "edit.home-config"
+}

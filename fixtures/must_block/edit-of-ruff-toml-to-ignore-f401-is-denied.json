@@ -1,0 +1,14 @@
+{
+  "name": "Edit of .ruff.toml to ignore F401 is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": ".ruff.toml",
+      "old_string": "[lint]\nselect = [\"E\", \"F\"]",
+      "new_string": "[lint]\nselect = [\"E\", \"F\"]\nignore = [\"F401\"]",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.lint-config",
+  "source": "blueprint §4 sample bug record"
+}

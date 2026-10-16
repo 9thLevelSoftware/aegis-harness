@@ -1,0 +1,11 @@
+{
+  "name": "Write of a snapshot file asks",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "tests/__snapshots__/guard.test.ts.snap",
+      "content": "exports[`x`] = `y`;\n"
+    }
+  },
+  "rule": "edit.baseline-refresh"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "git config --global asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git config --global core.editor vim"
+    }
+  },
+  "rule": "shell.git-global-config"
+}

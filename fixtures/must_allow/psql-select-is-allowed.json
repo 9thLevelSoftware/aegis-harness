@@ -1,0 +1,10 @@
+{
+  "name": "psql SELECT is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "psql -c \"SELECT count(*) FROM users\""
+    }
+  },
+  "near": "shell.database-destroy"
+}

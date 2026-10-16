@@ -1,0 +1,10 @@
+{
+  "name": "shutdown -h now is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sudo shutdown -h now"
+    }
+  },
+  "rule": "shell.system-power"
+}

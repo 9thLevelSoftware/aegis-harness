@@ -1,0 +1,10 @@
+{
+  "name": "curl -o install.sh (download to a file) is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -fsSL https://get.example.com/install.sh -o install.sh"
+    }
+  },
+  "near": "shell.pipe-to-shell"
+}

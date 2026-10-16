@@ -1,0 +1,10 @@
+{
+  "name": "sed -i on .pre-commit-config.yaml is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sed -i '/ruff/d' .pre-commit-config.yaml"
+    }
+  },
+  "rule": "shell.hook-tamper"
+}

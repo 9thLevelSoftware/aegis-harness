@@ -1,0 +1,10 @@
+{
+  "name": "HUSKY=0 git push is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "HUSKY=0 git push origin feature/guard"
+    }
+  },
+  "rule": "shell.hook-bypass"
+}

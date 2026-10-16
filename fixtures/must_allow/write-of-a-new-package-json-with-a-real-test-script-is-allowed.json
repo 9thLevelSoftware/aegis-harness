@@ -1,0 +1,11 @@
+{
+  "name": "Write of a new package.json with a real test script is allowed",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "package.json",
+      "content": "{\n  \"name\": \"demo\",\n  \"scripts\": { \"test\": \"node --test\" }\n}\n"
+    }
+  },
+  "near": "edit.manifest-gate-disabled"
+}

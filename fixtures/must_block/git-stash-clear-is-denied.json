@@ -1,0 +1,10 @@
+{
+  "name": "git stash clear is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git stash clear"
+    }
+  },
+  "rule": "shell.git-stash-drop"
+}

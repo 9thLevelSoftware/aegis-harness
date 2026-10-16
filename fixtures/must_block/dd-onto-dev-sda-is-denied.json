@@ -1,0 +1,10 @@
+{
+  "name": "dd onto /dev/sda is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "dd if=/dev/zero of=/dev/sda bs=1M"
+    }
+  },
+  "rule": "shell.disk-destroy"
+}

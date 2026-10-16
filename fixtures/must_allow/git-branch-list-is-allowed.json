@@ -1,0 +1,10 @@
+{
+  "name": "git branch --list is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git branch --list"
+    }
+  },
+  "near": "shell.git-branch-delete"
+}

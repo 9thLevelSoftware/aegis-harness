@@ -1,0 +1,11 @@
+{
+  "name": "Write of /etc/hosts is denied",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/etc/hosts",
+      "content": "127.0.0.1 app.local\n"
+    }
+  },
+  "rule": "edit.system-path"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "git gc (no immediate prune) is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git gc"
+    }
+  },
+  "near": "shell.git-rewrite-history"
+}

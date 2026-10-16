@@ -1,0 +1,13 @@
+{
+  "name": "Edit adding test.fixme is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "e2e/login.spec.ts",
+      "old_string": "test('login', async ({ page }) => {",
+      "new_string": "test.fixme('login', async ({ page }) => {",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.test-skip"
+}

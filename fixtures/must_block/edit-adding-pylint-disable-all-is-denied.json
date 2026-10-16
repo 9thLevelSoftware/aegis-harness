@@ -1,0 +1,13 @@
+{
+  "name": "Edit adding pylint disable=all is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "src/app.py",
+      "old_string": "import os",
+      "new_string": "# pylint: disable=all\nimport os",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.lint-suppression-blanket"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "git log is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git log --oneline -5"
+    }
+  },
+  "near": "shell.write-git-internals"
+}

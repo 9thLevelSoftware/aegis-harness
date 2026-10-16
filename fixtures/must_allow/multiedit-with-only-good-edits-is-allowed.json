@@ -1,0 +1,20 @@
+{
+  "name": "MultiEdit with only good edits is allowed",
+  "payload": {
+    "tool_name": "MultiEdit",
+    "tool_input": {
+      "file_path": "src/app.ts",
+      "edits": [
+        {
+          "old_string": "const a = 1;",
+          "new_string": "const a = 2;"
+        },
+        {
+          "old_string": "const b = 1;",
+          "new_string": "const b = 2;"
+        }
+      ]
+    }
+  },
+  "near": "edit.test-skip"
+}

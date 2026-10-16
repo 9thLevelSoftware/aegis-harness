@@ -1,0 +1,13 @@
+{
+  "name": "Edit adding it.skip is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "tests/sync.test.ts",
+      "old_string": "it('round-trips', async () => {",
+      "new_string": "it.skip('round-trips', async () => {",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.test-skip"
+}

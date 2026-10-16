@@ -1,0 +1,10 @@
+{
+  "name": "git reset (mixed) a single file is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git reset src/index.ts"
+    }
+  },
+  "near": "shell.git-discard-changes"
+}

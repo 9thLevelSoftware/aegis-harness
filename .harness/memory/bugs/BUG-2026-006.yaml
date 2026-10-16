@@ -1,0 +1,40 @@
+incident_id: BUG-2026-006
+date_recorded: 2026-10-16
+status: mitigated
+title: Maintainer machine paths and user name leaked into shipped files
+observed_on: process (hermes-auto, legion-ascended, legion-cli, legion-ide)
+source:
+  - kind: repo
+    repo: 9thLevelSoftware/hermes-auto
+    ref: f484621
+    path: src/hermes_auto/gateway/auth.py:68, tests/unit/test_acl_principal_matching.py:11
+    note: 20 occurrences of the maintainer's Windows user path in source, tests and the archive, despite a pre-publication note saying to remove them
+  - kind: repo
+    repo: 9thLevelSoftware/legion-ascended
+    ref: 84fbc9a
+    path: docs/legion-next-roadmap.md:7-30, evals/baseline/manifest.yaml:7
+    note: the roadmap's source of truth is a path on one laptop
+  - kind: repo
+    repo: 9thLevelSoftware/legion-cli
+    ref: 581f1f5
+    path: workflow-implementation-status.md:63
+    note: log paths under the maintainer's .codex/tmp
+  - kind: repo
+    repo: 9thLevelSoftware/legion-ide
+    ref: 28928fe
+    path: .claude/workflows/legion-completion-round.js
+    note: hard-coded node runtime path under the maintainer's cache directory
+root_cause: >-
+  Agent-written files copy whatever path the agent saw. Nothing in CI looked for it.
+impact: >-
+  Public repositories carried a private user name and machine layout; tests silently depended on
+  one laptop.
+countermeasure:
+  kind: test
+  ref: scripts/check-hygiene.mjs
+  change: >-
+    CI scans every tracked file for maintainer user names, cloud session mounts, drive letters and
+    real home directories. Fixtures use /home/dev, /Users/dev and C:\Users\dev only.
+must_block_fixture: ""
+must_allow_fixture: ""
+expiry_policy: "permanent"

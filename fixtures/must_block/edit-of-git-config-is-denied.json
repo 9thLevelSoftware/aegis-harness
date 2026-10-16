@@ -1,0 +1,13 @@
+{
+  "name": "Edit of .git/config is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": ".git/config",
+      "old_string": "[core]",
+      "new_string": "[core]\n\thooksPath = /dev/null",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.git-internals"
+}

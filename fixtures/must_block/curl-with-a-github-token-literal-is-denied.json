@@ -1,0 +1,10 @@
+{
+  "name": "curl with a GitHub token literal is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -H \"Authorization: Bearer ghp_K9v2nR7qT4wZ8xL1mB6cJ3pF5hD0sYaGuEoIqw\" https://api.github.com/user"
+    }
+  },
+  "rule": "shell.secret-literal"
+}

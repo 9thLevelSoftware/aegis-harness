@@ -1,0 +1,10 @@
+{
+  "name": "rm -rf $TMPDIR/ah-test is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf $TMPDIR/ah-test"
+    }
+  },
+  "near": "shell.rm-unresolved-variable"
+}

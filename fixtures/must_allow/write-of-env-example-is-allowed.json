@@ -1,0 +1,11 @@
+{
+  "name": "Write of .env.example is allowed",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": ".env.example",
+      "content": "VITE_API_URL=\n"
+    }
+  },
+  "near": "edit.env-file"
+}

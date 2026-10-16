@@ -1,0 +1,11 @@
+export { decide, decideAll } from "./guard/decide.ts";
+export type { Context, Decision, EditCall, OtherCall, Platform, Policy, ShellCall, ToolCall, Verdict, WriteCall } from "./guard/model.ts";
+export { normalizeHookPayload, parseApplyPatch, commandText } from "./guard/normalize.ts";
+export type { Agent, HookEvent } from "./guard/normalize.ts";
+export { DEFAULT_POLICY } from "./guard/policy.ts";
+export { render, explain } from "./guard/respond.ts";
+export { RULES, ruleInfo } from "./guard/rules/registry.ts";
+export { parseShell } from "./guard/shell.ts";
+export { findSecrets, SECRET_PATTERNS } from "./guard/secrets.ts";
+export { classifyPath } from "./guard/classify.ts";
+export { evaluate, runGuard } from "./guard/main.ts";

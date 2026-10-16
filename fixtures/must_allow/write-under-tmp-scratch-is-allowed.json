@@ -1,0 +1,11 @@
+{
+  "name": "Write under /tmp (scratch) is allowed",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/tmp/ah-scratch/notes.md",
+      "content": "# notes\n"
+    }
+  },
+  "near": "edit.outside-project"
+}

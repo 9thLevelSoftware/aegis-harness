@@ -1,0 +1,15 @@
+{
+  "name": "Codex argv-array npm test is allowed",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": [
+        "bash",
+        "-lc",
+        "npm test"
+      ]
+    }
+  },
+  "near": "shell.git-force-push"
+}

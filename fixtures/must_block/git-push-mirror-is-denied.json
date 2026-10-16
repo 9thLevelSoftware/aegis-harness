@@ -1,0 +1,10 @@
+{
+  "name": "git push --mirror is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push --mirror backup"
+    }
+  },
+  "rule": "shell.git-force-push"
+}

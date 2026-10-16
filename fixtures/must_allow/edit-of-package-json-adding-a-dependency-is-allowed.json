@@ -1,0 +1,13 @@
+{
+  "name": "Edit of package.json adding a dependency is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "package.json",
+      "old_string": "\"dependencies\": {",
+      "new_string": "\"dependencies\": {\n    \"yaml\": \"^2.9.1\",",
+      "replace_all": false
+    }
+  },
+  "near": "edit.lockfile"
+}

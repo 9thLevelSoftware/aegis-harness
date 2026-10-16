@@ -1,0 +1,13 @@
+{
+  "name": "Edit of src/types.ts is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "src/types.ts",
+      "old_string": "export type A = 1;",
+      "new_string": "export type A = 1 | 2;",
+      "replace_all": false
+    }
+  },
+  "near": "edit.compiler-config"
+}

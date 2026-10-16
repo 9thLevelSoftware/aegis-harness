@@ -1,0 +1,10 @@
+{
+  "name": "git push --force-with-lease to a feature branch is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push --force-with-lease origin feature/guard"
+    }
+  },
+  "near": "shell.git-force-push"
+}

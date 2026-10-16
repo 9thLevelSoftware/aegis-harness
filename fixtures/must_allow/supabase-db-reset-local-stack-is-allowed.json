@@ -1,0 +1,10 @@
+{
+  "name": "supabase db reset (local stack) is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "supabase db reset"
+    }
+  },
+  "near": "shell.database-destroy"
+}

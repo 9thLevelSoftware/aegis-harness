@@ -1,0 +1,10 @@
+{
+  "name": "supabase functions deploy asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "supabase functions deploy sync-routines"
+    }
+  },
+  "rule": "shell.deploy-or-publish"
+}

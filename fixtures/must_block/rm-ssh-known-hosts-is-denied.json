@@ -1,0 +1,10 @@
+{
+  "name": "rm ~/.ssh/known_hosts is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm ~/.ssh/known_hosts"
+    }
+  },
+  "rule": "shell.write-home-config"
+}

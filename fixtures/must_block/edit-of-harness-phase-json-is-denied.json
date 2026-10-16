@@ -1,0 +1,13 @@
+{
+  "name": "Edit of .harness/phase.json is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": ".harness/phase.json",
+      "old_string": "\"phase\": \"01-planning\"",
+      "new_string": "\"phase\": \"03-execution\"",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.harness-dir"
+}

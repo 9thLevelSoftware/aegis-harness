@@ -1,0 +1,10 @@
+{
+  "name": "git push --no-verify is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push --no-verify origin feature/guard"
+    }
+  },
+  "rule": "shell.hook-bypass"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "an obvious placeholder key is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+  },
+  "near": "shell.secret-literal"
+}

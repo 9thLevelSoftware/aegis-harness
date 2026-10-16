@@ -1,0 +1,10 @@
+{
+  "name": "terraform apply asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "terraform apply -auto-approve"
+    }
+  },
+  "rule": "shell.deploy-or-publish"
+}

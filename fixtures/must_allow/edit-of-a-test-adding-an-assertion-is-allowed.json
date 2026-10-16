@@ -1,0 +1,13 @@
+{
+  "name": "Edit of a test adding an assertion is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "tests/guard.test.ts",
+      "old_string": "assert.equal(d.verdict, 'deny');",
+      "new_string": "assert.equal(d.verdict, 'deny');\nassert.equal(d.rule, 'shell.rm-recursive-root');",
+      "replace_all": false
+    }
+  },
+  "near": "edit.baseline-refresh"
+}

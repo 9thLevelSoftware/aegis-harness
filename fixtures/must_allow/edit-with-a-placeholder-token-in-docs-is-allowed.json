@@ -1,0 +1,13 @@
+{
+  "name": "Edit with a placeholder token in docs is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "README.md",
+      "old_string": "GITHUB_TOKEN=",
+      "new_string": "GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "replace_all": false
+    }
+  },
+  "near": "edit.secret-literal"
+}

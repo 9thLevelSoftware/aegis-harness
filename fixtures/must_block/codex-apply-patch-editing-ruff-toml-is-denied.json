@@ -1,0 +1,11 @@
+{
+  "name": "Codex apply_patch editing .ruff.toml is denied",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "apply_patch",
+    "tool_input": {
+      "command": "*** Begin Patch\n*** Update File: .ruff.toml\n@@\n [lint]\n-select = [\"E\", \"F\"]\n+select = [\"E\", \"F\"]\n+ignore = [\"F401\"]\n*** End Patch"
+    }
+  },
+  "rule": "edit.lint-config"
+}

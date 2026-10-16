@@ -1,0 +1,10 @@
+{
+  "name": "git push -n (dry run, not no-verify) is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push -n origin feature/guard"
+    }
+  },
+  "near": "shell.hook-bypass"
+}

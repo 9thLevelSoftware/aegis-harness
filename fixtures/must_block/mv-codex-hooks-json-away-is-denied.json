@@ -1,0 +1,10 @@
+{
+  "name": "mv .codex/hooks.json away is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mv .codex/hooks.json /tmp/hooks.bak && cp /tmp/empty.json .codex/hooks.json"
+    }
+  },
+  "rule": "shell.hook-tamper"
+}

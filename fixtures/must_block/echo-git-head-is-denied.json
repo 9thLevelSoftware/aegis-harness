@@ -1,0 +1,10 @@
+{
+  "name": "echo > .git/HEAD is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo ref: refs/heads/main > .git/HEAD"
+    }
+  },
+  "rule": "shell.write-git-internals"
+}

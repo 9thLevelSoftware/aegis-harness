@@ -1,0 +1,13 @@
+{
+  "name": "Edit of playwright.config.ts is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "playwright.config.ts",
+      "old_string": "retries: 0",
+      "new_string": "retries: 3",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.test-config"
+}

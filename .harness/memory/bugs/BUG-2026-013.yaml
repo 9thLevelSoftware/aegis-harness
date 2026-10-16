@@ -1,0 +1,36 @@
+incident_id: BUG-2026-013
+date_recorded: 2026-10-16
+status: mitigated
+title: Containment protected the harness's own files, not the user's
+observed_on: process (legion-ascended, legion-ide)
+source:
+  - kind: repo
+    repo: 9thLevelSoftware/legion-ascended
+    ref: 84fbc9a
+    path: packages/cli/src/workflow/guarded-execution.ts:881-1028
+    note: snapshot/restore containment covers protected paths under .legion/project only; detects symlink substitution and mid-run commits there
+  - kind: repo
+    repo: 9thLevelSoftware/legion-ide
+    ref: 28928fe
+    path: crates/legion-agent/tests/external_agent_containment.rs
+    note: >-
+      lease containment tests: a_read_through_an_in_lease_symlink_pointing_outside_is_refused,
+      a_relative_traversal_out_of_the_lease_is_refused
+root_cause: >-
+  Containment was designed around the harness's control-plane files. An agent writing into a
+  sibling project, the home directory or /etc was outside the model.
+impact: >-
+  The user's other repositories and dotfiles were unguarded while the harness guarded itself.
+countermeasure:
+  kind: rule
+  ref:
+    - edit.outside-project
+    - edit.home-config
+    - shell.rm-outside-project
+    - shell.write-home-config
+  change: >-
+    Paths are classified lexically against the project root and the home directory on every write
+    and delete. Outside the project asks; home credentials and agent configuration deny.
+must_block_fixture: fixtures/must_block/rm-rf-sibling-project-is-denied.json
+must_allow_fixture: fixtures/must_allow/write-under-tmp-scratch-is-allowed.json
+expiry_policy: "re-evaluate on the next major model upgrade"

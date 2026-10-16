@@ -1,0 +1,10 @@
+{
+  "name": "git push -u origin feature/guard is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push -u origin feature/guard"
+    }
+  },
+  "near": "shell.git-force-push"
+}

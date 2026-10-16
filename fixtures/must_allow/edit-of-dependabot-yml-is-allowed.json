@@ -1,0 +1,13 @@
+{
+  "name": "Edit of dependabot.yml is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": ".github/dependabot.yml",
+      "old_string": "interval: weekly",
+      "new_string": "interval: daily",
+      "replace_all": false
+    }
+  },
+  "near": "edit.ci-gate-weakened"
+}

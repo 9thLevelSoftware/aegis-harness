@@ -1,0 +1,44 @@
+incident_id: BUG-2026-002
+date_recorded: 2026-10-16
+status: mitigated
+title: Enforcement was prose or post-hoc; no in-loop veto on native tool calls
+observed_on: process (all nine prior repositories)
+source:
+  - kind: repo
+    repo: 9thLevelSoftware/legion
+    ref: 30662e3
+    note: 43 node:test files, 11,676 test lines, 31 of them asserting over markdown prompt text; zero executable guards
+  - kind: repo
+    repo: 9thLevelSoftware/legion-flow
+    ref: ad5cb42
+    path: packages/cli/src/tool-gateway.ts
+    note: vetoes exist, but only for tools routed through its own MCP gateway, not for the agent's native Bash/Write/Edit
+  - kind: repo
+    repo: 9thLevelSoftware/ouroboros
+    ref: e655fd0
+    path: src/providers/codex/adapter.ts:123
+    note: deny-all Codex approvals plus features.hooks=false, so no hook ever ran
+  - kind: document
+    path: unified_agentic_harness_implementation_plan.pdf §3.2
+    note: prose rules in CLAUDE.md fail 84% to 96% of the time (Marmelab, cited by the blueprint; unverified)
+root_cause: >-
+  Rules lived in CLAUDE.md, personas and plans. The one place a rule can be enforced on every tool
+  call, the PreToolUse hook, was never used with content inspection in any attempt.
+impact: >-
+  Agents could, and did, edit linter configs, skip hooks and run destructive commands with nothing
+  but a paragraph asking them not to.
+countermeasure:
+  kind: rule
+  ref:
+    - edit.lint-config
+    - edit.test-config
+    - edit.harness-dir
+    - shell.hook-bypass
+    - shell.rm-recursive-root
+    - shell.secret-literal
+  change: >-
+    The guard runs on every Bash, Write, Edit and apply_patch call for Codex and Claude Code and
+    returns a deny with remediation text the agent reads.
+must_block_fixture: fixtures/must_block/rm-rf-is-denied.json
+must_allow_fixture: fixtures/must_allow/rm-rf-tmp-build-cache-is-allowed.json
+expiry_policy: "re-evaluate on the next major model upgrade via ablation (which rules still fire in real sessions)"

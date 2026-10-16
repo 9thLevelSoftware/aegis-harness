@@ -1,0 +1,10 @@
+{
+  "name": "touch under .harness/memory/bugs is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "touch .harness/memory/bugs/BUG-2026-099.yaml"
+    }
+  },
+  "rule": "shell.write-harness"
+}

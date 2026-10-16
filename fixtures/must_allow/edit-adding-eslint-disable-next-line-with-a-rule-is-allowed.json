@@ -1,0 +1,13 @@
+{
+  "name": "Edit adding eslint-disable-next-line with a rule is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "src/app.ts",
+      "old_string": "console.log(x);",
+      "new_string": "// eslint-disable-next-line no-console\nconsole.log(x);",
+      "replace_all": false
+    }
+  },
+  "near": "edit.lint-suppression-blanket"
+}

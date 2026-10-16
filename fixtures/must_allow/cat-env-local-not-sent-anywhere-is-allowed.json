@@ -1,0 +1,10 @@
+{
+  "name": "cat .env (local, not sent anywhere) is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat .env"
+    }
+  },
+  "near": "shell.credential-read"
+}

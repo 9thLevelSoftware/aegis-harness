@@ -1,0 +1,10 @@
+{
+  "name": "curl -F with a build artifact is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -F file=@dist/report.html https://ci.example.com/upload"
+    }
+  },
+  "near": "shell.credential-exfil"
+}

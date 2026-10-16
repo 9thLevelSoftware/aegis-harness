@@ -1,0 +1,13 @@
+{
+  "name": "Edit of tests/setup.ts is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "tests/setup.ts",
+      "old_string": "beforeAll(",
+      "new_string": "beforeAll(async ",
+      "replace_all": false
+    }
+  },
+  "near": "edit.test-config"
+}

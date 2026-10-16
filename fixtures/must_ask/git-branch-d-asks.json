@@ -1,0 +1,10 @@
+{
+  "name": "git branch -D asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git branch -D feature/old"
+    }
+  },
+  "rule": "shell.git-branch-force-delete"
+}

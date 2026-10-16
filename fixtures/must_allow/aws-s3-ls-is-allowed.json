@@ -1,0 +1,10 @@
+{
+  "name": "aws s3 ls is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "aws s3 ls s3://prod-assets"
+    }
+  },
+  "near": "shell.remote-destroy"
+}

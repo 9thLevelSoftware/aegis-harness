@@ -1,0 +1,10 @@
+{
+  "name": "sudo apt-get install asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sudo apt-get install -y jq"
+    }
+  },
+  "rule": "shell.privilege-escalation"
+}

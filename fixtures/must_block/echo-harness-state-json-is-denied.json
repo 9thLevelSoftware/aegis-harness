@@ -1,0 +1,11 @@
+{
+  "name": "echo > .harness/state.json is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo '{}' > .harness/state.json"
+    }
+  },
+  "rule": "shell.write-harness",
+  "source": "blueprint §3.2"
+}

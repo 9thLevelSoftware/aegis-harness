@@ -1,0 +1,10 @@
+{
+  "name": "gh repo delete is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gh repo delete 9thLevelSoftware/aegis-harness --yes"
+    }
+  },
+  "rule": "shell.remote-destroy"
+}

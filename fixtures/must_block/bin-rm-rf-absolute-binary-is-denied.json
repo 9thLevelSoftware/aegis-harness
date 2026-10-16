@@ -1,0 +1,10 @@
+{
+  "name": "/bin/rm -rf / (absolute binary) is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "/bin/rm -rf /"
+    }
+  },
+  "rule": "shell.rm-recursive-root"
+}

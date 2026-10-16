@@ -1,0 +1,13 @@
+{
+  "name": "Edit of eslint.config.js is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "eslint.config.js",
+      "old_string": "\"no-unused-vars\": \"error\"",
+      "new_string": "\"no-unused-vars\": \"off\"",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.lint-config"
+}

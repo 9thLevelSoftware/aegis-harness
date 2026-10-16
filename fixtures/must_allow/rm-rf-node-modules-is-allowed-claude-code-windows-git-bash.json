@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf node_modules is allowed (Claude Code, Windows Git Bash)",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf node_modules"
+    }
+  },
+  "near": "shell.rm-recursive-cwd"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "rm -rf .harness is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf .harness"
+    }
+  },
+  "rule": "shell.write-harness"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "WebFetch of docs is allowed",
+  "payload": {
+    "tool_name": "WebFetch",
+    "tool_input": {
+      "url": "https://developers.openai.com/codex/hooks",
+      "prompt": "summarize"
+    }
+  },
+  "near": "tool.secret-literal"
+}

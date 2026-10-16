@@ -1,0 +1,10 @@
+{
+  "name": "SKIP=lint git commit is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "SKIP=ruff,mypy git commit -m \"skip hooks\""
+    }
+  },
+  "rule": "shell.hook-bypass"
+}

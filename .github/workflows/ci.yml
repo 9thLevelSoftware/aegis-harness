@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  linux:
+    # Gate of record. A red Linux job blocks a merge.
+    name: Linux (gate of record)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run check:hygiene
+      - name: Fixture corpus end to end, with the per-call latency budget
+        run: node dist/ah.mjs test-hooks --budget-ms 150
+      - name: Installed package smoke test
+        run: |
+          npm pack --silent > pack.txt
+          mkdir -p /tmp/ah-install && cd /tmp/ah-install
+          npm init -y > /dev/null
+          npm install --silent "$GITHUB_WORKSPACE/$(cat $GITHUB_WORKSPACE/pack.txt)"
+          npx ah version
+          npx ah test-hooks --in-process
+
+  windows:
+    # Devil develops on Windows 11 (WSL2 is fine for v0). The guard must still
+    # parse PowerShell and cmd commands and start fast on a Windows runner.
+    name: Windows
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      AH_LATENCY_BUDGET_MS: "400"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run check:hygiene
+      - name: Fixture corpus end to end, with a slower-runner latency budget
+        run: node dist/ah.mjs test-hooks --budget-ms 400

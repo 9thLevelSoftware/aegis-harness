@@ -1,0 +1,10 @@
+{
+  "name": "git -C subdir push -f origin main is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git -C packages/core push -f origin main"
+    }
+  },
+  "rule": "shell.git-force-push"
+}

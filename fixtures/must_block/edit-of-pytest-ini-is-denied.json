@@ -1,0 +1,13 @@
+{
+  "name": "Edit of pytest.ini is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "pytest.ini",
+      "old_string": "addopts = -q",
+      "new_string": "addopts = -q -p no:cacheprovider --ignore=tests/integration",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.test-config"
+}

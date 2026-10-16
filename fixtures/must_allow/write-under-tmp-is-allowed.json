@@ -1,0 +1,11 @@
+{
+  "name": "Write under /tmp is allowed",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/tmp/ah-scratch/hosts.txt",
+      "content": "127.0.0.1 app.local\n"
+    }
+  },
+  "near": "edit.system-path"
+}

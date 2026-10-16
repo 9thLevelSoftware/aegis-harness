@@ -1,0 +1,11 @@
+{
+  "name": "Write of .husky/pre-commit is denied",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": ".husky/pre-commit",
+      "content": "exit 0\n"
+    }
+  },
+  "rule": "edit.hook-config"
+}

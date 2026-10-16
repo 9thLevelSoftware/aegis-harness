@@ -1,0 +1,10 @@
+{
+  "name": "wrangler dev is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "npx wrangler dev"
+    }
+  },
+  "near": "shell.deploy-or-publish"
+}

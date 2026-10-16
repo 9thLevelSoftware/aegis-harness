@@ -1,0 +1,10 @@
+{
+  "name": "kubectl delete namespace is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "kubectl delete namespace production"
+    }
+  },
+  "rule": "shell.remote-destroy"
+}

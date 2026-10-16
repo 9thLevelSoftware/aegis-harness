@@ -1,0 +1,10 @@
+{
+  "name": "git config --local user.email is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git config user.email dev@example.com"
+    }
+  },
+  "near": "shell.git-global-config"
+}

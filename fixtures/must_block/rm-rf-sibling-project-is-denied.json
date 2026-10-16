@@ -1,0 +1,10 @@
+{
+  "name": "rm -rf ../sibling-project is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf ../sibling-project"
+    }
+  },
+  "rule": "shell.rm-outside-project"
+}

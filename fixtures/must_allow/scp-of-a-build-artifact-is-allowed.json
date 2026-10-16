@@ -1,0 +1,10 @@
+{
+  "name": "scp of a build artifact is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "scp dist/app.tar.gz deploy@host.example.com:/srv/releases/"
+    }
+  },
+  "near": "shell.credential-exfil"
+}

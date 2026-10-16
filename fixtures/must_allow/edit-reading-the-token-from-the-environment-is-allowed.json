@@ -1,0 +1,13 @@
+{
+  "name": "Edit reading the token from the environment is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "src/config.ts",
+      "old_string": "token: \"\"",
+      "new_string": "token: process.env.GITHUB_TOKEN ?? \"\"",
+      "replace_all": false
+    }
+  },
+  "near": "edit.secret-literal"
+}

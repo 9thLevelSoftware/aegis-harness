@@ -1,0 +1,10 @@
+{
+  "name": "git stash push -u is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git stash push -u -m wip"
+    }
+  },
+  "near": "shell.git-stash-drop"
+}

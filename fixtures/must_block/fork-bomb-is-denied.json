@@ -1,0 +1,10 @@
+{
+  "name": "fork bomb is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": ":(){ :|:& };:"
+    }
+  },
+  "rule": "shell.fork-bomb"
+}

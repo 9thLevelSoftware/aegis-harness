@@ -1,0 +1,12 @@
+{
+  "name": "Write under .harness/ is denied",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": ".harness/memory/bugs/BUG-2026-099.yaml",
+      "content": "incident_id: BUG-2026-099\n"
+    }
+  },
+  "rule": "edit.harness-dir",
+  "source": "blueprint §3.2"
+}

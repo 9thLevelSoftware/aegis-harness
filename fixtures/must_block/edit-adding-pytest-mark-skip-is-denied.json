@@ -1,0 +1,13 @@
+{
+  "name": "Edit adding @pytest.mark.skip is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "tests/test_sync.py",
+      "old_string": "def test_roundtrip():",
+      "new_string": "@pytest.mark.skip(reason='flaky')\ndef test_roundtrip():",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.test-skip"
+}

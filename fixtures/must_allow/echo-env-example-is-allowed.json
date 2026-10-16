@@ -1,0 +1,10 @@
+{
+  "name": "echo >> .env.example is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo 'API_KEY=' >> .env.example"
+    }
+  },
+  "near": "shell.write-ask-path"
+}

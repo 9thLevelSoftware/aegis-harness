@@ -1,0 +1,12 @@
+{
+  "name": "pwsh -Command Get-ChildItem is allowed (Codex, Windows)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "pwsh -Command \"Get-ChildItem -Recurse src\""
+    }
+  },
+  "near": "shell.encoded-command"
+}

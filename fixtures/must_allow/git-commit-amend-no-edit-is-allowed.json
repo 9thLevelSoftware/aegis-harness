@@ -1,0 +1,10 @@
+{
+  "name": "git commit --amend --no-edit is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git commit --amend --no-edit"
+    }
+  },
+  "near": "shell.git-rewrite-history"
+}

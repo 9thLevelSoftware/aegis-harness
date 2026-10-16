@@ -1,0 +1,13 @@
+{
+  "name": "Edit adding @ts-nocheck is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "src/app.ts",
+      "old_string": "import x from 'y';",
+      "new_string": "// @ts-nocheck\nimport x from 'y';",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.lint-suppression-blanket"
+}

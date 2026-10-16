@@ -1,0 +1,13 @@
+{
+  "name": "Edit of vite.config.ts is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "vite.config.ts",
+      "old_string": "port: 5173",
+      "new_string": "port: 5174",
+      "replace_all": false
+    }
+  },
+  "near": "edit.compiler-strictness"
+}

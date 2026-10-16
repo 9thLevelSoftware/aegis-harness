@@ -1,0 +1,13 @@
+{
+  "name": "Edit adding a bare noqa asks",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "src/app.py",
+      "old_string": "x = compute()",
+      "new_string": "x = compute()  # noqa",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.lint-suppression-untargeted"
+}

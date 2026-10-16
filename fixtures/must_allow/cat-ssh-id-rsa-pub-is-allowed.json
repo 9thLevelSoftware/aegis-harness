@@ -1,0 +1,10 @@
+{
+  "name": "cat ~/.ssh/id_rsa.pub is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.ssh/id_rsa.pub"
+    }
+  },
+  "near": "shell.credential-read"
+}

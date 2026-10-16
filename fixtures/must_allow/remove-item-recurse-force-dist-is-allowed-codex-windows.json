@@ -1,0 +1,12 @@
+{
+  "name": "Remove-Item -Recurse -Force .\\dist is allowed (Codex, Windows)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "Remove-Item -Recurse -Force .\\dist"
+    }
+  },
+  "near": "shell.rm-recursive-cwd"
+}

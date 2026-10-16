@@ -1,0 +1,10 @@
+{
+  "name": "Read of a source file is allowed",
+  "payload": {
+    "tool_name": "Read",
+    "tool_input": {
+      "file_path": "src/guard/decide.ts"
+    }
+  },
+  "near": "tool.read-private-key"
+}

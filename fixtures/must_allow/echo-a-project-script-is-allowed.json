@@ -1,0 +1,10 @@
+{
+  "name": "echo >> a project script is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo 'export PATH=$PATH:./bin' >> scripts/env.sh"
+    }
+  },
+  "near": "shell.write-home-config"
+}

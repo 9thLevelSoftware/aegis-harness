@@ -1,0 +1,31 @@
+incident_id: BUG-2026-015
+date_recorded: 2026-10-16
+status: mitigated
+title: Approve-every-step friction made the harness something to route around
+observed_on: process (legion-flow, ouroboros)
+source:
+  - kind: repo
+    repo: 9thLevelSoftware/legion-flow
+    ref: ad5cb42
+    path: packages/persist/src/plan-validate.ts
+    note: refusal of shell operators at plan approval; every check approved before it runs
+  - kind: repo
+    repo: 9thLevelSoftware/ouroboros
+    ref: e655fd0
+    path: src/providers/codex/adapter.ts:123
+    note: deny-all permission profile, so every non-trivial action stopped the run
+root_cause: >-
+  A guard with no measured false-positive boundary is tuned by annoyance: it either blocks too much
+  and gets disabled, or is loosened until it blocks nothing.
+impact: >-
+  Both harnesses were run with permissions bypassed or not run at all.
+countermeasure:
+  kind: test
+  ref: tests/fixtures.test.ts
+  change: >-
+    Every rule must have a must_allow neighbour: a legitimate call that brushes against the rule
+    and must pass. A rule with no known false-positive boundary cannot be merged. False positives
+    from sessions are recorded with `ah bug add` and become fixtures before the rule changes.
+must_block_fixture: ""
+must_allow_fixture: fixtures/must_allow/git-push-force-with-lease-to-a-feature-branch-is-allowed.json
+expiry_policy: "permanent"

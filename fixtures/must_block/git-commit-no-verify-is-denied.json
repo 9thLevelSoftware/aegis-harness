@@ -1,0 +1,11 @@
+{
+  "name": "git commit --no-verify is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git commit -m \"wip\" --no-verify"
+    }
+  },
+  "rule": "shell.hook-bypass",
+  "source": "blueprint §3.2"
+}

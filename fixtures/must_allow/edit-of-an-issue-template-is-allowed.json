@@ -1,0 +1,13 @@
+{
+  "name": "Edit of an issue template is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": ".github/ISSUE_TEMPLATE/bug.md",
+      "old_string": "Describe the bug",
+      "new_string": "Describe the bug and how to reproduce it",
+      "replace_all": false
+    }
+  },
+  "near": "edit.ci-config"
+}

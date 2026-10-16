@@ -1,0 +1,10 @@
+{
+  "name": "git restore one file asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git restore src/index.ts"
+    }
+  },
+  "rule": "shell.git-discard-file"
+}

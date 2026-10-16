@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf /tmp/build-cache is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf /tmp/build-cache"
+    }
+  },
+  "near": "shell.rm-recursive-root",
+  "source": "blueprint §5 governance example"
+}

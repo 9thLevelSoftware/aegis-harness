@@ -1,0 +1,10 @@
+{
+  "name": "npm pack is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "npm pack"
+    }
+  },
+  "near": "shell.deploy-or-publish"
+}

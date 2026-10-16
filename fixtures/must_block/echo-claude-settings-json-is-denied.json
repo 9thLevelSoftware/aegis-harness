@@ -1,0 +1,10 @@
+{
+  "name": "echo > .claude/settings.json is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo '{}' > .claude/settings.json"
+    }
+  },
+  "rule": "shell.hook-tamper"
+}

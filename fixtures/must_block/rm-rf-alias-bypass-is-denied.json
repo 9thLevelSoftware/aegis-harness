@@ -1,0 +1,10 @@
+{
+  "name": "\\rm -rf / (alias bypass) is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "\\rm -rf /"
+    }
+  },
+  "rule": "shell.rm-recursive-root"
+}

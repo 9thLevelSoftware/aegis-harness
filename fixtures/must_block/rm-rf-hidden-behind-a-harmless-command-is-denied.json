@@ -1,0 +1,10 @@
+{
+  "name": "rm -rf / hidden behind a harmless command is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo cleaning && rm -rf / ; echo done"
+    }
+  },
+  "rule": "shell.rm-recursive-root"
+}

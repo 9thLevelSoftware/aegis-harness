@@ -1,0 +1,10 @@
+{
+  "name": "git switch main is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git switch main"
+    }
+  },
+  "near": "shell.git-discard-file"
+}
