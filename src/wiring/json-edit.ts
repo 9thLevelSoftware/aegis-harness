@@ -44,9 +44,10 @@ export function editJson(original: string | undefined, value: unknown, style: Js
   try {
     const bom = original.startsWith("﻿") ? "﻿" : "";
     const body = bom ? original.slice(1) : original;
+    const before: unknown = JSON.parse(body); // the scanner assumes valid JSON
     const root = new Scanner(body).document();
     const e = new Editor(body, style);
-    const out = bom + body.slice(0, root.start) + e.render(root, JSON.parse(body), value, body.includes("\n")) + body.slice(root.end);
+    const out = bom + body.slice(0, root.start) + e.render(root, before, value, body.includes("\n")) + body.slice(root.end);
     if (same(JSON.parse(out.replace(/^﻿/, "")), value)) return out;
   } catch (err) {
     if (!(err instanceof Unsupported) && !(err instanceof SyntaxError)) throw err;
@@ -82,7 +83,10 @@ class Scanner {
 
   private string(): string {
     const start = this.i++;
-    while (this.s[this.i] !== '"') this.i += this.s[this.i] === "\\" ? 2 : 1;
+    while (this.s[this.i] !== '"') {
+      if (this.i >= this.s.length) throw new Unsupported("unterminated string");
+      this.i += this.s[this.i] === "\\" ? 2 : 1;
+    }
     this.i++;
     return JSON.parse(this.s.slice(start, this.i)) as string;
   }
@@ -95,6 +99,7 @@ class Scanner {
     for (;;) {
       const lead = this.i;
       this.ws();
+      if (this.i >= this.s.length) throw new Unsupported("unterminated container");
       if (this.s[this.i] === (object ? "}" : "]")) break;
       const itemStart = this.i;
       let key: string | undefined;

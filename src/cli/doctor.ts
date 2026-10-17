@@ -136,7 +136,7 @@ function canaryLine(agent: "claude" | "codex", m: Machine, launch: Launch, timeo
   const failures: string[] = [];
   let slowest = 0;
   for (const c of canaries(agent, m.root, m.os === "win32" ? "\\" : "/")) {
-    const r = runCanary(launch, c.payload, { cwd: m.root, env, timeoutMs: Math.min(timeoutSec, 30) * 1000 });
+    const r = runCanary(launch, c.payload, { cwd: m.root, env, timeoutMs: Math.min(timeoutSec, 30) * 1000, agent });
     slowest = Math.max(slowest, r.ms);
     if (r.verdict === c.expect) results.push(`${c.label} ${c.expect === "deny" ? "refused" : "allowed"}`);
     else {

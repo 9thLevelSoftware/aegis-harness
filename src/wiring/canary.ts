@@ -19,12 +19,12 @@ export interface CanaryResult {
   stderr: string;
   ms: number;
   timedOut: boolean;
-  /** The permissionDecision the guard printed, "allow" for an empty stdout with exit 0, or null when unreadable. */
+  /** What the agent does with the hook's answer (verdictOf), or null when the answer is unreadable. */
   verdict: "deny" | "ask" | "allow" | null;
   error?: string;
 }
 
-export function runCanary(launch: Launch, payload: unknown, opts: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number }): CanaryResult {
+export function runCanary(launch: Launch, payload: unknown, opts: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number; agent?: "claude" | "codex" }): CanaryResult {
   const input = JSON.stringify(payload);
   const t0 = process.hrtime.bigint();
   const r =
@@ -37,22 +37,35 @@ export function runCanary(launch: Launch, payload: unknown, opts: { cwd: string;
   const started = !(err && !timedOut);
   const stdout = r.stdout ?? "";
   const stderr = r.stderr ?? "";
-  return { started, exitCode: r.status, stdout, stderr, ms, timedOut, verdict: started && !timedOut ? verdictOf(r.status, stdout) : null, error: err ? err.message : undefined };
+  return { started, exitCode: r.status, stdout, stderr, ms, timedOut, verdict: started && !timedOut ? verdictOf(r.status, stdout, stderr, opts.agent) : null, error: err ? err.message : undefined };
 }
 
-export function verdictOf(exitCode: number | null, stdout: string): CanaryResult["verdict"] {
-  if (exitCode === 2) return "deny";
+/**
+ * What the agent does with a hook's answer. Claude Code blocks on exit 2 or a
+ * deny and pauses on an ask. Codex 0.163 blocks only on exit 2 with a reason on
+ * stderr, a deny with a non-empty reason, or a legacy `decision: "block"`; it
+ * runs the call on an ask, a bare allow, a deny without a reason, or output it
+ * cannot read. A decision neither agent defines is unreadable (null).
+ */
+export function verdictOf(exitCode: number | null, stdout: string, stderr = "", agent: "claude" | "codex" = "claude"): CanaryResult["verdict"] {
+  const codex = agent === "codex";
+  if (exitCode === 2) return codex && stderr.trim() === "" ? "allow" : "deny";
   if (exitCode !== 0) return null;
   const text = stdout.trim();
   if (text === "") return "allow";
+  let out: { hookSpecificOutput?: { permissionDecision?: unknown; permissionDecisionReason?: unknown }; decision?: unknown };
   try {
-    const out = JSON.parse(text) as { hookSpecificOutput?: { permissionDecision?: string }; decision?: string };
-    const d = out.hookSpecificOutput?.permissionDecision ?? (out.decision === "block" ? "deny" : undefined);
-    if (d === "deny" || d === "ask" || d === "allow") return d;
-    return "allow";
+    out = JSON.parse(text);
   } catch {
-    return null;
+    return codex ? "allow" : null;
   }
+  const d = out.hookSpecificOutput?.permissionDecision;
+  const reason = out.hookSpecificOutput?.permissionDecisionReason;
+  if (d === undefined) return out.decision === "block" ? "deny" : "allow";
+  if (d === "deny") return codex && !(typeof reason === "string" && reason.trim() !== "") ? "allow" : "deny";
+  if (d === "ask") return codex ? "allow" : "ask";
+  if (d === "allow") return "allow";
+  return null;
 }
 
 export interface Canary {

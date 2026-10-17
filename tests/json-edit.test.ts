@@ -62,3 +62,11 @@ test("what it cannot edit in place is reformatted rather than guessed at", () =>
   assert.equal(editJson(undefined, { a: 1 }, detectStyle("")), '{\n  "a": 1\n}\n');
   assert.equal(editJson("  \n", { a: 1 }, detectStyle("  \n")), '{\n  "a": 1\n}\n');
 });
+
+test("text that is not JSON falls back to a plain reformat at once", () => {
+  for (const bad of ['{"a": "x', '{"a": 1', "[1, 2", '{"a": 1}}']) {
+    const t = performance.now();
+    assert.equal(editJson(bad, { a: 1 }, detectStyle(bad)), '{\n  "a": 1\n}\n', bad);
+    assert.ok(performance.now() - t < 100, bad);
+  }
+});

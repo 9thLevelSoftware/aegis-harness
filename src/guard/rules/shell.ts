@@ -3,6 +3,7 @@ import { ALLOW, ask, deny, strictest, type Context, type Decision, type ShellCal
 import { globToRegExp, hasVariable, isTempPath, normalize } from "../paths.ts";
 import { findSecrets, redact } from "../secrets.ts";
 import { allStages, flagsOf, parseShell, type Pipeline, type Stage } from "../shell.ts";
+import { AH_INIT_VALUED_OPTIONS } from "../../wiring/init-options.ts";
 
 const FORK_BOMB = /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/;
 
@@ -1168,7 +1169,7 @@ function ahCliRules(s: Stage): Decision[] {
     const a = args[i];
     const eq = a.startsWith("--") ? a.indexOf("=") : -1;
     const name = eq > 0 ? a.slice(0, eq) : a;
-    if (AH_INIT_VALUED.has(name)) flags.set(name, eq > 0 ? a.slice(eq + 1) : (args[++i] ?? ""));
+    if (AH_INIT_VALUED_OPTIONS.has(name)) flags.set(name, eq > 0 ? a.slice(eq + 1) : (args[++i] ?? ""));
     else flags.set(name, true);
   }
   if (flags.has("--dry-run")) return [];
@@ -1179,9 +1180,6 @@ function ahCliRules(s: Stage): Decision[] {
   if (what === null) return [];
   return [deny("shell.hook-tamper", `ah init ${what}`, "Hook wiring is how this project enforces its rules. Tell the user which refusal is in your way; changing the wiring is their call, made from their own terminal.")];
 }
-
-/** `ah init` options that take a value. */
-const AH_INIT_VALUED = new Set(["--agents", "--scope", "--root", "--ask-fallback", "--guard", "--node"]);
 
 /** The arguments after `ah` when the stage runs the ah CLI, else null. */
 function ahArgs(s: Stage): string[] | null {

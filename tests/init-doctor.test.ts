@@ -12,7 +12,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { doctor, type DoctorDeps } from "../src/cli/doctor.ts";
-import { init, parseInitArgs, type InitOptions } from "../src/cli/init.ts";
+import { init, INIT_HELP, parseInitArgs, type InitOptions } from "../src/cli/init.ts";
+import { AH_INIT_VALUED_OPTIONS } from "../src/wiring/init-options.ts";
 import { AGENTS_BLOCK_BODY } from "../src/wiring/agents-md.ts";
 import { BLOCK_BEGIN, BLOCK_END } from "../src/wiring/text-block.ts";
 
@@ -349,4 +350,15 @@ test("init options parse, and bad ones are rejected", () => {
   assert.equal(typeof parseInitArgs(["--agents", "cursor"]), "string");
   assert.equal(typeof parseInitArgs(["--scope", "global"]), "string");
   assert.equal(typeof parseInitArgs(["--bogus"]), "string");
+});
+
+test("the guard's list of ah init options that take a value matches ah init's parser", () => {
+  // shell.hook-tamper reads an agent's `ah init` with this list; a drift would let a value hide a flag.
+  const options = [...new Set(INIT_HELP.match(/--[a-z][a-z-]*/g) ?? [])];
+  assert.ok(options.length >= 10, options.join(" "));
+  for (const opt of options) {
+    const r = parseInitArgs([opt, "--remove"]);
+    const takesValue = typeof r === "string" || !r.remove;
+    assert.equal(takesValue, AH_INIT_VALUED_OPTIONS.has(opt), opt);
+  }
 });
