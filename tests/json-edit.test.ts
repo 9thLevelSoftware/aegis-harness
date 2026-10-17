@@ -54,11 +54,73 @@ test("number spelling and escapes in untouched values survive", () => {
   assert.equal(edit(original, (v) => ({ ...v, x: 2 })), '{"n": 1.50, "s": "\\u00e9", "x": 2}');
 });
 
-test("what it cannot edit in place is reformatted rather than guessed at", () => {
+test("a replaced element whose keys were in another order is written fresh in its place, and nothing else moves", () => {
+  // An ah group written by hand as {"hooks": ..., "matcher": ...} used to reformat the whole file.
+  const inline = '{\n  "n": 1.0,\n  "hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "node /x/dist/guard.mjs --agent claude"}], "matcher": "Bash"}]},\n  "big": 12345678901234567890\n}\n';
+  assert.equal(
+    edit(inline, (v) => ({ ...v, hooks: { PreToolUse: [group] } })),
+    '{\n  "n": 1.0,\n  "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "node guard.mjs"}]}]},\n  "big": 12345678901234567890\n}\n',
+  );
+  const lines = '{\n  "env": {"RATIO": 1.50},\n  "hooks": {\n    "PreToolUse": [\n      { "hooks": [ { "type": "command", "command": "node /x/dist/guard.mjs --agent claude" } ], "matcher": "Bash" }\n    ]\n  }\n}\n';
+  assert.equal(
+    edit(lines, (v) => ({ ...v, hooks: { PreToolUse: [group] } })),
+    '{\n  "env": {"RATIO": 1.50},\n  "hooks": {\n    "PreToolUse": [\n      {\n        "matcher": "Bash",\n        "hooks": [\n          {\n            "type": "command",\n            "command": "node guard.mjs"\n          }\n        ]\n      }\n    ]\n  }\n}\n',
+  );
+  const hug = '{\n  "PreToolUse": [{\n    "hooks": [],\n    "matcher": "Bash"\n  }]\n}\n';
+  assert.equal(edit(hug, () => ({ PreToolUse: [group] })), '{\n  "PreToolUse": [{\n    "matcher": "Bash",\n    "hooks": [\n      {\n        "type": "command",\n        "command": "node guard.mjs"\n      }\n    ]\n  }]\n}\n');
+});
+
+test("a user's entry keeps its text when ah's entry beside it, keys in another order, is lifted out", () => {
+  const original = '{\n  "hooks": {\n    "PreToolUse": [\n      {\n        "matcher": "Bash",\n        "hooks": [\n          { "type": "command", "timeout": 30.0, "command": "python3 audit.py" },\n          { "command": "node /x/dist/guard.mjs --agent claude", "type": "command" }\n        ]\n      }\n    ]\n  }\n}\n';
+  const out = edit(original, (v) => ({ hooks: { PreToolUse: [group, { matcher: "Bash", hooks: [v.hooks.PreToolUse[0].hooks[0]] }] } }));
+  assert.equal(
+    out,
+    '{\n  "hooks": {\n    "PreToolUse": [\n      {\n        "matcher": "Bash",\n        "hooks": [\n          {\n            "type": "command",\n            "command": "node guard.mjs"\n          }\n        ]\n      },\n      {\n        "matcher": "Bash",\n        "hooks": [\n          { "type": "command", "timeout": 30.0, "command": "python3 audit.py" }\n        ]\n      }\n    ]\n  }\n}\n',
+  );
+});
+
+test("members whose keys changed order, and elements that moved, keep their text", () => {
+  assert.equal(edit('{"a": 1.0, "b": 2}', () => ({ b: 2, a: 1 })), '{"b": 2, "a": 1.0}');
+  assert.equal(edit('{\n  "x": {"a": 1.0, "b": [2.50]},\n  "y": 1\n}\n', () => ({ x: { b: [2.5], a: 1, c: 3 }, y: 1 })), '{\n  "x": {"b": [2.50], "a": 1.0, "c": 3},\n  "y": 1\n}\n');
+  assert.equal(edit("[1.0, 2.50, 3]", () => [2.5, 1, 4]), "[2.50, 1.0, 4]");
+});
+
+test("whitespace before a comma, comma-first lines and `{ }` survive adding and removing a key", () => {
+  const add = (t: string) => edit(t, (v) => ({ ...v, hooks: { PreToolUse: [] } }));
+  const remove = (t: string) =>
+    edit(t, (v) => {
+      const { hooks: _, ...rest } = v;
+      return rest;
+    });
+  const cases: [string, string][] = [
+    ['{\n  "a": 1 ,\n  "b": 2\n}\n', '{\n  "a": 1 ,\n  "b": 2 ,\n  "hooks": {\n    "PreToolUse": []\n  }\n}\n'],
+    ['{\n  "a": 1\n, "b": 2\n}\n', '{\n  "a": 1\n, "b": 2\n, "hooks": {\n    "PreToolUse": []\n  }\n}\n'],
+    ["{ }\n", '{ "hooks": {"PreToolUse": []} }\n'],
+    ['{ "a": 1 }\n', '{ "a": 1, "hooks": {"PreToolUse": []} }\n'],
+    ['{"a": 1}', '{"a": 1, "hooks": {"PreToolUse": []}}'],
+  ];
+  for (const [original, added] of cases) {
+    assert.equal(add(original), added, original);
+    assert.equal(remove(added), original, original);
+  }
+});
+
+test("integer-like keys, which JSON.parse lists first, keep their place in the text", () => {
+  const original = '{\n  "b": 1,\n  "1": 2.0\n}\n';
+  const added = edit(original, (v) => ({ ...v, hooks: {} }));
+  assert.equal(added, '{\n  "b": 1,\n  "1": 2.0,\n  "hooks": {}\n}\n');
+  assert.equal(
+    edit(added, (v) => {
+      const { hooks: _, ...rest } = v;
+      return rest;
+    }),
+    original,
+  );
+});
+
+test("what it cannot map is reformatted rather than guessed at", () => {
   const dup = '{"a": 1, "a": 2}';
   assert.equal(editJson(dup, { a: 3 }, detectStyle(dup)), '{\n  "a": 3\n}\n');
-  const reordered = '{"a": 1, "b": 2}';
-  assert.equal(editJson(reordered, { b: 2, a: 1 }, detectStyle(reordered)), '{\n  "b": 2,\n  "a": 1\n}\n');
   assert.equal(editJson(undefined, { a: 1 }, detectStyle("")), '{\n  "a": 1\n}\n');
   assert.equal(editJson("  \n", { a: 1 }, detectStyle("  \n")), '{\n  "a": 1\n}\n');
 });
