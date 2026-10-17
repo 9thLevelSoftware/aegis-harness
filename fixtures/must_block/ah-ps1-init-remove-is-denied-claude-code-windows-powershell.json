@@ -1,0 +1,13 @@
+{
+  "name": "& ah.ps1 init --remove is denied (Claude Code, Windows PowerShell)",
+  "agent": "claude",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "& ./node_modules/.bin/ah.ps1 init --remove"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

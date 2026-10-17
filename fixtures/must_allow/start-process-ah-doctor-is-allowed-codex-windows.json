@@ -1,0 +1,13 @@
+{
+  "name": "Start-Process ah doctor is allowed (Codex, Windows)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "Start-Process ah -ArgumentList 'doctor' -Wait -NoNewWindow"
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

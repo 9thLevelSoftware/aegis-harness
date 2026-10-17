@@ -1,0 +1,11 @@
+{
+  "name": "yarn add left-pad is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "yarn add left-pad"
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

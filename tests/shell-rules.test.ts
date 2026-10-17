@@ -299,6 +299,28 @@ test("no decision over the fixture corpus carries an unexpanded template placeho
   }
 });
 
+test("ah init --remove is denied however the CLI is spelled; reading and dry runs pass (BUG-2026-019)", () => {
+  const denied = [
+    "./dist/ah.mjs init --remove", "node node_modules/.bin/ah init --remove", "bun run ah init --remove", "deno run -A dist/ah.mjs init --remove",
+    "env -S'ah init --remove'", "env --split-string='ah init --remove'", "pnpm --filter web exec ah init --remove", "pnpm -w exec ah init --remove", "pnpm exec -c 'ah init --remove'",
+    "yarn --cwd . ah init --remove", "npm --prefix . exec ah -- init --remove", "npm exec --call='ah init --remove'", "npx -c 'cd .. && ah init --uninstall'",
+    `python3 -c "import subprocess; subprocess.run(['ah', 'init', '--remove'])"`, `python3 -c "import os; os.system('ah init --ask-fallback warn')"`,
+    `node -e "require('child_process').execSync('node dist/ah.mjs init --ask-fallback=warn')"`, `ruby -e 'system("ah init --remove")'`, `perl -e 'system("aegis init --uninstall")'`,
+  ];
+  for (const c of denied) assert.equal(verdictOf(sh(c)), "deny shell.hook-tamper", c);
+  for (const c of ["Start-Process -Wait -FilePath ah -ArgumentList 'init','--guard','x.mjs'", "start ah 'init --remove'", "Invoke-Expression -Command 'ah init --remove'", "powershell -f node_modules\\.bin\\aegis.ps1 init --remove"]) {
+    assert.equal(verdictOf(win(c)), "deny shell.hook-tamper", c);
+  }
+  const allowed = [
+    "node scripts/build.mjs init --remove", "yarn ah doctor", "pnpm ah init", "npx -c 'ah doctor'", "pnpm exec -c 'ah init --remove --dry-run'",
+    `python3 -c "import subprocess; subprocess.run(['ah', 'init', '--dry-run', '--remove'])"`, `node -e "require('child_process').execSync('ah doctor')"`,
+    `node -e "console.log('ah init --remove unwires the guard')"`, `python3 -c "print('yeah init --remove')"`, "pnpm --filter web install", "yarn --cwd web run build",
+  ];
+  for (const c of allowed) assert.equal(sh(c).verdict, "allow", c);
+  assert.equal(win("Start-Process ah 'doctor'").verdict, "allow");
+  assert.equal(sh(`python3 -c "import os; os.system('ah init --remove')"`).reason, "python3 inline code runs ah init --remove removes the guard's hook wiring");
+});
+
 test("writes to the PowerShell profile are home rc-file writes", () => {
   for (const c of ["Set-Content -Path $PROFILE -Value 'x'", "Add-Content $PROFILE 'x'", "Out-File -FilePath $PROFILE -InputObject x", "echo 'x' >> $PROFILE", "Set-Content -Path $PROFILE.CurrentUserAllHosts -Value x"]) {
     assert.equal(verdictOf(win(c)), "deny shell.write-home-config", c);

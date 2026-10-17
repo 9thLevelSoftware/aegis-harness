@@ -1,0 +1,11 @@
+{
+  "name": "node -e running ah doctor through execSync is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "node -e \"require('child_process').execSync('ah doctor', { stdio: 'inherit' })\""
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

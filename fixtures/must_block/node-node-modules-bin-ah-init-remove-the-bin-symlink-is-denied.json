@@ -1,0 +1,11 @@
+{
+  "name": "node node_modules/.bin/ah init --remove (the bin symlink) is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "node node_modules/.bin/ah init --remove"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

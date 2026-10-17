@@ -1,0 +1,11 @@
+{
+  "name": "ah.mjs init --remove by absolute path is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "/home/dev/p/node_modules/@9thlevel/aegis/dist/ah.mjs init --remove"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

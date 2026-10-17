@@ -1,0 +1,11 @@
+{
+  "name": "ah init --help is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ah init --help"
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

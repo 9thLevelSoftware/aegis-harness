@@ -2,7 +2,7 @@ import { classifyPath, isBlockDevice, type PathInfo } from "../classify.ts";
 import { ALLOW, ask, deny, strictest, type Context, type Decision, type ShellCall } from "../model.ts";
 import { globToRegExp, hasVariable, isTempPath, normalize } from "../paths.ts";
 import { findSecrets, redact } from "../secrets.ts";
-import { allStages, flagsOf, parseShell, type Pipeline, type Stage } from "../shell.ts";
+import { allStages, flagsOf, normalizeCmd, parseShell, subcommandIndex, type Pipeline, type Stage } from "../shell.ts";
 import { AH_INIT_VALUED_OPTIONS } from "../../wiring/init-options.ts";
 
 const FORK_BOMB = /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/;
@@ -1151,6 +1151,10 @@ function interpreterRules(s: Stage): Decision[] {
   if (what !== null) {
     out.push(ask("shell.interpreter-destructive", `${s.cmd} inline code ${what}`, "Inline code cannot be checked the way a shell command can. Run the deletion as a plain command (`rm -rf <path>`) so the target is visible, or ask the user."));
   }
+  const tamper = EXEC_HINT.test(code) ? ahInitTamperInCode(code) : null;
+  if (tamper !== null) {
+    out.push(deny("shell.hook-tamper", `${s.cmd} inline code runs ah init ${tamper}`, AH_TAMPER_REMEDIATION));
+  }
   return out;
 }
 
@@ -1158,43 +1162,79 @@ function interpreterRules(s: Stage): Decision[] {
  * `ah init --remove` and `ah init --ask-fallback warn` are the sanctioned way to
  * unwire or weaken the guard, so an agent that was refused could reach for them.
  * Plain `ah init` (re-wiring) and `ah doctor` pass. Spelled as `ah`, `npx
- * @9thlevel/aegis`, or `node .../dist/ah.mjs`.
+ * @9thlevel/aegis`, `node .../dist/ah.mjs`, `./dist/ah.mjs`, `ah.ps1`,
+ * `pwsh -File ah.ps1`, `pnpm ah` or `yarn run ah`; the parser unwraps runners,
+ * `env -S`, `npx -c`, `iex` and `Start-Process` before this sees the stage.
  */
 function ahCliRules(s: Stage): Decision[] {
   const args = ahArgs(s);
   if (args === null || args[0] !== "init") return [];
+  const what = ahInitTamper(args.slice(1));
+  if (what === null) return [];
+  return [deny("shell.hook-tamper", `ah init ${what}`, AH_TAMPER_REMEDIATION)];
+}
+
+const AH_TAMPER_REMEDIATION = "Hook wiring is how this project enforces its rules. Tell the user which refusal is in your way; changing the wiring is their call, made from their own terminal.";
+
+/** What `ah init <options>` does to the guard's wiring, or null when it leaves the guard as strong as it is. */
+function ahInitTamper(options: readonly string[]): string | null {
   // Walk the options the way `ah init` parses them, so a flag's value is never read as a flag.
   const flags = new Map<string, string | true>();
-  for (let i = 1; i < args.length; i++) {
-    const a = args[i];
+  for (let i = 0; i < options.length; i++) {
+    const a = options[i];
     const eq = a.startsWith("--") ? a.indexOf("=") : -1;
     const name = eq > 0 ? a.slice(0, eq) : a;
-    if (AH_INIT_VALUED_OPTIONS.has(name)) flags.set(name, eq > 0 ? a.slice(eq + 1) : (args[++i] ?? ""));
+    if (AH_INIT_VALUED_OPTIONS.has(name)) flags.set(name, eq > 0 ? a.slice(eq + 1) : (options[++i] ?? ""));
     else flags.set(name, true);
   }
-  if (flags.has("--dry-run")) return [];
-  let what: string | null = null;
-  if (flags.has("--remove") || flags.has("--uninstall")) what = "--remove removes the guard's hook wiring";
-  else if (flags.get("--ask-fallback") === "warn") what = "--ask-fallback warn turns the guard's asks into warnings on Codex";
-  else if (flags.has("--guard") || flags.has("--node")) what = `${flags.has("--guard") ? "--guard" : "--node"} points the hook at a program other than the installed guard`;
-  if (what === null) return [];
-  return [deny("shell.hook-tamper", `ah init ${what}`, "Hook wiring is how this project enforces its rules. Tell the user which refusal is in your way; changing the wiring is their call, made from their own terminal.")];
+  if (flags.has("--dry-run")) return null;
+  if (flags.has("--remove") || flags.has("--uninstall")) return "--remove removes the guard's hook wiring";
+  if (flags.get("--ask-fallback") === "warn") return "--ask-fallback warn turns the guard's asks into warnings on Codex";
+  if (flags.has("--guard") || flags.has("--node")) return `${flags.has("--guard") ? "--guard" : "--node"} points the hook at a program other than the installed guard`;
+  return null;
 }
+
+/** The ah CLI by its bin name, or by the bundle file run through its shebang or an interpreter. `ah.cmd` and `ah.ps1` arrive normalized to `ah`. */
+const AH_COMMAND = /^(?:ah|aegis)(?:\.m?js)?$/;
 
 /** The arguments after `ah` when the stage runs the ah CLI, else null. */
 function ahArgs(s: Stage): string[] | null {
-  if (s.cmd === "ah" || s.cmd === "aegis") return s.argv.slice(1);
+  if (AH_COMMAND.test(s.cmd)) return s.argv.slice(1);
   if (["node", "nodejs", "bun", "deno"].includes(s.cmd)) {
     for (let i = 1; i < s.argv.length; i++) {
       const a = s.argv[i];
-      if (a === "run" && s.cmd === "deno") continue;
+      if (a === "run" && (s.cmd === "deno" || s.cmd === "bun")) continue;
       if (INTERPRETER_VALUED_FLAGS.has(a)) {
         i++;
         continue;
       }
       if (a.startsWith("-")) continue;
-      return /(^|[\\/])ah\.m?js$/i.test(a) ? s.argv.slice(i + 1) : null;
+      // `node dist/ah.mjs`, `node node_modules/.bin/ah` (the bin symlink), `bun ah`.
+      return AH_COMMAND.test(normalizeCmd(a)) ? s.argv.slice(i + 1) : null;
     }
+  }
+  if (s.cmd === "pwsh" || s.cmd === "powershell") {
+    // `pwsh -File node_modules/.bin/ah.ps1 init --remove`: the script's own arguments follow it.
+    const i = s.argv.findIndex((a) => /^-(f|file)$/i.test(a));
+    return i > 0 && AH_COMMAND.test(normalizeCmd(s.argv[i + 1] ?? "")) ? s.argv.slice(i + 2) : null;
+  }
+  if (s.cmd === "pnpm" || s.cmd === "yarn") {
+    // `pnpm ah`, `yarn ah`, `yarn run ah`: the package manager runs a local bin by name.
+    let k = subcommandIndex(s.argv);
+    if (s.argv[k] === "run") k++;
+    return AH_COMMAND.test(normalizeCmd(s.argv[k] ?? "")) ? s.argv.slice(k + 1) : null;
+  }
+  return null;
+}
+
+/** An `ah init` command line inside code, as one string or an argv list: `'ah init --remove'`, `['ah', 'init', '--remove']`. Runs to the end of the call or statement. */
+const AH_INIT_IN_CODE = /(?<![\w.-])(?:ah|aegis)(?:\.m?js)?['"]?(?:\s*,\s*['"]?|\s+)init\b([^;)\n]*)/g;
+
+/** What an `ah init` spelled in inline code does to the guard, or null when the code runs none that weakens it. */
+function ahInitTamperInCode(code: string): string | null {
+  for (const m of code.matchAll(AH_INIT_IN_CODE)) {
+    const what = ahInitTamper(m[1].split(/[\s'",\][]+/).filter((w) => w !== ""));
+    if (what !== null) return what;
   }
   return null;
 }

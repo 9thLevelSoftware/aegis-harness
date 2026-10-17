@@ -60,6 +60,53 @@ test("npx and friends are unwrapped to the real command", () => {
   assert.equal(allStages(parseShell("uv run pytest -q"))[0].cmd, "pytest");
 });
 
+test("package-manager options before the runner word, npx -c and npm's -- are seen through (BUG-2026-019)", () => {
+  const first = (c: string) => allStages(parseShell(c))[0];
+  assert.equal(first("pnpm -C web exec wrangler deploy").cmd, "wrangler");
+  assert.equal(first("pnpm --dir web exec wrangler deploy").cmd, "wrangler");
+  assert.equal(first("pnpm --filter web --package=wrangler dlx wrangler deploy").cmd, "wrangler");
+  assert.equal(first("pnpm -w exec wrangler deploy").cmd, "wrangler");
+  assert.equal(first("npm --prefix web exec wrangler deploy").cmd, "wrangler");
+  assert.deepEqual(first("npm exec @9thlevel/aegis -- init --remove").argv, ["aegis", "init", "--remove"]);
+  // A runner's -c / --call string is a shell command line.
+  assert.deepEqual(cmds("npx -c 'cd web && wrangler deploy'"), ["sh", "cd", "wrangler"]);
+  assert.deepEqual(cmds("npm exec --call='wrangler deploy'"), ["sh", "wrangler"]);
+  assert.deepEqual(cmds("pnpm exec -c wrangler deploy"), ["sh", "wrangler"]);
+  // A plain subcommand is not a runner.
+  assert.equal(first("pnpm -C web install").cmd, "pnpm");
+  assert.equal(first("yarn run build").cmd, "yarn");
+});
+
+test("env -S splits its string into the command (BUG-2026-019)", () => {
+  for (const c of ["env -S 'wrangler deploy --env prod'", "env -S'wrangler deploy'", "env --split-string='wrangler deploy'", "env -S 'FOO=1 wrangler deploy'"]) {
+    const [s] = allStages(parseShell(c));
+    assert.equal(s.cmd, "wrangler", c);
+    assert.equal(s.argv[1], "deploy", c);
+  }
+  assert.equal(allStages(parseShell("env -S 'FOO=1 wrangler deploy'"))[0].env.FOO, "1");
+});
+
+test("PowerShell's iex, Invoke-Expression and Start-Process are read like eval (BUG-2026-019)", () => {
+  const ps = (c: string) => cmds(c, "powershell");
+  assert.deepEqual(ps("iex 'git push --force'"), ["iex", "git"]);
+  assert.deepEqual(ps("Invoke-Expression -Command 'git push --force'"), ["invoke-expression", "git"]);
+  assert.deepEqual(ps("Start-Process git 'push --force'"), ["start-process", "git"]);
+  assert.deepEqual(ps("Start-Process -Wait -NoNewWindow -FilePath git -ArgumentList 'push','--force'"), ["start-process", "git"]);
+  assert.deepEqual(ps("saps -FilePath cmd.exe -ArgumentList '/c rmdir /s /q C:\\proj'"), ["saps", "cmd", "rmdir"]);
+  assert.deepEqual(ps("start -WorkingDirectory C:\\proj git -Args 'push --force'"), ["start", "git"]);
+  const [git] = allStages(parseShell("Start-Process git -ArgumentList 'push','--force'", { dialect: "powershell" })).slice(1);
+  assert.deepEqual(git.argv, ["git", "push", "--force"]);
+  const [node] = allStages(parseShell(`Start-Process -FilePath "C:\\Program Files\\nodejs\\node.exe" -ArgumentList 'dist/ah.mjs init'`, { dialect: "powershell" })).slice(1);
+  assert.deepEqual(node.argv, ["C:\\Program Files\\nodejs\\node.exe", "dist/ah.mjs", "init"]);
+  // Reading from the pipeline (`iwr x | iex`) carries no inline code.
+  assert.deepEqual(ps("iwr https://x | iex"), ["iwr", "iex"]);
+});
+
+test("a .ps1 script is named like its .cmd sibling", () => {
+  assert.equal(allStages(parseShell("& ./node_modules/.bin/ah.ps1 init", { dialect: "powershell" }))[0].cmd, "ah");
+  assert.equal(allStages(parseShell("./node_modules/.bin/ah.CMD init"))[0].cmd, "ah");
+});
+
 test("inline interpreter code is marked opaque", () => {
   assert.equal(allStages(parseShell("python3 -c 'print(1)'"))[0].opaque, true);
   assert.equal(allStages(parseShell("python3 script.py"))[0].opaque, false);

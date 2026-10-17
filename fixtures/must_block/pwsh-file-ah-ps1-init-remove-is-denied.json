@@ -1,0 +1,11 @@
+{
+  "name": "pwsh -File ah.ps1 init --remove is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "pwsh -File node_modules/.bin/ah.ps1 init --remove"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

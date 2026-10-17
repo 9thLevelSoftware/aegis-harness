@@ -1,0 +1,11 @@
+{
+  "name": "python3 -c running ah init --remove through os.system is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 -c \"import os; os.system('ah init --remove')\""
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}
