@@ -1,0 +1,11 @@
+{
+  "name": "ah init --remove hidden behind a flag value that swallows --dry-run is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ah init --root --dry-run --remove"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

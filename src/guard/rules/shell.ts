@@ -1162,14 +1162,26 @@ function interpreterRules(s: Stage): Decision[] {
 function ahCliRules(s: Stage): Decision[] {
   const args = ahArgs(s);
   if (args === null || args[0] !== "init") return [];
-  const rest = args.slice(1);
-  const removes = rest.some((a) => a === "--remove" || a === "--uninstall");
-  const warnAt = rest.findIndex((a) => a === "--ask-fallback" || a.startsWith("--ask-fallback="));
-  const weakens = warnAt >= 0 && (rest[warnAt].includes("=") ? rest[warnAt].split("=")[1] : rest[warnAt + 1]) === "warn";
-  if ((!removes && !weakens) || rest.includes("--dry-run")) return [];
-  const what = removes ? "removes the guard's hook wiring" : "turns the guard's asks into warnings on Codex";
-  return [deny("shell.hook-tamper", `ah init ${removes ? "--remove" : "--ask-fallback warn"} ${what}`, "Hook wiring is how this project enforces its rules. Tell the user which refusal is in your way; changing the wiring is their call, made from their own terminal.")];
+  // Walk the options the way `ah init` parses them, so a flag's value is never read as a flag.
+  const flags = new Map<string, string | true>();
+  for (let i = 1; i < args.length; i++) {
+    const a = args[i];
+    const eq = a.startsWith("--") ? a.indexOf("=") : -1;
+    const name = eq > 0 ? a.slice(0, eq) : a;
+    if (AH_INIT_VALUED.has(name)) flags.set(name, eq > 0 ? a.slice(eq + 1) : (args[++i] ?? ""));
+    else flags.set(name, true);
+  }
+  if (flags.has("--dry-run")) return [];
+  let what: string | null = null;
+  if (flags.has("--remove") || flags.has("--uninstall")) what = "--remove removes the guard's hook wiring";
+  else if (flags.get("--ask-fallback") === "warn") what = "--ask-fallback warn turns the guard's asks into warnings on Codex";
+  else if (flags.has("--guard") || flags.has("--node")) what = `${flags.has("--guard") ? "--guard" : "--node"} points the hook at a program other than the installed guard`;
+  if (what === null) return [];
+  return [deny("shell.hook-tamper", `ah init ${what}`, "Hook wiring is how this project enforces its rules. Tell the user which refusal is in your way; changing the wiring is their call, made from their own terminal.")];
 }
+
+/** `ah init` options that take a value. */
+const AH_INIT_VALUED = new Set(["--agents", "--scope", "--root", "--ask-fallback", "--guard", "--node"]);
 
 /** The arguments after `ah` when the stage runs the ah CLI, else null. */
 function ahArgs(s: Stage): string[] | null {
