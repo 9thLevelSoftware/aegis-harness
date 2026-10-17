@@ -1,0 +1,12 @@
+{
+  "name": "Rename-Item .codex\\hooks.json is denied",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Rename-Item .codex\\hooks.json hooks.json.off"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

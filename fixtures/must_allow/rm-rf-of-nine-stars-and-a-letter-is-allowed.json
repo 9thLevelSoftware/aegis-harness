@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf of nine stars and a letter is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf *********Z"
+    }
+  },
+  "near": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-019"
+}

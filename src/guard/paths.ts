@@ -16,10 +16,34 @@ export function isAbsolute(p: string): boolean {
   return p.startsWith("/") || /^[A-Za-z]:(\/|$)/.test(p);
 }
 
+/** Text normalize would change: a backslash, a doubled slash, or a `.` or `..` segment (`C:.` included). */
+const UNNORMAL = /\\|\/\/|(?:^|\/|^[A-Za-z]:)\.{1,2}(?:\/|$)/;
+
 /** Resolve `.` and `..` segments lexically. Keeps a leading drive or `/`. */
+/**
+ * The word without the quotes at either end. A loop rather than `/^["']+|["']+$/`, which tries
+ * the end anchor from every quote of a run inside the word and takes time in its square.
+ */
+export function stripQuotes(s: string): string {
+  let a = 0;
+  let b = s.length;
+  while (a < b && (s[a] === '"' || s[a] === "'")) a++;
+  while (b > a && (s[b - 1] === '"' || s[b - 1] === "'")) b--;
+  return s.slice(a, b);
+}
+
+/** The path without trailing separators, by the same loop and for the same reason. */
+export function trimSeparators(s: string): string {
+  let b = s.length;
+  while (b > 0 && (s[b - 1] === "/" || s[b - 1] === "\\")) b--;
+  return s.slice(0, b);
+}
+
 export function normalize(p: string): string {
+  // Most paths reach here already normal, many times each for a long command.
+  if (p !== "" && !UNNORMAL.test(p) && !(p.length > 1 && p.endsWith("/")) && p.trim() === p) return p;
   const s = toPosix(p);
-  const m = /^([A-Za-z]:)?(\/)?(.*)$/.exec(s);
+  const m = /^([A-Za-z]:)?(\/)?(.*)$/s.exec(s);
   const drive = m?.[1] ?? "";
   const rooted = m?.[2] ?? "";
   const rest = m?.[3] ?? "";
@@ -140,7 +164,7 @@ function compileGlob(glob: string, platform: Platform): RegExp {
   // `rm -rf .harness` is the same act as `rm -rf .harness/*`.
   if (glob.endsWith("/**")) {
     const inner = globToRegExp(glob.slice(0, -3), platform).source.replace(/^\^|\$$/g, "");
-    return new RegExp(`^${inner}(?:/.*)?$`, platform === "windows" ? "i" : "");
+    return new RegExp(`^${inner}(?:/.*)?$`, platform === "windows" ? "is" : "s");
   }
   let re = "";
   for (let i = 0; i < glob.length; i++) {
@@ -177,7 +201,7 @@ function compileGlob(glob: string, platform: Platform): RegExp {
       re += c;
     }
   }
-  return new RegExp(`^${re}$`, platform === "windows" ? "i" : "");
+  return new RegExp(`^${re}$`, platform === "windows" ? "is" : "s");
 }
 
 /**
@@ -188,14 +212,188 @@ function compileGlob(glob: string, platform: Platform): RegExp {
 export function matchGlobs(rel: string, globs: readonly string[], platform: Platform): string | undefined {
   const path = toPosix(rel);
   const base = path.slice(path.lastIndexOf("/") + 1);
-  for (const g of globs) {
-    const target = g.includes("/") ? path : base;
-    if (globToRegExp(g, platform).test(target)) return g;
+  const compiled = compiledList(globs, platform);
+  for (let i = 0; i < globs.length; i++) {
+    const c = compiled[i];
+    if (c.whole ? c.whole.test(path) : c.name(base)) return globs[i];
   }
   return undefined;
+}
+
+type CompiledGlob = { whole: RegExp; name?: undefined } | { whole?: undefined; name: (name: string) => boolean };
+
+/** A policy list compiled once per platform; the lists are static and judged against every word of a command. */
+const LIST_CACHE = new WeakMap<readonly string[], Partial<Record<Platform, CompiledGlob[]>>>();
+
+/**
+ * A glob with `/` as a RegExp (the policy's are a literal head and `/**`, which match in one pass);
+ * a basename glob as a segment matcher, one per `{a,b}` alternative, since a RegExp of
+ * `*baseline*.json` backtracks over a long name in time proportional to its square.
+ */
+function compiledList(globs: readonly string[], platform: Platform): CompiledGlob[] {
+  let byPlatform = LIST_CACHE.get(globs);
+  if (byPlatform === undefined) LIST_CACHE.set(globs, (byPlatform = {}));
+  return (byPlatform[platform] ??= globs.map((g): CompiledGlob => {
+    if (g.includes("/")) return { whole: globToRegExp(g, platform) };
+    const each = alternatives(g).map((a) => segmentMatcher(a.replace(/\[/g, "[[]"), platform, true));
+    return { name: (n) => each.some((m) => m(n)) };
+  }));
+}
+
+/** `{a,b}` expanded as globToRegExp reads it: to the next `}`, one level, an unclosed `{` literal. */
+function alternatives(glob: string): string[] {
+  const open = glob.indexOf("{");
+  const close = open < 0 ? -1 : glob.indexOf("}", open);
+  if (close < 0) return [glob];
+  const head = glob.slice(0, open);
+  const tails = alternatives(glob.slice(close + 1));
+  return glob.slice(open + 1, close).split(",").flatMap((a) => tails.map((t) => head + a + t));
 }
 
 export function basename(p: string): string {
   const s = toPosix(p);
   return s.slice(s.lastIndexOf("/") + 1);
+}
+
+type GlobToken = { kind: "star" } | { kind: "one" } | { kind: "class"; negate: boolean; test: (c: string) => boolean } | { kind: "lit"; ch: string };
+
+/** The POSIX character classes of a bracket expression; a name sh does not know counts as any character. */
+const POSIX_CLASSES: Record<string, RegExp> = Object.assign(Object.create(null) as Record<string, RegExp>, {
+  alnum: /[\p{L}\p{N}]/u,
+  alpha: /\p{L}/u,
+  ascii: /[\x00-\x7f]/,
+  blank: /[ \t]/,
+  cntrl: /[\x00-\x1f\x7f]/,
+  digit: /[0-9]/,
+  graph: /[^\s\x00-\x1f\x7f]/,
+  lower: /\p{Ll}/u,
+  print: /[^\x00-\x1f\x7f]/,
+  punct: /[!-/:-@[-`{-~]/,
+  space: /\s/,
+  upper: /\p{Lu}/u,
+  word: /[\p{L}\p{N}_]/u,
+  xdigit: /[0-9A-Fa-f]/,
+});
+
+/**
+ * The bracket expressions of a sh glob segment: `bracketAt(i)` reads the one opening at `seg[i]`
+ * as bash does (`!` or `^` negates, a `]` first is a member, ranges, `[:alpha:]`, `[=c=]` and
+ * `[.c.]`) and gives where it closes and a membership test, or null when it never closes and the
+ * `[` is a plain character. Past its first character a search goes the same way wherever it
+ * started, so the positions a search that never closed passed through end any later search that
+ * reaches them: a segment of thousands of `[` or `[[:x:]` costs its length, and where each `:]`,
+ * `=]` and `.]` next closes is worked out once. A test is worked out once per character. A class
+ * bash may not know (`[:x:]`, `[.space.]`) could match any character, negated or not, so the
+ * bracket is taken to match every character: the guard asks what a glob may name.
+ */
+export function bracketReader(seg: string, platform: Platform): (i: number) => { end: number; negate: boolean; test: (c: string) => boolean } | null {
+  const lastClose = seg.lastIndexOf("]");
+  const nexts = new Map<string, Int32Array>();
+  // Where the next `${kind}]` starts at or after each position, or -1.
+  const nextClose = (kind: string, from: number): number => {
+    let next = nexts.get(kind);
+    if (next === undefined) {
+      next = new Int32Array(seg.length + 1).fill(-1);
+      for (let p = seg.length - 2; p >= 0; p--) next[p] = seg[p] === kind && seg[p + 1] === "]" ? p : next[p + 1];
+      nexts.set(kind, next);
+    }
+    return from < seg.length ? next[from] : -1;
+  };
+  const folds = platform === "windows";
+  const dead = new Uint8Array(seg.length);
+  return (i) => {
+    if (seg[i] !== "[" || lastClose <= i) return null;
+    let k = i + 1;
+    const negate = seg[k] === "!" || seg[k] === "^";
+    if (negate) k++;
+    const singles = new Set<string>();
+    const ranges: [string, string][] = [];
+    const classes: RegExp[] = [];
+    const passed: number[] = [];
+    let anything = false;
+    for (let first = true; k < seg.length; k++, first = false) {
+      if (!first) {
+        if (dead[k] === 1) k = seg.length;
+        if (k === seg.length) break;
+        passed.push(k);
+      }
+      const c = seg[k];
+      if (c === "]" && !first) break;
+      const kind = seg[k + 1];
+      const close = c === "[" && (kind === ":" || kind === "=" || kind === ".") ? nextClose(kind, k + 2) : -1;
+      if (close >= 0) {
+        // No class name is longer than "xdigit": a longer one is never sliced out.
+        const name = close - k - 2 <= 8 ? seg.slice(k + 2, close) : "";
+        if (kind !== ":" && name.length === 1) singles.add(name);
+        else if (kind === ":" && Object.hasOwn(POSIX_CLASSES, name)) classes.push(POSIX_CLASSES[name]);
+        else anything = true;
+        k = close + 1;
+      } else if (kind === "-" && k + 2 < seg.length && seg[k + 2] !== "]") {
+        if (c <= seg[k + 2]) ranges.push([c, seg[k + 2]]);
+        k += 2;
+      } else singles.add(c);
+    }
+    if (k >= seg.length) {
+      for (const at of passed) dead[at] = 1;
+      return null;
+    }
+    const known = new Map<string, boolean>();
+    const member = (ch: string) =>
+      anything || singles.has(ch) || ranges.some(([a, b]) => ch >= a && ch <= b) || classes.some((re) => re.test(ch));
+    const test = (ch: string): boolean => {
+      let m = known.get(ch);
+      if (m === undefined) known.set(ch, (m = member(ch) || (folds && (member(ch.toLowerCase()) || member(ch.toUpperCase())))));
+      return m;
+    };
+    return { end: k, negate: negate && !anything, test };
+  };
+}
+
+/**
+ * One segment of a sh glob as a matcher. A wildcard does not match a leading dot unless the
+ * pattern spells it (sh without dotglob, Git Bash included); with `dots` it does, as PowerShell
+ * and cmd wildcards do. On Windows it case folds. A reversed range (`[z-a]`) matches nothing, as
+ * in bash. It runs in time proportional to the name times the pattern, never backtracking more:
+ * a RegExp of `*********Z` took seconds on a short name.
+ */
+export function segmentMatcher(seg: string, platform: Platform, dots: boolean): (name: string) => boolean {
+  const fold = platform === "windows" ? (c: string) => c.toLowerCase() : (c: string) => c;
+  const bracketAt = bracketReader(seg, platform);
+  const toks: GlobToken[] = [];
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    const bracket = c === "[" ? bracketAt(i) : null;
+    if (c === "*") {
+      if (toks[toks.length - 1]?.kind !== "star") toks.push({ kind: "star" });
+    } else if (c === "?") toks.push({ kind: "one" });
+    else if (bracket !== null) {
+      toks.push({ kind: "class", negate: bracket.negate, test: bracket.test });
+      i = bracket.end;
+    } else toks.push({ kind: "lit", ch: fold(c) });
+  }
+  const one = (t: GlobToken, ch: string): boolean =>
+    t.kind === "one" || (t.kind === "lit" && t.ch === fold(ch)) || (t.kind === "class" && t.test(ch) !== t.negate);
+  const lead = !dots && /[*?[]/.test(seg[0] ?? "");
+  return (name: string): boolean => {
+    if (lead && name.startsWith(".")) return false;
+    let p = 0;
+    let n = 0;
+    let star = -1;
+    let resume = 0;
+    while (n < name.length) {
+      const t = toks[p];
+      if (t !== undefined && t.kind === "star") {
+        star = p++;
+        resume = n;
+      } else if (t !== undefined && one(t, name[n])) {
+        p++;
+        n++;
+      } else if (star >= 0) {
+        p = star + 1;
+        n = ++resume;
+      } else return false;
+    }
+    while (toks[p]?.kind === "star") p++;
+    return p === toks.length;
+  };
 }

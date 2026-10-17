@@ -1,0 +1,13 @@
+{
+  "name": "Invoke-Expression 'ah init --remove' is denied (Claude Code, Windows PowerShell)",
+  "agent": "claude",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Invoke-Expression 'ah init --remove'"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

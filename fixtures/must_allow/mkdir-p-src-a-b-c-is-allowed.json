@@ -1,0 +1,11 @@
+{
+  "name": "mkdir -p src/{a,b}/c is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mkdir -p src/{a,b}/c"
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

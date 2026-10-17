@@ -1,0 +1,11 @@
+{
+  "name": "rm -f dist/*.js, a wildcard that names only an extension, is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -f dist/*.js"
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

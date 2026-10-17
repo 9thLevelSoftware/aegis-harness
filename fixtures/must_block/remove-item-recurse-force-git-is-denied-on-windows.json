@@ -1,0 +1,12 @@
+{
+  "name": "Remove-Item -Recurse -Force .GIT is denied on Windows",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Remove-Item -Recurse -Force .GIT"
+    }
+  },
+  "rule": "shell.rm-git-dir",
+  "source": "BUG-2026-019"
+}

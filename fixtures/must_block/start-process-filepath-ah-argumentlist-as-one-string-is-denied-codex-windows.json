@@ -1,0 +1,13 @@
+{
+  "name": "Start-Process -FilePath ah -ArgumentList as one string is denied (Codex, Windows)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "Start-Process -FilePath ah -ArgumentList 'init --remove'"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

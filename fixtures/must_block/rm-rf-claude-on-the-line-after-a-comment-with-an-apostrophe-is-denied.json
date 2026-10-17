@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf .claude on the line after a comment with an apostrophe is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo hi # it's\nrm -rf .claude\n# '"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

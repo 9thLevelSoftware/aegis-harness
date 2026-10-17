@@ -1,0 +1,11 @@
+{
+  "name": "echo {1..5000}, a sequence past the expansion limit, asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo {1..5000}"
+    }
+  },
+  "rule": "shell.brace-expansion-limit",
+  "source": "BUG-2026-019"
+}

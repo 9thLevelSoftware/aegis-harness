@@ -1,0 +1,13 @@
+{
+  "name": "Codex apply_patch deleting ../.codex/hooks.json from a subdirectory session is denied",
+  "agent": "codex",
+  "cwd": "/home/dev/project/sub",
+  "payload": {
+    "tool_name": "apply_patch",
+    "tool_input": {
+      "command": "*** Begin Patch\n*** Delete File: ../.codex/hooks.json\n*** End Patch"
+    }
+  },
+  "rule": "edit.hook-config",
+  "source": "BUG-2026-019"
+}

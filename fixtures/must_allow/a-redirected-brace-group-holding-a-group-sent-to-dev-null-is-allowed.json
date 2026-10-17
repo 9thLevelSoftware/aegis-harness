@@ -1,0 +1,11 @@
+{
+  "name": "a redirected brace group holding a group sent to /dev/null is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "{ { npm ci; } > /dev/null; } > ci.log"
+    }
+  },
+  "near": "shell.write-system-path",
+  "source": "BUG-2026-019"
+}

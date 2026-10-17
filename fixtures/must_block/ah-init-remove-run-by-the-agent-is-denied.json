@@ -1,0 +1,11 @@
+{
+  "name": "ah init --remove run by the agent is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ah init --remove"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

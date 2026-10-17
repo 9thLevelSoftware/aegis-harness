@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf of the home directory inside an if block is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "if true; then rm -rf /home/dev; fi"
+    }
+  },
+  "rule": "shell.rm-recursive-home",
+  "source": "BUG-2026-019"
+}

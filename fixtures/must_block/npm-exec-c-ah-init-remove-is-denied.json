@@ -1,0 +1,11 @@
+{
+  "name": "npm exec -c 'ah init --remove' is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "npm exec -c 'ah init --remove'"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

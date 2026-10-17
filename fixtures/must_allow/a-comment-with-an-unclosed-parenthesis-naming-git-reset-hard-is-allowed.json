@@ -1,0 +1,11 @@
+{
+  "name": "a comment with an unclosed parenthesis naming git reset --hard is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git status # avoid (git reset --hard here"
+    }
+  },
+  "near": "shell.git-discard-changes",
+  "source": "BUG-2026-019"
+}

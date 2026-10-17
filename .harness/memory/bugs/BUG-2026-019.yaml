@@ -1,0 +1,319 @@
+incident_id: BUG-2026-019
+date_recorded: 2026-10-17
+status: mitigated
+title: Hand-wired hooks depended on agent loading rules nobody had checked, and the agent could unwire them
+observed_on: process (aegis-harness, building ah init and ah doctor against Claude Code 2.1.302 and Codex 0.163.0)
+source:
+  - kind: doc
+    path: https://code.claude.com/docs/en/hooks
+    note: >-
+      Read with the settings and memory pages on 2026-10-17 and checked against the 2.1.302 binary
+      and `claude doctor`. Hooks from every settings file run; copies with the same command, args,
+      shell and `if` run once, with one copy's timeout and onFailure. One invalid PreToolUse entry
+      (a non-string matcher, a bad onFailure, a non-positive timeout) makes Claude Code load nothing
+      from that file. Unknown keys on a hook entry are dropped on the next settings write, so a
+      marker key cannot identify ah's entry. .claude/settings.json is read only from the directory
+      a session starts in; .claude/settings.local.json from the repository root. Exec form
+      (command + args) runs with no shell and, without onFailure "block", fails open. The tool list
+      gained Workflow. Interactive sessions run no settings-file hook until workspace trust is
+      accepted. AGENTS.md is read only when no CLAUDE.md is present.
+  - kind: doc
+    path: https://developers.openai.com/codex/hooks
+    note: >-
+      Read on 2026-10-17 and checked by loading test files with the 0.163.0 binary's app-server
+      (hooks/list, network off, scratch CODEX_HOME). hooks.json takes only description and hooks at
+      the top level; another key, a string timeout or an unknown handler type rejects the whole
+      file. Every source runs and a duplicate runs twice. Trust is recorded in config.toml under
+      hooks.state."<file>:pre_tool_use:<group>:<handler>" with a hash of the entry, so inserting a
+      group before a user's group makes Codex distrust theirs. Project hooks load only for a
+      trusted project; features.hooks = false turns all hooks off. An untrusted project's
+      AGENTS.md is not read, and only the first 32 KiB of AGENTS.md files are.
+  - kind: incident
+    path: .harness/memory/bugs/BUG-2026-014.yaml
+    note: the hand-wiring rule this record replaces with ah init and a canary
+  - kind: incident
+    path: .harness/memory/bugs/BUG-2026-018.yaml
+    note: the earlier time a hook contract written from memory was wrong
+  - kind: session
+    date: 2026-10-17
+    note: >-
+      A review of the guard after ah init landed ran each bypass listed under impact through
+      dist/guard.mjs and got allow (Write/Edit of the top level's settings.local.json from a
+      subdirectory got ask). Checked with the real binaries: Codex 0.163 in a linked worktree loads
+      project hooks from the main checkout (a session in <wt>/sub loads <main>/.codex/hooks.json and
+      <main>/sub/.codex/hooks.json, never the worktree's); Claude Code 2.1.302's Monitor tool runs
+      tool_input.command in the background, "uses the same permission rules as Bash", and runs it
+      through Git Bash on Windows.
+  - kind: session
+    date: 2026-10-17
+    note: >-
+      An adversarial review of that fix ran the second list under impact through dist/guard.mjs
+      and got allow for each. pwsh 7 treats its first positional word as -File and powershell.exe
+      as -Command, and both accept any unambiguous prefix of a parameter name; pnpm documents -c
+      and --shell-mode as one option of exec and dlx.
+  - kind: session
+    date: 2026-10-17
+    note: >-
+      A third review, of ah init and ah doctor on Windows, WSL and linked worktrees, checked with
+      the binaries: Claude Code on Windows reads .claude/settings.local.json only from the folder a
+      session starts in, keys workspace trust with forward slashes and looks it up at the main
+      checkout, then from the session folder up to the git top level, and takes managed policy from
+      HKLM and HKCU SOFTWARE\Policies\ClaudeCode (value Settings) as well as files, the first
+      source to set a key winning (HKLM, then files, then HKCU); Codex reads a linked worktree's
+      .codex/hooks.json and config.toml from the main checkout but its AGENTS.md from the worktree.
+      Git for Windows' default core.symlinks=false checks a committed symlink out as a plain file
+      holding the link's target, and git takes an edit to it for a new target.
+  - kind: session
+    date: 2026-10-17
+    note: >-
+      A fifth review ran the fourth fix's new matching against bash: bash 5.2 expands
+      `{e..e}` and `{01..3}` sequences, expands `a{b,'c'}` and `"x"{a,b}` with the quoted part kept
+      literal, drops a word that expands to nothing (`{,}`), and treats a reversed range `[z-a]` as
+      matching nothing.
+  - kind: session
+    date: 2026-10-17
+    note: >-
+      A sixth review checked here-documents and quoting against bash 5.2: a here-document body is
+      never brace-expanded or run, its substitutions run when the delimiter is unquoted, the last of
+      `cat <<A <<B` is stdin, and `<<` in a comment, quotes or `$(( ))` starts none. `$'...'`
+      decodes escapes (`\x2e`, `\056`, `\u0061`) and lets `\'` stay inside; `$$'x'` is the pid
+      then 'x'; `$"..."` quotes like "...".
+  - kind: session
+    date: 2026-10-17
+    note: >-
+      A seventh review timed the sixth fix: inputs of tens of KB (here-document operators whose
+      delimiter never comes, quoted bodies full of apostrophes, eight nested subshells) took the
+      guard past the 5 s hook timeout, where the hook lets the call through. bash 5.2 joins a
+      body line ending in `\` to the next under an unquoted delimiter, keeps `` \` `` literal
+      there, and closes a `{ }` group at `&}`.
+root_cause: >-
+  The README told people to paste JSON into settings files. Whether the hook then ran depended on
+  rules the README did not know: which files each agent loads and from which directory, what makes
+  it reject a file, how Codex keys trust, and which switches turn hooks off. Nothing checked that a
+  wired hook actually ran, so a hook that never fired looked the same as a guard with nothing to
+  block. Separately, the guard refused edits to hook files but not `ah init --remove`, which an
+  agent could run to take the hook out through ah itself. The first fix for that knew three
+  spellings of the CLI; the hook-config classifier measured paths from the session's start
+  directory while ah init wires the git top level (and Codex reads a worktree's main checkout);
+  and normalize.ts routed Monitor, a shell tool, to the other-tools path. The second fix still
+  read inline code only as one quoted string, pwsh only with an exact -File, and launcher options
+  only in their commonest spelling; and two parser gaps older than ah init hid any command from
+  every rule: the stage splitter cut `if ...; then cmd; fi` at `;` and left the command behind a
+  reserved word, and PowerShell statements (`$null = cmd`, `{ }` blocks, `( )` groups) were never
+  looked inside. Stripping `.ps1` from every command name, done to see `ah.ps1`, made project
+  scripts named after system commands (`scripts\shutdown.ps1`) read as those commands.
+impact: >-
+  Found while building ah init, before ah was published: the README matcher missed Workflow; a
+  Codex entry inserted at the top would have untrusted the user's own hooks; a settings file with
+  one malformed entry would have silently disabled the guard; and a hook in .claude/settings.json
+  did not run for a session started in a subdirectory. The review then found the guard unwirable
+  without a deny. `ah init --remove` ran as `./dist/ah.mjs` or an absolute ah.mjs (shebang exec),
+  `node node_modules/.bin/ah`, `& ah.ps1` or `& aegis.ps1`, `pwsh -File ah.ps1`,
+  `powershell -File ah.ps1`, `env -S 'ah init --remove'`, `pnpm -C . exec ah`,
+  `pnpm --dir . exec ah`, `pnpm --package=@9thlevel/aegis dlx ah`, `pnpm ah`, `yarn ah`,
+  `yarn run ah`, `npm exec @9thlevel/aegis -- init`, `npm exec -c '...'`, `npx -c '...'`,
+  PowerShell `Start-Process ah 'init --remove'` (and -FilePath/-ArgumentList), `iex '...'`,
+  `Invoke-Expression '...'`, and inside `python3 -c "os.system(...)"` or
+  `node -e "execSync(...)"`. From a session started in <top>/sub, `rm`, `rm -f` by absolute path,
+  `mv`, `cp /dev/null`, `truncate -s0`, `: >`, `echo '{}' >` and `sed -i '/guard.mjs/d'` on
+  ../.claude/settings.local.json all passed, and a Write or Edit of it only asked. A Monitor call
+  running `rm -rf ~/work` passed. The review of that fix found these still passed: inline Node
+  code with the command in a template literal (execSync and backticks) or the (file, [args]) form
+  (`spawnSync('ah', ['init', '--remove'])`, `execFileSync`); `pwsh ./ah.ps1 init --remove`,
+  `pwsh -NoProfile ./ah.ps1 ...` and `powershell -ExecutionPolicy Bypass .\ah.ps1 ...` without
+  -File, and -File:x or -Fi; `if true; then ah init --remove; fi`, `for ...; do ...; done`, `! cmd`,
+  case items, function bodies (also `if true; then rm -rf /home/dev; fi`, while the plain command
+  was denied); PowerShell `$null = ah init --remove`, `if ($true) { ... }`, `try { ... } catch {}`,
+  `1 | % { ... }`, `Invoke-Command -ScriptBlock { ... }`, `Start-Job { ... }`, `@(...)` (also
+  `$null = Remove-Item -Recurse -Force C:\Users\dev`); `pnpm exec --shell-mode '...'`;
+  `Start-Process ah -ArgumentList @('init','--remove')` or `('init','--remove')`; literal text piped
+  into a shell, `'ah init --remove' | iex`, `echo '...' | Invoke-Expression`, `echo '...' | sh`;
+  clustered or joined code flags, `node -pe`, `node --eval=`, `python3 -Ic`, `perl -le`, `ruby -we`
+  (also `node -pe` running `rm -rf`); `Invoke-Expression -Command:'...'` and `-Comm`, `env -iS`,
+  `bun --cwd . run ah`, `npm exec --workspace web -- ah`, `deno run npm:@9thlevel/aegis@0.0.1`,
+  `corepack pnpm ah`, `cmd /c call ah ...` and `cmd /c start /b ah ...` (and
+  `cmd /c start /b rmdir /s /q C:\Users\dev`); and from a session rooted inside a hook directory
+  (`<top>/.codex`, `<top>/.claude`, `<top>/.husky`) `rm hooks.json` or a Write of
+  settings.local.json. Meanwhile `.\scripts\shutdown.ps1`, `.\scripts\format.ps1 C:` and
+  `.\tools\git.ps1 push --force` were refused as if they were the system commands. The third review found
+  `rm -rf .claude`, `mv .claude /tmp/x` (and `../.claude` from a subdirectory), `chmod -x .claude`,
+  `find .claude -delete` and `mv ~/.claude` still passed, because the policy names the files inside
+  `.claude`, not the directory; `git rm .ruff.toml`, `git rm -r .claude`, `git mv` of a lint config
+  and `git clean -fdx -- .claude` passed because git's own deletes were never judged; and from a
+  subdirectory or a linked worktree, `rm` and `chmod -x` of the top level's or main checkout's
+  `.git/hooks/pre-commit` passed. PowerShell `Rename-Item`, cmd `ren` and `rename` were never
+  judged at all, so renaming `.ruff.toml` or `.codex\hooks.json` away passed. A fourth review found
+  `rm -rf .claude/*` (and `Remove-Item .claude\* -Recurse`, `rm ~/.claude/*`) still passed, as
+  did `.GIT\hooks\pre-commit` on Windows, where the .git check alone did not fold case;
+  `find .git/hooks -name pre-commit -delete` and `find . -name .ruff.toml -delete` passed because a
+  narrowing filter exempted the whole find; and `mv .ruff.toml{,.bak}` and `{rm,-rf,.claude}`
+  passed because the parser did not brace-expand, and read `{rm,...}` as a `{ }` group. A fifth
+  review found the fourth fix denied `rm -f dist/*.js`, `mv src/*.ts lib/`,
+  `Remove-Item dist\*.js` and any `<dir>/*.<ext>` (it made up config names in that directory),
+  `find . -path ./.git -prune -o -name '*.orig' -delete` (a pruned name counted as deleted) and
+  Remove-Item's `-Include`/`-Exclude` values; that `rm -rf .claude x[z-a]` passed because the
+  reversed range threw out of the guard, and any command with such a word in it passed; and that
+  `rm .g*/hooks/pre-commit`, `rm .co*/hooks.json`, `rm */.eslintrc*`, braces with a quoted part
+  (`rm .claude/settings{.json,'x'}`, `{rm,-rf,".claude"}`), sequences (`.claud{e..e}`,
+  `r{m..m}`), an empty brace word (`{,} rm -rf .claude`) and a protected word past the 64-word
+  expansion cap passed. `ah init --agents codex` deleted Claude Code's stand-in, and a committed
+  stand-in was emptied in place. A sixth review found here-document bodies parsed as commands, so
+  JSON in `cat > users.json <<'EOF'` was brace-expanded past the limit and asked; that
+  `cat <<'EOF' | bash`, `rm -rf $'\x2eclaude'` and `echo $'\''; rm -rf .claude` passed; that
+  code nested past the parser's depth (nine subshells, nine `$(`) and a third piped shell were
+  dropped unread; that a sequence past 2^53 looped until the hook timed out, and the parse error
+  fallback then let the command through; that unclosed braces took quadratic time; that
+  `find . \( -name .eslintrc.json -o -name x \) -delete` passed; and that Git Bash wildcards
+  matched dotfiles, so `rm -rf *s/*/node_modules` was denied for reaching .harness. A seventh
+  review found that fix quadratic or exponential on inputs a few KB to 1 MB long (a `( )` stage
+  was parsed twice per level, here-document searches restarted at every line, the tokenizer and
+  splitter re-read the growing word at every quote and brace), each enough to time the hook out;
+  that `find . \( -name foo -o -type f \) -delete` passed; that `{ { rm -rf .claude; }; }` passed
+  because nested brace groups were paired wrongly; and that an escaped backtick in an unquoted
+  here-document was run as a substitution. An eighth review found that a quote in a `#` comment
+  hid the lines after it; that text piped into or out of a `( )` or `{ }` group (`echo rm -rf
+  .claude | ( sh )`) was never read; that `-empty` was taken to swallow the next word, so
+  `\( -empty -o -type f \) -delete` passed; that nested backticks ran unread; that the 2 s limit
+  covered parsing only, while rules, option lists, find expressions and policy globs stayed
+  quadratic (a `rm -rf *********Z` took seconds, 150 KB of `env -u x` seven); that a group sent
+  to /dev/null inside a redirected group asked as a write to /dev/null; and that a `(` in a
+  comment or in a PowerShell here-string with an apostrophe was read as commands. A ninth review
+  (and a bot review) found that comment fix taking a `#` as a comment where bash goes on with the
+  word (`$(date)#x; rm -rf .claude`, `${x:- #}`, after a line join, and first on the line), a
+  here-string run by `iex` no longer read, find's `,`, a second action, `-name '('` and `-L`
+  before the start missed, wrapper option clusters (`env -iu FOO`), `env -S` with `\_`, npm's
+  own options before `-c`, `>|`, `[[:alpha:]]` and a two-stage group piped into sh passing, and
+  brace chains, runs of `[` and long bracket classes taking seconds. A tenth review, of the ninth
+  review's fixes only, found bracket scans that never close repeated for each `[` (48 KB of
+  `[[:x:]` took 4 s and passed), find's narrowing worked out afresh for each of up to 16 actions
+  with no time check, a class named `[[:__proto__:]]` throwing, and a here-string given to
+  `Add-Content -Value` judged as the file written. An eleventh review, of those fixes only, found
+  `Set-Content -Path a.txt, .ruff.toml` (an array with a space after the comma) passing, a negated
+  bracket of an unknown class (`.claud[![:x:]]`) passing because the class was taken to match
+  every character and the negation then matched none, runs of `[:` still quadratic, and find's
+  starts joined to its names (and New-Item's paths to its names) building millions of paths
+  between two time checks. A twelfth review, of those fixes only, found a quoted value ending in a
+  comma (`Set-Content 'x,' -Path .git/config`) swallowing the `-Path` after it, ignore entries
+  written as an array value (`-Value '.env', '.claude/settings.local.json'`) judged as files, and
+  joined find paths over 16 K characters each made slow by the Set that deduplicated them. A
+  thirteenth review found the trailing-separator trim moved where every cmdlet and find ran it,
+  so a long run of `/` took seconds; the same kind of end-anchored RegExp (quote stripping, the
+  `rm` wipe suffix, the ssh private-key test) was slow on long runs too.
+countermeasure:
+  kind: test
+  ref:
+    - tests/init-doctor.test.ts
+    - tests/json-edit.test.ts
+    - tests/hook-config-layers.test.ts
+    - tests/shell-rules.test.ts
+    - tests/shell-parser.test.ts
+    - tests/init-doctor-platforms.test.ts
+    - tests/wiring-git-windows.test.ts
+  change: >-
+    `ah init` writes the hook and the AGENTS.md block from what the agents' documents and binaries
+    say, refuses to write a file it cannot read back exactly, keeps every other byte, appends
+    Codex's entry after the user's, and runs the guard on `rm -rf /` before wiring it. `ah doctor`
+    reads every file each agent loads, reports the switches, rejections, stale paths, duplicates and
+    trust that leave calls unguarded, and pushes canaries (rm -rf /, an edit to .ruff.toml, ls)
+    through each hook command as its agent would run it. CI runs both from the installed package on
+    Linux and with paths containing spaces on Windows. shell.hook-tamper now also denies
+    `ah init --remove`, `--uninstall` and `--ask-fallback warn` run by the agent; `--dry-run` passes.
+    After the review: the rule knows ah by its bin names, its `ah.ps1` shim and its bundle file
+    (`ah`, `aegis`, `ah.mjs`), run directly, by node, bun or deno, by pwsh or powershell, or by
+    `pnpm`/`yarn [run]` as a local bin; the parser skips package-manager options before
+    exec/dlx, drops npm's `--`, reads `npx -c`/`npm exec --call`/`pnpm exec -c` as a shell
+    command line, splices `env -S` into the command, and reads `iex`, `Invoke-Expression` and
+    `Start-Process` like eval; inline interpreter code that shows an exec hint and spells an
+    ah/aegis/ah.mjs `init` with a weakening flag is denied. The project-level hook files
+    (hookConfigPaths, anchored at each directory) in every ancestor of the project root are hook
+    configuration, compared lexically with no git call and case-insensitively on Windows; in a
+    linked worktree the guard reads the .git file once per process and protects the main checkout's
+    twin of the project root and its ancestors too. Monitor with a string command is a shell call in
+    the POSIX dialect. After the second review: the inline-code match takes backticks and an argv
+    array after the program; pwsh/powershell options are read as the host reads them (prefixes,
+    `-Name:value`, the values of valued options, the first positional word as the script or command,
+    with every word after it); the parser drops sh's reserved words, case patterns and function
+    headers before a command, PowerShell's `$x =` assignments, and parses PowerShell `( )`, `@( )`
+    and `{ }` blocks, cmd `( )` blocks, sh subshells, redirected `{ }` groups and process
+    substitutions wherever they stand; `--shell-mode` reads like `-c`; Start-Process unwraps an
+    `@( )`/`( )` argument array; echo/printf/Write-Output text, a bare PowerShell string, or a `<<<`
+    here-string fed to sh, bash, iex, Invoke-Expression or pwsh's stdin is parsed as a command line
+    in that shell's dialect; `-pe`, `-Ic`, `--eval=` and glued code count as inline code; iex takes
+    -Command by prefix and colon form, env splits `-iS`, runners skip
+    --workspace/--prefix/--dir/--filter/--cwd, bun skips --cwd and deno --config, an `npm:`
+    specifier loses its @version, corepack is a wrapper, and cmd's `call` and `start` (title and /b
+    /wait /min options) are unwrapped. `.ps1` is matched only in ah's own names (`ah.ps1`,
+    `aegis.ps1`); every other `.ps1` script keeps its name. The ancestor hook layers also apply to
+    paths inside the project, so a session rooted in `<top>/.codex` cannot remove hooks.json; for
+    those paths only layers below the home directory count, so a project inside ~/.codex (Codex's
+    worktrees) is not made of hook files. Rules now also see commands inside loops and blocks, so
+    `for d in dist/*; do rm -rf "$d"; done` asks like `rm -rf "$d"` does. After the third review:
+    removing, moving or chmod-ing a directory that holds the literal head of a protected glob
+    (`.claude` holds `.claude/settings.json`, `~/.claude` the user's settings) counts as doing it
+    to that path; `.git` in any directory above the project root, and in a worktree's main
+    checkout, is git internals (a stale `*.lock` still passes); `git rm` (not `--cached`),
+    `git mv` and a scoped `git clean -f` are judged like rm and mv on their paths, from `git -C`'s
+    directory, and `Rename-Item`, `ren` and `rename` like mv (a rename's expression words and
+    wildcard file lists are not judged; `rename -n` and `-WhatIf` pass). After the fourth review: a
+    wildcard counts as the protected path it matches the way sh expands it (`.claude/*`,
+    `.eslintrc*`, `.c*` with a recursive rm or a move; a bare `*` or `.[!.]*` names nothing, since
+    only the filesystem knows what is there); `.git` folds case on Windows; a narrowed find is still
+    denied when it starts inside a protected directory or its -name/-path names a protected file;
+    unquoted words are brace-expanded in the sh dialect, and a sh `{` group needs whitespace after
+    it; `git rm` of a path above a subdirectory session passes, since git touches only its own
+    repository. After the fifth review: a wildcard reaches a protected tree below its head too
+    (`.g*/hooks/pre-commit`; a wildcard naming nothing, `*`, does not count on the way down), and a
+    basename glob only from a last segment with a stem (`.eslintrc*`, `ruff*`, in any directory);
+    one naming an extension alone (`*.js`) reaches nothing; an invalid bracket class matches
+    nothing, and a call the guard throws on asks (guard.internal-error) instead of exiting 1;
+    find's named targets are only the filters that narrow its action; Remove-Item's filter and
+    common-parameter values are not targets; brace expansion follows bash's quoting (only unquoted
+    `{`, `,` and `}` count), expands sequences, drops empty words, and past 1024 words leaves the
+    word whole and asks (shell.brace-expansion-limit); stale stand-ins are only the selected
+    agents', and a committed one is left for the user to untrack, with doctor saying so. After
+    the sixth review: here-documents become the here-strings they amount to before parsing, and
+    `cat` passes one to a piped shell; `$'...'` and `$"..."` quote as bash does; code nested past
+    eight levels, and piped shells past eight, ask (shell.nesting-limit); sequences past 2^53
+    count as past the limit; a parse error reaches decideAll and asks; brace groups pair in one
+    pass; find's -o separates a filter from the action only in the group that joins them; the
+    leading-dot rule follows the shell (sh, Git Bash included) and case folding the platform.
+    After the seventh review: parsing is linear (a group stage is read once, failed here-document
+    searches are remembered, words are built as character arrays) and stops with an ask
+    (guard.time-limit) past 2 s; brace output is capped at a million characters; a group joined
+    by -o narrows a find only if every branch does; nested brace groups pair, `&}` closes one,
+    and text in a construct that never closes is read as commands. After the eighth review:
+    comments and PowerShell here-strings are dead text to the splitter; a group in a pipe passes
+    text through its first and last stages; `-empty` takes no value; nested backticks unescape
+    as bash does; the 2 s limit runs through the rules too; options, `env -S`, find expressions,
+    wildcards and policy globs are matched in linear passes, and `env -S` past eight levels asks.
+    After the ninth review: a `#` starts a comment only at a word start as bash reads it; a
+    here-string word is its body; find reads its operators apart from values, splits at `,`, and
+    needs every action narrowed; wrapper and runner options parse as their tools do; bracket
+    expressions take POSIX classes; a group's every command is a pipe source and sink; a word
+    with more than 64 brace groups asks. After the tenth review: a bracket scan that never
+    closes marks the positions it passed, so no later scan repeats them; find's groups are
+    judged once per command; class names are looked up without the object prototype; brace
+    expansion checks the time limit; and Set-Content, Add-Content, Out-File and New-Item bind
+    their parameters as PowerShell does, so a value is not a path and `-Path:x` is. After the
+    eleventh review: a word that ends or begins with a comma continues the array before it; a
+    bracket holding a class bash may not know matches every character, negated or not; where
+    each `:]` closes is worked out once per segment; and joining more than 100,000 paths asks.
+    After the twelfth review: since quotes are gone by the time parameters bind, the cmdlets are
+    read every way a comma (`x,` or `'x,'`) and an unknown parameter allow, and a word is a file
+    if any reading binds it to the path; arguments past the cmdlet's positions are not files, as
+    PowerShell refuses them; joined paths are capped in characters too and never put in a Set.
+    After the thirteenth review: quotes, trailing separators and wipe suffixes are stripped by
+    loops, and the ssh key test reads the last two components. Still over-cautious: a value
+    array that starts with an empty string before a positional path (`ac -Value '', 'x' .gitignore`)
+    may judge the array's entries as files.
+    A
+    protected basename (`lefthook.yml`) inside a directory being removed is not seen,
+    since the guard reads no filesystem. Still beyond any
+    deny-list: variable indirection (`A=ah; $A init --remove`, `$(which ah) init --remove`,
+    `$s = '...'; iex $s`), arbitrary interpreter programs that build the command at run time, and
+    text that is transformed on its way into a shell (`echo ... | tee log | sh`, `| sed ... | sh`);
+    the hook wiring is the boundary, and changing it stays the user's
+    call.
+must_block_fixture: fixtures/must_block/ah-init-remove-run-by-the-agent-is-denied.json
+must_allow_fixture: fixtures/must_allow/ah-init-remove-dry-run-only-prints-the-plan-and-is-allowed.json
+expiry_policy: "re-check the facts in source whenever Claude Code or Codex changes its hook or settings documentation; ah doctor's checks follow them"

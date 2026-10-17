@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf .claude in nested backticks is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo `echo \\`rm -rf .claude\\``"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

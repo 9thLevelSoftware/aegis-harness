@@ -1,0 +1,11 @@
+{
+  "name": "echo 'ah doctor' | sh is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo 'ah doctor' | sh"
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

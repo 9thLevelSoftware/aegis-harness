@@ -1,0 +1,11 @@
+{
+  "name": "find -L starting in .claude is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find -L .claude -name settings.json -delete"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

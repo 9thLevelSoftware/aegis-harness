@@ -1,0 +1,11 @@
+{
+  "name": "cat <<'EOF' | bash with rm -rf .claude in the body is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat <<'EOF' | bash\nrm -rf .claude\nEOF"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

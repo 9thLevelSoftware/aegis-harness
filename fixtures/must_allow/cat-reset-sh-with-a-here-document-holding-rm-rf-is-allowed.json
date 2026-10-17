@@ -1,0 +1,11 @@
+{
+  "name": "cat > reset.sh with a here-document holding rm -rf / is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat > scripts/reset.sh <<'EOF'\n#!/bin/sh\nrm -rf /\nEOF"
+    }
+  },
+  "near": "shell.rm-recursive-root",
+  "source": "BUG-2026-019"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "env -S with underscore separators running rm -rf .claude is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "env -S 'rm\\_-rf\\_.claude'"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

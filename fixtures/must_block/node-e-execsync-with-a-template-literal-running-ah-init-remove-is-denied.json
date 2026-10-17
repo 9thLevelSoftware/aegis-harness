@@ -1,0 +1,11 @@
+{
+  "name": "node -e execSync with a template literal running ah init --remove is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "node -e 'require(\"child_process\").execSync(`ah init --remove`)'"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

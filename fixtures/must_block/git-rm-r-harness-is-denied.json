@@ -1,0 +1,11 @@
+{
+  "name": "git rm -r .harness is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git rm -r .harness"
+    }
+  },
+  "rule": "shell.write-harness",
+  "source": "BUG-2026-019"
+}

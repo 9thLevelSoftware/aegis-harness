@@ -1,0 +1,13 @@
+{
+  "name": "Write of ../.claude/settings.local.json from a subdirectory session is denied",
+  "cwd": "/home/dev/project/sub",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "../.claude/settings.local.json",
+      "content": "{}\n"
+    }
+  },
+  "rule": "edit.hook-config",
+  "source": "BUG-2026-019"
+}

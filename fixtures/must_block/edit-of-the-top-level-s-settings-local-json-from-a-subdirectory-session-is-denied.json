@@ -1,0 +1,15 @@
+{
+  "name": "Edit of the top level's settings.local.json from a subdirectory session is denied",
+  "cwd": "/home/dev/project/sub",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "/home/dev/project/.claude/settings.local.json",
+      "old_string": "\"PreToolUse\": [",
+      "new_string": "\"PreToolUse_off\": [",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.hook-config",
+  "source": "BUG-2026-019"
+}

@@ -33,4 +33,4 @@ countermeasure:
     command on PATH. Codex gets commandWindows; Claude Code gets the exec form with args.
 must_block_fixture: ""
 must_allow_fixture: ""
-expiry_policy: "revisit when ah init exists and can verify the wiring with a canary"
+expiry_policy: "revisited 2026-10-17: ah init now writes the absolute paths and ah doctor verifies them with a canary (BUG-2026-019); keep while either agent launches hooks without the user's shell"

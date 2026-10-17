@@ -1,0 +1,11 @@
+{
+  "name": "pnpm ah doctor is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "pnpm ah doctor"
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

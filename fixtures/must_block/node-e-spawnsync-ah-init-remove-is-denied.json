@@ -1,0 +1,11 @@
+{
+  "name": "node -e spawnSync('ah', ['init', '--remove']) is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "node -e \"require('child_process').spawnSync('ah', ['init', '--remove'], {stdio: 'inherit'})\""
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

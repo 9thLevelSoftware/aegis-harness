@@ -1,0 +1,11 @@
+{
+  "name": "rm ~/.co*/config.toml, a wildcard above the user's Codex config, is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm ~/.co*/config.toml"
+    }
+  },
+  "rule": "shell.write-home-config",
+  "source": "BUG-2026-019"
+}

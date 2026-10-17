@@ -1,0 +1,12 @@
+{
+  "name": "Monitor rebuilding dist in watch mode is allowed",
+  "payload": {
+    "tool_name": "Monitor",
+    "tool_input": {
+      "command": "rm -rf dist && npm run build -- --watch",
+      "description": "rebuild on change"
+    }
+  },
+  "near": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-019"
+}

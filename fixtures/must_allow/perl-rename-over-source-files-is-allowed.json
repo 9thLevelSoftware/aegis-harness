@@ -1,0 +1,11 @@
+{
+  "name": "perl rename over source files is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rename 's/\\.js$/.ts/' src/*.js"
+    }
+  },
+  "near": "shell.write-lint-config",
+  "source": "BUG-2026-019"
+}

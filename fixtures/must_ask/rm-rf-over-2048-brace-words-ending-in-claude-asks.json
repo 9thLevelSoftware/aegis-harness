@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf over 2048 brace words ending in .claude asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf {x,}{x,}{x,}{x,}{x,}{x,}{x,}{x,}{x,}{x,}{x,}.claude"
+    }
+  },
+  "rule": "shell.brace-expansion-limit",
+  "source": "BUG-2026-019"
+}

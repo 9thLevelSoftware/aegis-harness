@@ -1,0 +1,11 @@
+{
+  "name": "mv ~/.claude, the user's agent settings, is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mv ~/.claude /tmp/x"
+    }
+  },
+  "rule": "shell.write-home-config",
+  "source": "BUG-2026-019"
+}

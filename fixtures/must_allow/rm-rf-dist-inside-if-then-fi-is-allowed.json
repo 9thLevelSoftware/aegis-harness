@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf dist inside if ... then ... fi is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "if [ -d dist ]; then rm -rf dist; fi"
+    }
+  },
+  "near": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-019"
+}

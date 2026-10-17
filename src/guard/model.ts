@@ -80,7 +80,33 @@ export interface Context {
   platform: Platform;
   /** Shell that will run `ShellCall.command`. Defaults to POSIX sh (Git Bash on Windows under Claude Code). */
   shellDialect?: "posix" | "powershell" | "cmd";
+  /**
+   * In a linked git worktree, the main checkout's directory that corresponds to
+   * projectRoot. Codex loads project hooks there, so hook files in it and above
+   * it are protected like the project's own. buildContext finds it on disk.
+   */
+  mainCheckout?: string;
   policy: Policy;
+  /**
+   * performance.now() past which the guard stops checking and asks: a hook that runs into its
+   * timeout lets the call through. decideAll sets it, TIME_LIMIT_MS ahead; without it there is no limit.
+   */
+  deadline?: number;
+}
+
+/** How long checking one hook event may take before the guard asks instead, well inside the hook's timeout. */
+export const TIME_LIMIT_MS = 2000;
+
+/** Thrown when checking would run past the time limit: the deadline passed, or a command names more paths than can be checked within it. */
+export class TimeLimit extends Error {
+  constructor(why = `checking it took longer than ${TIME_LIMIT_MS} ms`) {
+    super(why);
+  }
+}
+
+/** Throws TimeLimit once `deadline` has passed. Loops whose length the command sets call it as they go. */
+export function onTime(deadline: number | undefined): void {
+  if (deadline !== undefined && performance.now() > deadline) throw new TimeLimit();
 }
 
 export interface Decision {

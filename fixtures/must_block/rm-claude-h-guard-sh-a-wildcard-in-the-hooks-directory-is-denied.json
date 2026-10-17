@@ -1,0 +1,11 @@
+{
+  "name": "rm .claude/h*/guard.sh, a wildcard in the hooks directory, is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm .claude/h*/guard.sh"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "Set-Content writing an array value written with a comma and a space is allowed (Codex, Windows PowerShell)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "Set-Content -Path notes.txt -Value a, b"
+    }
+  },
+  "near": "shell.write-lint-config",
+  "source": "BUG-2026-019"
+}

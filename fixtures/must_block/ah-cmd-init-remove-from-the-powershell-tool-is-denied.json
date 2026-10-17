@@ -1,0 +1,12 @@
+{
+  "name": "ah.cmd init --remove from the PowerShell tool is denied",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "& 'C:\\Users\\dev\\AppData\\Roaming\\npm\\ah.cmd' init --remove"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

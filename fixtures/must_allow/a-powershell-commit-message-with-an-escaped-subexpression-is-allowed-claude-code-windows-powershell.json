@@ -1,0 +1,13 @@
+{
+  "name": "a PowerShell commit message with an escaped subexpression is allowed (Claude Code, Windows PowerShell)",
+  "agent": "claude",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "git commit -m @\"\nguard: deny `$(git reset --hard) in here-strings\n\"@"
+    }
+  },
+  "near": "shell.git-discard-changes",
+  "source": "BUG-2026-019"
+}

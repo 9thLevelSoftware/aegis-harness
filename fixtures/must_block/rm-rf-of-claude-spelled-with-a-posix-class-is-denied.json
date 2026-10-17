@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf of .claude spelled with a POSIX class is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf .claud[[:alpha:]]"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

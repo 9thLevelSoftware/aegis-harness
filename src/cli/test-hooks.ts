@@ -162,7 +162,8 @@ function defaultFixtureDirs(): string[] {
   return dirs;
 }
 
-function defaultGuardPath(): string | undefined {
+/** The bundled guard next to this file (dist/), or the repository's dist/ when run from source. */
+export function defaultGuardPath(): string | undefined {
   const here = dirname(fileURLToPath(import.meta.url));
   for (const c of [resolve(here, "guard.mjs"), resolve(here, "../dist/guard.mjs"), resolve(here, "../../dist/guard.mjs")]) {
     if (existsSync(c)) return c;

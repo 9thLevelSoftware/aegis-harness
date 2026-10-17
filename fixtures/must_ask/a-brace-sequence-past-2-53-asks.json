@@ -1,0 +1,11 @@
+{
+  "name": "a brace sequence past 2^53 asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf {9007199254740992..9007199254740993}"
+    }
+  },
+  "rule": "shell.brace-expansion-limit",
+  "source": "BUG-2026-019"
+}

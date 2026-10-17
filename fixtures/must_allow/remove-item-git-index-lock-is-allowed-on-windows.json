@@ -1,0 +1,12 @@
+{
+  "name": "Remove-Item .GIT\\index.lock is allowed on Windows",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Remove-Item .GIT\\index.lock"
+    }
+  },
+  "near": "shell.rm-git-dir",
+  "source": "BUG-2026-019"
+}

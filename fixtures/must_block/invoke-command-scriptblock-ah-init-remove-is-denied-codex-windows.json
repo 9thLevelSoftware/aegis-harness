@@ -1,0 +1,13 @@
+{
+  "name": "Invoke-Command -ScriptBlock { ah init --remove } is denied (Codex, Windows)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "Invoke-Command -ScriptBlock { ah init --remove }"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

@@ -33,6 +33,8 @@ export const RULES: readonly RuleInfo[] = [
   { id: "shell.privilege-escalation", title: "Command run through sudo or doas", verdict: "ask", provenance: "blueprint §3.2 (ECC destructive-command guard)" },
   { id: "shell.pipe-to-shell", title: "Remote or decoded content piped into an interpreter", verdict: "deny", provenance: "blueprint §3.2 (ECC destructive-command guard)" },
   { id: "shell.encoded-command", title: "Encoded PowerShell command", verdict: "ask", provenance: "blueprint §3.2 (ECC destructive-command guard)" },
+  { id: "shell.nesting-limit", title: "Command nested too deep to check", verdict: "ask", provenance: "BUG-2026-019" },
+  { id: "shell.brace-expansion-limit", title: "Brace expansion too large to check word by word", verdict: "ask", provenance: "BUG-2026-019" },
   { id: "shell.interpreter-destructive", title: "Inline interpreter code that deletes trees", verdict: "ask", provenance: "blueprint §3.2 pre_tool_guard (rm -rf / variants)" },
   { id: "shell.docker-destroy", title: "Docker prune or volume removal", verdict: "ask", provenance: "blueprint §3.2 (ECC destructive-command guard)" },
   { id: "shell.database-destroy", title: "Drop, truncate or reset of a database", verdict: "ask", provenance: "blueprint §3.2 (ECC destructive-command guard)" },

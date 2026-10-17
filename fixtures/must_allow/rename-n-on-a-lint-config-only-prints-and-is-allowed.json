@@ -1,0 +1,11 @@
+{
+  "name": "rename -n on a lint config only prints and is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rename -n 's/json/jsonc/' .eslintrc.json"
+    }
+  },
+  "near": "shell.write-lint-config",
+  "source": "BUG-2026-019"
+}

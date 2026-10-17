@@ -1,0 +1,11 @@
+{
+  "name": "{,} rm -rf .claude, an empty brace word before the command, is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "{,} rm -rf .claude"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

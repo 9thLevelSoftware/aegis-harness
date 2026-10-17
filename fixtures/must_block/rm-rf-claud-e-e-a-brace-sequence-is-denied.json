@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf .claud{e..e}, a brace sequence, is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf .claud{e..e}"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

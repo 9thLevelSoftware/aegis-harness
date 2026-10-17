@@ -1,0 +1,13 @@
+{
+  "name": "Codex apply_patch of a source file in a worktree under ~/.codex/worktrees is allowed",
+  "agent": "codex",
+  "cwd": "/home/dev/.codex/worktrees/a1b2/project",
+  "payload": {
+    "tool_name": "apply_patch",
+    "tool_input": {
+      "command": "*** Begin Patch\n*** Add File: src/app.ts\n+export {};\n*** End Patch"
+    }
+  },
+  "near": "edit.hook-config",
+  "source": "BUG-2026-019"
+}

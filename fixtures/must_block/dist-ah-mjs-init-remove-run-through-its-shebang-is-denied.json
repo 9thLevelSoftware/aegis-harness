@@ -1,0 +1,11 @@
+{
+  "name": "./dist/ah.mjs init --remove run through its shebang is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "./dist/ah.mjs init --remove"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "echo of rm -rf .claude piped into sh in a subshell is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo rm -rf .claude | ( sh )"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

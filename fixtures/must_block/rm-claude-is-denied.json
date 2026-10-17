@@ -1,0 +1,11 @@
+{
+  "name": "rm ~/.claude/* is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm ~/.claude/*"
+    }
+  },
+  "rule": "shell.write-home-config",
+  "source": "BUG-2026-019"
+}

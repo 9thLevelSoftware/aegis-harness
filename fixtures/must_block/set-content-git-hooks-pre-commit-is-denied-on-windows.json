@@ -1,0 +1,12 @@
+{
+  "name": "Set-Content .Git\\hooks\\pre-commit is denied on Windows",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Set-Content .Git\\hooks\\pre-commit 'exit 0'"
+    }
+  },
+  "rule": "shell.write-git-internals",
+  "source": "BUG-2026-019"
+}

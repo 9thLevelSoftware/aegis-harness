@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf .claude after & inside a brace group closed by &} is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "{ true & rm -rf .claude &}"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

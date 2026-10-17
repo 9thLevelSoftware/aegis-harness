@@ -1,0 +1,11 @@
+{
+  "name": "find deleting .eslintrc.json inside a group with -o is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . \\( -name .eslintrc.json -o -name '*.bak' \\) -delete"
+    }
+  },
+  "rule": "shell.write-lint-config",
+  "source": "BUG-2026-019"
+}

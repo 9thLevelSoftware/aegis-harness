@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf .claude x[z-a] is denied whatever the second target",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf .claude x[z-a]"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

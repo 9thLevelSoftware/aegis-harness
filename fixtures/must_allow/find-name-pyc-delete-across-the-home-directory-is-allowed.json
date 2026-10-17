@@ -1,0 +1,11 @@
+{
+  "name": "find ~ -name '*.pyc' -delete across the home directory is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find ~ -name '*.pyc' -delete"
+    }
+  },
+  "near": "shell.rm-recursive-home",
+  "source": "BUG-2026-019"
+}

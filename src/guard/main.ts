@@ -12,6 +12,8 @@ import type { Context, Decision, Platform } from "./model.ts";
 import { normalizeHookPayload, type Agent, type HookEvent } from "./normalize.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
 import { render, type AskFallback } from "./respond.ts";
+import { mainCheckoutOf } from "./worktree.ts";
+import { VERSION } from "../version.ts";
 
 export interface GuardOptions {
   agent?: Agent;
@@ -46,10 +48,16 @@ export function buildContext(event: HookEvent, o: GuardOptions, env: NodeJS.Proc
   const agent = o.agent ?? event.agent;
   // The dialect follows the tool: Claude Code's PowerShell tool is PowerShell on any
   // platform; Codex on Windows runs commands through PowerShell; everything else
-  // (Bash, Claude Code on Windows under Git Bash) is POSIX sh.
+  // (Bash and Monitor, Claude Code on Windows under Git Bash) is POSIX sh.
   const shellDialect = event.toolName === "PowerShell" || (platform === "windows" && agent === "codex") ? "powershell" : "posix";
-  return { projectRoot, homeDir, platform, shellDialect, policy: DEFAULT_POLICY };
+  const ctx: Context = { projectRoot, homeDir, platform, shellDialect, policy: DEFAULT_POLICY };
+  // A root spelled for another platform (a fixture replayed on this machine) is not on this disk.
+  const mainCheckout = platform === HOST_PLATFORM ? mainCheckoutOf(projectRoot) : undefined;
+  if (mainCheckout !== undefined) ctx.mainCheckout = mainCheckout;
+  return ctx;
 }
+
+const HOST_PLATFORM: Platform = process.platform === "win32" ? "windows" : "posix";
 
 export function evaluate(raw: unknown, o: GuardOptions, env: NodeJS.ProcessEnv = process.env): { event: HookEvent; decision: Decision; ctx: Context } {
   const event = normalizeHookPayload(raw, o.agent);
@@ -87,7 +95,12 @@ function logDecision(ctx: Context, event: HookEvent, decision: Decision): void {
   }
 }
 
-export function runGuard(argv: readonly string[], io: { stdin?: string; stdout: (s: string) => void; stderr: (s: string) => void } = { stdout: (s) => process.stdout.write(s), stderr: (s) => process.stderr.write(s) }): number {
+export function runGuard(argv: readonly string[], io: { stdin?: string; stdout: (s: string) => void; stderr: (s: string) => void } = { stdout: (s) => process.stdout.write(s), stderr: (s) => process.stderr.write(s) }, env: NodeJS.ProcessEnv = process.env): number {
+  // `ah doctor` asks a hooked guard its version, to tell an old build from the one ah wires now.
+  if (argv.includes("--version")) {
+    io.stdout(`${VERSION}\n`);
+    return 0;
+  }
   const o = parseGuardArgs(argv);
   const text = io.stdin ?? readStdin();
   if (text.trim() === "") {
@@ -101,8 +114,10 @@ export function runGuard(argv: readonly string[], io: { stdin?: string; stdout: 
     io.stderr("ah guard: hook payload is not JSON\n");
     return 1;
   }
-  const { event, decision, ctx } = evaluate(raw, o);
-  if (o.log !== false) logDecision(ctx, event, decision);
+  const { event, decision, ctx } = evaluate(raw, o, env);
+  // AH_NO_LOG=1 lets `ah doctor` push canaries through the exact configured command
+  // without adding lines to metrics.jsonl. It changes logging only, never a decision.
+  if (o.log !== false && env.AH_NO_LOG !== "1") logDecision(ctx, event, decision);
   const out = render(decision, o.output ?? event.agent, o.askFallback ?? "deny");
   if (out.stdout) io.stdout(`${out.stdout}\n`);
   return out.exitCode;

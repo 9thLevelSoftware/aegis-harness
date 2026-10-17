@@ -1,0 +1,11 @@
+{
+  "name": "git commit -m with a here-document message that mentions rm -rf .claude is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git commit -m \"$(cat <<'EOF'\nfix: stop rm -rf .claude in the cleanup script\n\nIt took the hooks with it.\nEOF\n)\""
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

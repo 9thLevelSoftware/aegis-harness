@@ -27,7 +27,8 @@
     "build": "node scripts/build.mjs",
     "prepack": "npm run build",
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"tests/**/*.test.ts\"",
+    "test": "node --test --test-concurrency=1 \"tests/**/*.test.ts\"",
+    "test:ci": "node --test --test-concurrency=1 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./scripts/gha-reporter.mjs --test-reporter-destination=stdout \"tests/**/*.test.ts\"",
     "test:hooks": "node scripts/test-hooks.mjs",
     "check:hygiene": "node scripts/check-hygiene.mjs",
     "verify": "npm run build && npm run typecheck && npm test && npm run check:hygiene && npm run test:hooks"

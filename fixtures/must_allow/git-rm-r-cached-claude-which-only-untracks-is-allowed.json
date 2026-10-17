@@ -1,0 +1,11 @@
+{
+  "name": "git rm -r --cached .claude, which only untracks, is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git rm -r --cached .claude"
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

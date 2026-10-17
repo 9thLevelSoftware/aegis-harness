@@ -1,0 +1,11 @@
+{
+  "name": "ah init --remove inside if ... then ... fi is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "if true; then ah init --remove; fi"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

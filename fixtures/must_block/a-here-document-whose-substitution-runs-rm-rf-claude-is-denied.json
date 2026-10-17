@@ -1,0 +1,11 @@
+{
+  "name": "a here-document whose substitution runs rm -rf .claude is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat <<EOF\n$(rm -rf .claude)\nEOF"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

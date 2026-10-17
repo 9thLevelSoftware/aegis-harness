@@ -1,0 +1,13 @@
+{
+  "name": "New-Item naming .ruff.toml under a path is denied (Codex, Windows PowerShell)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "New-Item -Path . -Name .ruff.toml -Value x"
+    }
+  },
+  "rule": "shell.write-lint-config",
+  "source": "BUG-2026-019"
+}

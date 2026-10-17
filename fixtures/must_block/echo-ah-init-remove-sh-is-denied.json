@@ -1,0 +1,11 @@
+{
+  "name": "echo 'ah init --remove' | sh is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo 'ah init --remove' | sh"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

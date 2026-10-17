@@ -1,0 +1,11 @@
+{
+  "name": "env -S repeated past eight levels asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "env -S -S -S -S -S -S -S -S -S -S true"
+    }
+  },
+  "rule": "shell.nesting-limit",
+  "source": "BUG-2026-019"
+}

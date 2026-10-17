@@ -1,0 +1,12 @@
+{
+  "name": "Monitor running ah init --remove is denied",
+  "payload": {
+    "tool_name": "Monitor",
+    "tool_input": {
+      "command": "sleep 5 && ah init --remove",
+      "description": "unwire after the build"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

@@ -66,6 +66,14 @@ test("a Codex apply_patch that arrives through the shell tool is parsed as edits
   assert.deepEqual(codex(["bash", "-lc", "git status"]), [{ kind: "shell", command: "git status" }]);
 });
 
+test("Claude Code's Monitor runs its command as a Bash call, in the POSIX dialect on Windows too (BUG-2026-019)", () => {
+  const monitor = normalizeHookPayload({ session_id: "s", tool_name: "Monitor", tool_input: { command: "tail -f dist/server.log", description: "watch the server" } });
+  assert.deepEqual(monitor.calls, [{ kind: "shell", command: "tail -f dist/server.log" }]);
+  assert.equal(buildContext(monitor, { agent: "claude", platform: "windows", root: "C:\\Users\\dev\\project", home: "C:\\Users\\dev" }, {}).shellDialect, "posix");
+  // Without a command string there is nothing to run; it is judged like any other tool.
+  assert.equal(normalizeHookPayload({ session_id: "s", tool_name: "Monitor", tool_input: { task_id: "x" } }).calls[0].kind, "other");
+});
+
 test("unknown tools become 'other' calls", () => {
   const ev = normalizeHookPayload({ session_id: "s", tool_name: "mcp__linear__create_issue", tool_input: { title: "x" } });
   assert.equal(ev.calls[0].kind, "other");

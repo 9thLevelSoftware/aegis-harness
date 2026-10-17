@@ -1,0 +1,11 @@
+{
+  "name": "mv \"$PWD\"/.ruff.toml{,.bak}, braces after a quoted prefix, is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mv \"$PWD\"/.ruff.toml{,.bak}"
+    }
+  },
+  "rule": "shell.write-lint-config",
+  "source": "BUG-2026-019"
+}

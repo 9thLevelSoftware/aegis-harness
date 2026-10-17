@@ -1,8 +1,9 @@
-import { classifyPath, isBlockDevice, type PathInfo } from "../classify.ts";
-import { ALLOW, ask, deny, strictest, type Context, type Decision, type ShellCall } from "../model.ts";
-import { globToRegExp, hasVariable, isTempPath, normalize } from "../paths.ts";
+import { classifyPath, isBlockDevice, protectedInside, wildcardReach, type PathInfo } from "../classify.ts";
+import { ALLOW, ask, deny, onTime, strictest, TimeLimit, type Context, type Decision, type ShellCall } from "../model.ts";
+import { globToRegExp, hasVariable, isTempPath, normalize, stripQuotes, trimSeparators } from "../paths.ts";
 import { findSecrets, redact } from "../secrets.ts";
-import { allStages, flagsOf, parseShell, type Pipeline, type Stage } from "../shell.ts";
+import { allStages, append, BRACE_LIMIT, flagsOf, MAX_DEPTH, normalizeCmd, parseBudget, parseShell, pwshRun, subcommandIndex, type ParseBudget, type Pipeline, type ShellDialect, type Stage } from "../shell.ts";
+import { AH_INIT_VALUED_OPTIONS } from "../../wiring/init-options.ts";
 
 const FORK_BOMB = /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/;
 
@@ -16,6 +17,8 @@ const ENV_LISTERS = new Set(["gci", "get-childitem", "dir", "ls"]);
 const FILE_READERS = new Set(["cat", "less", "more", "head", "tail", "type", "get-content", "gc", "bat", "strings", "xxd", "hexdump", "od", "base64", "tac", "nl", "view"]);
 const REMOVERS = new Set(["rm", "rmdir", "rd", "del", "erase", "remove-item", "ri", "unlink", "shred"]);
 const MOVERS = new Set(["mv", "move", "move-item", "mi"]);
+/** Rename-Item and cmd's ren take a path and a new name; util-linux and perl `rename` take an expression, then the files. */
+const RENAMERS = new Set(["rename-item", "rni", "ren", "rename"]);
 const COPIERS = new Set(["cp", "copy", "copy-item", "cpi", "install"]);
 const POWER = new Set(["shutdown", "reboot", "halt", "poweroff", "telinit", "stop-computer", "restart-computer"]);
 const GIT_HOOKED = new Set(["commit", "push", "merge", "rebase", "cherry-pick", "revert", "am", "apply", "checkout", "switch"]);
@@ -23,7 +26,18 @@ const GIT_HOOKED = new Set(["commit", "push", "merge", "rebase", "cherry-pick", 
 const CRED_FILE = /(^|[\\/])(\.env(\.(?!example$|sample$|template$|dist$|defaults$)[^\\/]*)?|\.netrc|\.npmrc|\.pypirc|\.git-credentials|credentials|id_rsa|id_ed25519|id_ecdsa|id_dsa|secrets?\.(json|ya?ml|toml|env)|[^\\/]+\.(pem|key|p12|pfx|jks|keystore))$/i;
 const PRIVATE_FILE = /(^|[\\/])(id_rsa|id_ed25519|id_ecdsa|id_dsa)$|\.(pem|key|p12|pfx)$|(^|[\\/])\.(netrc|git-credentials|pypirc)$|(^|[\\/])\.aws[\\/]credentials$|(^|[\\/])\.docker[\\/]config\.json$|(^|[\\/])\.kube[\\/]config$/i;
 /** Files under ~/.ssh that hold private material: everything except public keys, config, known_hosts, authorized_keys, environment and rc. */
-const SSH_PRIVATE = /(^|[\\/])\.ssh[\\/](?!.*\.pub$)(?!(?:config|known_hosts(?:\.old)?|authorized_keys2?|environment|rc)$)[^\\/]+$/i;
+/**
+ * A file directly inside a `.ssh` directory that is not a public key or one of ssh's own
+ * settings files. Worked out from the last two components: a RegExp with `(?!.*\.pub$)` read the
+ * rest of the path again at every `.ssh/` in it.
+ */
+function sshPrivate(p: string): boolean {
+  const cut = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+  if (cut < 0) return false;
+  const dir = p.slice(0, cut);
+  const base = p.slice(cut + 1);
+  return dir.slice(Math.max(dir.lastIndexOf("/"), dir.lastIndexOf("\\")) + 1).toLowerCase() === ".ssh" && base !== "" && !/\.pub$/i.test(base) && !/^(?:config|known_hosts(?:\.old)?|authorized_keys2?|environment|rc)$/i.test(base);
+}
 
 const HOOK_ENV = /^(HUSKY|HUSKY_SKIP_HOOKS|LEFTHOOK|SKIP|PRE_COMMIT_ALLOW_NO_CONFIG|SKIP_SIMPLE_GIT_HOOKS|GIT_HOOKS_SKIP)$/;
 /** git config keys that redirect or disable hooks. `hooks.allownonascii` and friends are read by hooks, not bypasses. */
@@ -58,9 +72,17 @@ export function shellRules(call: ShellCall, ctx: Context): Decision {
     }
   }
 
-  const pipelines = parseShell(raw, { dialect: ctx.shellDialect ?? "posix" });
-  for (const p of pipelines) decisions.push(...pipelineRules(p, ctx));
-  for (const s of allStages(pipelines)) decisions.push(...stageRules(s, ctx));
+  const budget = parseBudget(ctx.deadline ?? Infinity);
+  const pipelines = parseShell(raw, { dialect: ctx.shellDialect ?? "posix", budget });
+  append(pipelines, pipedCommands(pipelines, budget));
+  for (const p of pipelines) {
+    onTime(ctx.deadline);
+    append(decisions, pipelineRules(p, ctx));
+  }
+  for (const s of allStages(pipelines)) {
+    onTime(ctx.deadline);
+    append(decisions, stageRules(s, ctx));
+  }
   return strictest(decisions);
 }
 
@@ -68,27 +90,112 @@ export function shellRules(call: ShellCall, ctx: Context): Decision {
 // Pipelines
 
 function pipelineRules(p: Pipeline, ctx: Context): Decision[] {
-  const out: Decision[] = [];
-  const stages = p.stages;
-  for (let i = 0; i < stages.length; i++) {
-    const src = stages[i];
-    const isDownloader = DOWNLOADERS.has(src.cmd);
-    const isDecoder = DECODERS.has(src.cmd) && src.argv.some((a) => /^(-d|--decode|-D|-r|enc)$/.test(a));
-    const readsCredential = credentialSourceOf(src, ctx) !== null;
-    const dumpsEnv = ENV_LISTERS.has(src.cmd)
-      ? src.argv.slice(1).some((a) => /^env:/i.test(a))
-      : ENV_DUMPERS.has(src.cmd) && (src.argv.length <= 1 || src.argv.slice(1).every((a) => a.startsWith("-")));
-    for (let j = i + 1; j < stages.length; j++) {
-      const sink = stages[j];
-      if ((isDownloader || isDecoder) && INTERPRETERS.has(sink.cmd) && readsStdinAsCode(sink)) {
-        out.push(deny("shell.pipe-to-shell", `${src.cmd} output is piped into ${sink.cmd}, which runs it as code`, "Download to a file, read it, then run it: `curl -fsSL URL -o install.sh && cat install.sh` first. Piping remote content into an interpreter runs code nobody reviewed."));
+  // From the right, so that each stage meets the nearest later sink in one pass, not every later stage.
+  const found: Decision[][] = [];
+  let interpreter: Stage | undefined;
+  let network: Stage | undefined;
+  for (let i = p.stages.length - 1; i >= 0; i--) {
+    onTime(ctx.deadline);
+    const here: Decision[] = [];
+    for (const src of members(p.stages[i])) {
+      const isDownloader = DOWNLOADERS.has(src.cmd);
+      const isDecoder = DECODERS.has(src.cmd) && src.argv.some((a) => /^(-d|--decode|-D|-r|enc)$/.test(a));
+      if ((isDownloader || isDecoder) && interpreter !== undefined) {
+        here.push(deny("shell.pipe-to-shell", `${src.cmd} output is piped into ${interpreter.cmd}, which runs it as code`, "Download to a file, read it, then run it: `curl -fsSL URL -o install.sh && cat install.sh` first. Piping remote content into an interpreter runs code nobody reviewed."));
       }
-      if ((readsCredential || dumpsEnv) && NETWORK_SINKS.has(sink.cmd)) {
-        out.push(deny("shell.credential-exfil", `${describe(src)} is piped into ${sink.cmd}`, "Credentials and the environment never leave the machine through an agent session. If a service needs a value, the user configures it."));
+      if (network === undefined) continue;
+      const readsCredential = credentialSourceOf(src, ctx) !== null;
+      const dumpsEnv = ENV_LISTERS.has(src.cmd)
+        ? src.argv.slice(1).some((a) => /^env:/i.test(a))
+        : ENV_DUMPERS.has(src.cmd) && (src.argv.length <= 1 || src.argv.slice(1).every((a) => a.startsWith("-")));
+      if (readsCredential || dumpsEnv) {
+        here.push(deny("shell.credential-exfil", `${describe(src)} is piped into ${network.cmd}`, "Credentials and the environment never leave the machine through an agent session. If a service needs a value, the user configures it."));
+      }
+    }
+    found.push(here);
+    for (const sink of members(p.stages[i])) {
+      if (INTERPRETERS.has(sink.cmd) && readsStdinAsCode(sink)) interpreter = sink;
+      if (NETWORK_SINKS.has(sink.cmd)) network = sink;
+    }
+  }
+  return found.reverse().flat();
+}
+
+/**
+ * `s`, or every command in a `( )` or `{ }` group: what any of them prints may reach the pipe out of
+ * it (`( curl URL | cat ) | sh`), and any of them may read what the pipe into it carries, as in a
+ * pipeline without the group.
+ */
+function members(s: Stage): Stage[] {
+  return s.group === undefined ? [s] : s.group.flatMap((p) => p.stages.flatMap(members));
+}
+
+/** The commands a pipe into `s` feeds: `s` itself, or for a `( )` or `{ }` group the first command of each pipeline in it. */
+function entries(s: Stage): Stage[] {
+  return s.group === undefined ? [s] : s.group.flatMap((p) => (p.stages.length > 0 ? entries(p.stages[0]) : []));
+}
+
+/** The commands whose output a pipe out of `s` carries: `s`, or for a group the last command of each pipeline in it. */
+function exits(s: Stage): Stage[] {
+  return s.group === undefined ? [s] : s.group.flatMap((p) => (p.stages.length > 0 ? exits(p.stages[p.stages.length - 1]) : []));
+}
+
+/** Shells that run the command lines arriving on stdin, and the dialect they read them in. */
+const STDIN_SHELLS: Record<string, ShellDialect> = {
+  sh: "posix", bash: "posix", zsh: "posix", dash: "posix", ksh: "posix", mksh: "posix", ash: "posix",
+  iex: "powershell", "invoke-expression": "powershell", pwsh: "powershell", powershell: "powershell",
+};
+
+/**
+ * `echo 'ah init --remove' | sh`, `'ah init --remove' | iex`, `bash <<< 'ah init --remove'`: literal
+ * text fed to a shell that runs its stdin is a command line, parsed in that shell's dialect so that
+ * every rule sees it.
+ */
+function pipedCommands(pipelines: readonly Pipeline[], budget: ParseBudget): Pipeline[] {
+  const out: Pipeline[] = [];
+  for (const p of pipelines) {
+    for (let j = 0; j < p.stages.length; j++) {
+      const stage = p.stages[j];
+      for (const sink of entries(stage)) {
+        const dialect = STDIN_SHELLS[sink.cmd];
+        if (dialect === undefined || !readsStdinAsCode(sink)) continue;
+        // A here-string on a group (`( sh ) <<< 'x'`) feeds the shell inside it.
+        const fed = sink.hereStrings.length > 0 ? sink.hereStrings : stage.hereStrings;
+        const text = fed.length > 0 ? fed.join("\n") : j > 0 ? outputOf(p.stages[j - 1]) : null;
+        if (text === null) continue;
+        // The text runs one shell deeper than the pipeline feeding it, so nesting counts on from there.
+        const inner = parseShell(text, { dialect, budget, depth: p.depth + 1 });
+        append(out, inner);
+        append(out, pipedCommands(inner, budget));
       }
     }
   }
   return out;
+}
+
+/** What a stage pipes on when its output is literal text; a group pipes on what each command in it prints. */
+function outputOf(s: Stage): string | null {
+  const printed = exits(s).map(literalOutput).filter((t): t is string => t !== null);
+  return printed.length > 0 ? printed.join("\n") : null;
+}
+
+const ECHOES = new Set(["echo", "write-output", "write", "printf"]);
+
+/** The text a stage prints when all it prints is literal: `echo`, `printf` and `Write-Output` arguments, or a bare quoted string (PowerShell prints it). */
+function literalOutput(s: Stage): string | null {
+  const args = s.argv.slice(1);
+  if (s.cmd === "printf") {
+    const [format = "", ...values] = args;
+    let k = 0;
+    return format.replace(/%[sb]/g, () => values[k++] ?? "").replace(/\\n/g, "\n");
+  }
+  // `cat <<'EOF' | sh`: cat with no file passes its here-document through.
+  if ((s.cmd === "cat" || s.cmd === "tee") && s.hereStrings.length > 0 && args.every((a) => a.startsWith("-") || s.cmd === "tee")) return s.hereStrings.join("\n");
+  if (ECHOES.has(s.cmd)) {
+    while (/^-(?:[neE]+|NoEnumerate|InputObject)$/i.test(args[0] ?? "")) args.shift();
+    return args.join(" ").replace(/\\n/g, "\n");
+  }
+  return s.argv.length === 1 && /^\s*['"]/.test(s.raw) ? s.argv[0] : null;
 }
 
 /** The command as the reason text names it. A peeled wrapper such as `env` leaves argv empty, so fall back to the command name. */
@@ -122,7 +229,7 @@ function readsStdinAsCode(sink: Stage): boolean {
     const positionals: string[] = [];
     for (let i = 0; i < args.length; i++) {
       const a = args[i];
-      if (a === "--") { positionals.push(...args.slice(i + 1)); break; }
+      if (a === "--") { append(positionals, args.slice(i + 1)); break; }
       if (a === "--rcfile" || a === "--init-file") { i++; continue; }
       if (/^[-+][A-Za-z]+$/.test(a)) {
         if (a.includes("c")) return false;
@@ -175,29 +282,63 @@ function stageRules(s: Stage, ctx: Context): Decision[] {
     out.push(ask("shell.privilege-escalation", `${describe(s)} runs with elevated privileges`, "Elevated commands change the machine, not the project. Ask the user to run it, or explain why the project needs it."));
   }
 
-  if (REMOVERS.has(s.cmd)) out.push(...removeRules(s, ctx));
-  else if (s.cmd === "find") out.push(...findRules(s, ctx));
-  else if (s.cmd === "git") out.push(...gitRules(s, ctx));
-  else if (s.cmd === "chmod" || s.cmd === "chown" || s.cmd === "chgrp" || s.cmd === "icacls") out.push(...permissionRules(s, ctx));
-  else if (s.cmd === "dd" || s.cmd.startsWith("mkfs") || ["mkswap", "wipefs", "fdisk", "sfdisk", "parted", "diskpart", "format"].includes(s.cmd)) out.push(...diskRules(s));
-  else if (POWER.has(s.cmd) || s.cmd === "init" || s.cmd === "systemctl") out.push(...powerRules(s));
-  else if (s.cmd === "kill" || s.cmd === "killall5") out.push(...killRules(s));
-  else if (DOWNLOADERS.has(s.cmd) || ["scp", "rsync", "sftp", "nc", "ncat", "netcat", "socat"].includes(s.cmd)) out.push(...uploadRules(s, ctx));
-  else if (FILE_READERS.has(s.cmd)) out.push(...credentialReadRules(s, ctx));
-  else if (s.cmd === "docker" || s.cmd === "podman" || s.cmd === "docker-compose") out.push(...dockerRules(s));
+  if (s.tooDeep) {
+    out.push(ask("shell.nesting-limit", `part of this command sits more than ${MAX_DEPTH} levels deep in substitutions, subshells or shells it starts, too deep to check`, "Flatten the command so each part can be checked."));
+  }
+
+  if (s.unexpanded !== undefined) {
+    out.push(ask("shell.brace-expansion-limit", `${s.unexpanded.slice(0, 60)} takes this command's brace expansion past ${BRACE_LIMIT} words, too many to check one by one`, "Spell the paths out, or split the command, so each word can be checked."));
+  }
+
+  if (REMOVERS.has(s.cmd)) append(out, removeRules(s, ctx));
+  else if (s.cmd === "find") append(out, findRules(s, ctx));
+  else if (s.cmd === "git") append(out, gitRules(s, ctx));
+  else if (s.cmd === "chmod" || s.cmd === "chown" || s.cmd === "chgrp" || s.cmd === "icacls") append(out, permissionRules(s, ctx));
+  else if (s.cmd === "dd" || s.cmd.startsWith("mkfs") || ["mkswap", "wipefs", "fdisk", "sfdisk", "parted", "diskpart", "format"].includes(s.cmd)) append(out, diskRules(s));
+  else if (POWER.has(s.cmd) || s.cmd === "init" || s.cmd === "systemctl") append(out, powerRules(s));
+  else if (s.cmd === "kill" || s.cmd === "killall5") append(out, killRules(s));
+  else if (DOWNLOADERS.has(s.cmd) || ["scp", "rsync", "sftp", "nc", "ncat", "netcat", "socat"].includes(s.cmd)) append(out, uploadRules(s, ctx));
+  else if (FILE_READERS.has(s.cmd)) append(out, credentialReadRules(s, ctx));
+  else if (s.cmd === "docker" || s.cmd === "podman" || s.cmd === "docker-compose") append(out, dockerRules(s));
   else if (["pwsh", "powershell"].includes(s.cmd) && s.opaque) {
     out.push(ask("shell.encoded-command", "PowerShell is given an encoded command", "Pass the command as plain text so it can be reviewed."));
   }
 
-  out.push(...databaseRules(s));
-  out.push(...publishRules(s));
-  out.push(...baselineRefreshRules(s));
-  out.push(...interpreterRules(s));
-  out.push(...moveSourceRules(s, ctx));
-  out.push(...copySourceRules(s, ctx));
+  append(out, databaseRules(s));
+  append(out, publishRules(s));
+  append(out, baselineRefreshRules(s));
+  append(out, interpreterRules(s));
+  append(out, ahCliRules(s));
+  append(out, moveSourceRules(s, ctx));
+  append(out, copySourceRules(s, ctx));
 
-  for (const target of writeTargetsOf(s)) out.push(...writeRules(target, s, ctx));
+  // A redirected group is a `:` stand-in carrying the redirections; its reasons name the group.
+  const writer = s.group === undefined ? s : { ...s, cmd: /^\s*\{/.test(s.raw) ? "{ ... }" : "( ... )" };
+  for (const target of writeTargetsOf(s, ctx.deadline)) {
+    onTime(ctx.deadline);
+    append(out, writeRules(target, writer, ctx));
+  }
   return out;
+}
+
+/**
+ * Past this many paths, or this many characters of them, made by joining one list to another
+ * (find's starts with its names, New-Item's paths with its names), the guard asks rather than
+ * build them all: a few hundred KB of command could otherwise name billions. The lists come in
+ * without repeats, so the joined paths need no Set, which hashes a string over 16 K characters
+ * by its length alone and grows in the square of how many there are.
+ */
+const MAX_JOINED = 100_000;
+const MAX_JOINED_CHARS = 10_000_000;
+
+function joinAll(dirs: readonly string[], names: readonly string[], out: string[]): void {
+  const sum = (xs: readonly string[]) => xs.reduce((n, x) => n + x.length + 1, 0);
+  if (dirs.length * names.length > MAX_JOINED || names.length * sum(dirs) + dirs.length * sum(names) > MAX_JOINED_CHARS) {
+    throw new TimeLimit(`it names more than ${MAX_JOINED} paths, or ${MAX_JOINED_CHARS} characters of them`);
+  }
+  if (dirs.length === 0 || names.length === 0) return;
+  const trimmed = dirs.map(trimSeparators);
+  for (const n of names) for (const d of trimmed) out.push(`${d}/${n}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -209,21 +350,42 @@ interface RemoveSpec {
   noPreserveRoot: boolean;
 }
 
+/**
+ * Remove-Item parameters whose value is no path to delete: the filters (`-Include *.js` narrows
+ * `-Path`, `-Exclude` names what stays) and the common parameters that take a value. PowerShell
+ * takes any unambiguous prefix of a parameter's name.
+ */
+const PWSH_VALUED_PARAMS: readonly (readonly [string, number])[] = [
+  ["include", 3], ["exclude", 2], ["filter", 2], ["credential", 2], ["stream", 1],
+  ["erroraction", 6], ["errorvariable", 6], ["warningaction", 8], ["warningvariable", 8],
+  ["informationaction", 12], ["informationvariable", 12], ["outvariable", 4], ["outbuffer", 4],
+  ["pipelinevariable", 2], ["progressaction", 2],
+];
+const PWSH_VALUED_ALIASES = new Set(["ea", "ev", "wa", "wv", "infa", "iv", "ov", "ob", "pv", "proga"]);
+
+function pwshValuedParam(a: string): boolean {
+  const m = /^-([a-z]+)$/i.exec(a);
+  if (m === null) return false;
+  const p = m[1].toLowerCase();
+  return PWSH_VALUED_ALIASES.has(p) || PWSH_VALUED_PARAMS.some(([name, min]) => p.length >= min && name.startsWith(p));
+}
+
 function removeSpec(s: Stage): RemoveSpec {
   const argv = s.argv.slice(1);
-  const pwshStyle = s.cmd === "remove-item" || s.cmd === "ri" || argv.some((a) => /^-(Recurse|Force|Path|LiteralPath|WhatIf|Confirm)$/i.test(a));
+  const pwshStyle = s.cmd === "remove-item" || s.cmd === "ri" || argv.some((a) => /^-(Recurse|Force|Path|LiteralPath|WhatIf|Confirm|Include|Exclude|Filter)$/i.test(a));
   if (pwshStyle) {
     const targets: string[] = [];
     let recursive = false;
     for (let i = 0; i < argv.length; i++) {
       const a = argv[i];
       if (/^-(recurse|rec|r)$/i.test(a)) recursive = true;
+      else if (pwshValuedParam(a)) i++;
       else if (/^-(path|literalpath|lp|p)$/i.test(a)) {
         const v = argv[i + 1];
-        if (v !== undefined) targets.push(...v.split(","));
+        if (v !== undefined) append(targets, v.split(","));
         i++;
-      } else if (/^-(path|literalpath):(.+)$/i.test(a)) targets.push(...a.replace(/^-[a-z]+:/i, "").split(","));
-      else if (!a.startsWith("-")) targets.push(...a.split(","));
+      } else if (/^-(path|literalpath):(.+)$/i.test(a)) append(targets, a.replace(/^-[a-z]+:/i, "").split(","));
+      else if (!a.startsWith("-")) append(targets, a.split(","));
     }
     return { recursive, targets, noPreserveRoot: false };
   }
@@ -259,8 +421,8 @@ const CWD_PREFIX = /^(?:\$\{PWD(?::[?-][^}]*)?\}|\$PWD|\$\(\s*pwd\s*\)|`\s*pwd\s
 /** A guarded expansion (`VAR:?unset` in braces) or a command substitution: unverifiable, but safe once a literal sub-path follows. */
 const GUARDED_PREFIX = /^(?:\$\{[A-Za-z_][A-Za-z0-9_]*:\?[^}]*\}|\$\([^()]*(?:\([^()]*\)[^()]*)*\)|`[^`]*`)(?=[\\/])/;
 const SUBSTITUTION = /\$\(|`/;
-/** "Everything inside" suffixes: `dir/*`, `dir/.*`, `dir/**`, `dir/*.*`, `dir/.`, `dir\*`, and the hidden-file globs (`dir/.[!.]*`, `dir/.[!.]?*`, `dir/.??*`, `dir/.?*`). */
-const WIPE_SUFFIX = /[\\/]+(?:\*|\.\*|\*\*|\*\.\*|\.|\.(?:\[[!^]\.\]|\?)[?*]*\*)[\\/]*$/;
+/** "Everything inside" last components: `dir/*`, `dir/.*`, `dir/**`, `dir/*.*`, `dir/.`, `dir\*`, and the hidden-file globs (`dir/.[!.]*`, `dir/.[!.]?*`, `dir/.??*`, `dir/.?*`). */
+const WIPE_PART = /^(?:\*|\.\*|\*\*|\*\.\*|\.|\.(?:\[[!^]\.\]|\?)[?*]*\*)$/;
 
 const UNRESOLVED_REMEDIATION = "An empty or wrong variable turns this into `rm -rf /`. Use a literal path (`rm -rf dist`), anchor it to the working directory (`rm -rf \"$PWD/dist\"`), or brace the variable with a `:?unset` guard and append a sub-path, so an empty value aborts instead of deleting the parent.";
 const SUBSTITUTION_REMEDIATION = "A command substitution cannot be checked before it runs. Use a literal path (`rm -rf dist`), or append a sub-path to the substitution (`rm -rf \"$(pwd)/dist\"`) so an empty result cannot delete the parent.";
@@ -278,19 +440,48 @@ function safeSubPath(rest: string): boolean {
   return n !== "." && n !== ".." && !n.startsWith("../") && !CWD_WIPE_LITERAL.test(n);
 }
 
-/** Strip trailing `/*`, `/.*`, `/**`, `/.` (and the Windows forms), repeatedly, so `dir/./*` becomes `dir`. */
+/**
+ * Strip trailing `/*`, `/.*`, `/**`, `/.` (and the Windows forms), repeatedly, so `dir/./*` becomes
+ * `dir`. One walk back from the end: a RegExp ending in `[\\/]*$` read a long run of separators
+ * again from each of them, and stripping one suffix at a time copied the path for each.
+ */
 function stripWipeSuffix(t: string): string {
-  let base = t;
+  const sep = (i: number) => t[i] === "/" || t[i] === "\\";
+  let end = t.length;
   for (;;) {
-    const next = base.replace(WIPE_SUFFIX, "");
-    if (next === base) return base;
-    if (next === "") return /^[\\/]/.test(base) ? "/" : base; // `//*` is the root's contents
-    base = next;
+    let e = end;
+    while (e > 0 && sep(e - 1)) e--;
+    let start = e;
+    while (start > 0 && !sep(start - 1)) start--;
+    if (start === 0 || !WIPE_PART.test(t.slice(start, e))) return t.slice(0, end);
+    let before = start;
+    while (before > 0 && sep(before - 1)) before--;
+    if (before === 0) return "/"; // `//*` is the root's contents
+    end = before;
   }
 }
 
-function judgeRemoveTarget(target: string, destructive: boolean, recursive: boolean, s: Stage, ctx: Context): Decision {
-  let t = target.replace(/^["']+|["']+$/g, "");
+/**
+ * A path whose removal, move or permission change takes a whole directory
+ * with it: one that holds hook wiring or agent settings counts as them
+ * (`rm -rf .claude` removes `.claude/settings.json`), and a wildcard counts
+ * as the protected path it expands to (`rm .claude/*`). `whole` is false for
+ * a non-recursive rm, which leaves the directories a wildcard matches alone.
+ */
+function classifyWhole(t: string, ctx: Context, whole = true): PathInfo {
+  const info = classifyPath(t, ctx);
+  if (info.category !== "normal" && info.category !== "temp" && info.category !== "outside-project") return info;
+  const inside = protectedInside(info.abs, ctx);
+  if (inside !== undefined) return { ...info, category: inside.category, matched: `it holds ${inside.matched}` };
+  return wildcardReach(t, ctx, whole) ?? info;
+}
+
+/**
+ * `rename` is true for Rename-Item, ren and rename, which keep the file where
+ * it is: wiping the working directory is not something they can do.
+ */
+function judgeRemoveTarget(target: string, destructive: boolean, recursive: boolean, s: Stage, ctx: Context, rename = false): Decision {
+  let t = stripQuotes(target);
   if (t === "" || t === "--") return ALLOW;
 
   // `$HOME/x`, `$env:USERPROFILE\x`, `$PWD/x`, `$(pwd)/x`: the prefix is known, so classify the rest like `~/x` or `./x`.
@@ -305,7 +496,7 @@ function judgeRemoveTarget(target: string, destructive: boolean, recursive: bool
   if (HOME_LITERAL.test(t)) {
     return deny("shell.rm-recursive-home", `${s.cmd} targets the home directory (${shownTarget(t)})`, "Deleting the home directory destroys the user's machine state. Name the specific directory inside the project.");
   }
-  if (CWD_WIPE_LITERAL.test(t)) {
+  if (CWD_WIPE_LITERAL.test(t) && !rename) {
     if (recursive || /\*/.test(t) || s.cmd === "del" || s.cmd === "erase") {
       return deny("shell.rm-recursive-cwd", `${s.cmd} ${t} wipes the working directory`, "Delete specific paths (for example `rm -rf dist node_modules`). If the whole tree must go, the user does that.");
     }
@@ -327,7 +518,7 @@ function judgeRemoveTarget(target: string, destructive: boolean, recursive: bool
 
   // `rm -rf <dir>/*` is the same act as `rm -rf <dir>` when <dir> is the project, the home or the root.
   const base = stripWipeSuffix(t);
-  if (base !== t) {
+  if (base !== t && !rename) {
     const parent = classifyPath(base, ctx);
     if (parent.category === "filesystem-root") {
       return deny("shell.rm-recursive-root", `${s.cmd} ${t} empties the filesystem root`, "Nothing in a project needs the filesystem root emptied. Name the specific directory.");
@@ -340,16 +531,16 @@ function judgeRemoveTarget(target: string, destructive: boolean, recursive: bool
     }
   }
 
-  const info = classifyPath(t, ctx);
+  const info = classifyWhole(t, ctx, recursive || destructive);
   switch (info.category) {
     case "filesystem-root":
       return deny("shell.rm-recursive-root", `${s.cmd} targets the filesystem root (${t})`, "Nothing in a project needs the filesystem root deleted.");
     case "home-root":
       return deny("shell.rm-recursive-home", `${s.cmd} targets the home directory (${t})`, "Deleting the home directory destroys the user's machine state.");
     case "project-root":
-      return destructive ? deny("shell.rm-recursive-cwd", `${s.cmd} ${t} wipes the project`, "Delete specific paths instead.") : ALLOW;
+      return destructive && !rename ? deny("shell.rm-recursive-cwd", `${s.cmd} ${t} wipes the project`, "Delete specific paths instead.") : ALLOW;
     case "git-internals": {
-      const rel = info.rel ?? "";
+      const rel = (info.gitRel ?? "").toLowerCase();
       // A stale lock file (`index.lock`, `HEAD.lock`, `refs/heads/x.lock`) is the one thing under .git/ git itself tells the user to remove.
       if (rel !== ".git" && /\.lock$/i.test(rel)) return ALLOW;
       return rel === ".git"
@@ -400,36 +591,173 @@ const FIND_FILTERS = /^-(i?name|i?path|i?regex|i?wholename|i?lname|newer\w*|[acm
 const FIND_MATCH_ALL = /^(?:(?:\.\/)?(?:[*?]*\*[*?]*|\*\/\*)|\^?\.[*+]\$?)$/;
 
 /**
- * True when a filter at `i` actually narrows the delete: it precedes the action (`-delete`
- * placed first runs on every entry), is not negated (`! -name x` matches everything else),
- * is not a catch-all (`-name '*'`), and has no `-o` between it and the action at its own paren
- * depth (`-name x -o -delete` and `-name x -prune -o -delete` act on the other branch).
+ * For an action at `actionAt`, which words before it are filters that actually narrow the delete:
+ * the filter precedes the action (`-delete` placed first runs on every entry), is not negated
+ * (`! -name x` matches everything else), is not a catch-all (`-name '*'`), and has no `-o` between
+ * it and the action in the group that joins them (`-name x -o -delete` and `-name x -prune -o
+ * -delete` act on the other branch). Each group that holds the filter but not the action must
+ * narrow as a whole: `\( -name a -o -name b \) -delete` deletes only those two names,
+ * `\( -name a -o -type f \) -delete` deletes every file. All that does not depend on the action
+ * is worked out once, so each action costs one pass back from it.
  */
-function narrows(argv: readonly string[], i: number, actionAt: number): boolean {
-  if (i >= actionAt || !FIND_FILTERS.test(argv[i])) return false;
-  if (/^(!|-not)$/.test(argv[i - 1] ?? "")) return false;
-  if (FIND_MATCH_ALL.test(argv[i + 1] ?? "")) return false;
-  let depth = 0;
-  for (let j = i + 1; j < actionAt; j++) {
-    if (argv[j] === "(") depth++;
-    else if (argv[j] === ")") depth--;
-    else if (depth <= 0 && /^-or?$/.test(argv[j])) return false;
+function narrowingFilters(argv: readonly string[], value: readonly boolean[], deadline: number | undefined): (actionAt: number) => boolean[] {
+  // Only words find reads as its expression count: `-name '('` names a file called `(`.
+  const is = (j: number, re: RegExp) => !value[j] && re.test(argv[j] ?? "");
+  const negated = (j: number) => is(j - 1, /^(!|-not)$/);
+  // `,` runs both sides, so like `-o` it puts a filter and the action in different branches.
+  const or = argv.map((_, j) => is(j, /^(-o|-or|,)$/));
+  // The depth before each word, and where each `(` closes.
+  const depth = new Array<number>(argv.length + 1);
+  const closeAt = new Map<number, number>();
+  const opens: number[] = [];
+  let d = 0;
+  for (let j = 0; j < argv.length; j++) {
+    if ((j & 4095) === 0) onTime(deadline);
+    depth[j] = d;
+    if (is(j, /^\($/)) {
+      opens.push(j);
+      d++;
+    } else if (is(j, /^\)$/)) {
+      d--;
+      const o = opens.pop();
+      if (o !== undefined) closeAt.set(o, j);
+    }
   }
-  return true;
+  depth[argv.length] = d;
+  // Whether each closed group, not negated, matches only what some filter in it names: every `-o`
+  // branch must hold a filter (or a group that does) that is not negated and not a catch-all.
+  // `-type f`, `-true` or `! -name x` alone narrow nothing. Groups close inner first, so a group's
+  // inner groups are judged before it, and each word is looked at for one group only.
+  const groupNarrows = new Map<number, boolean>();
+  for (const [o, c] of closeAt) {
+    onTime(deadline);
+    let branch = false;
+    let narrows = false;
+    for (let j = o + 1; j <= c; j++) {
+      if (j === c || or[j]) {
+        if (!branch) break;
+        narrows = j === c;
+        branch = false;
+        continue;
+      }
+      if (closeAt.has(j)) {
+        if (groupNarrows.get(j) === true) branch = true;
+        j = closeAt.get(j) ?? c;
+      } else if (is(j, /^-empty$/)) {
+        if (!negated(j)) branch = true;
+      } else if (is(j, FIND_FILTERS)) {
+        if (!negated(j) && !FIND_MATCH_ALL.test(argv[j + 1] ?? "")) branch = true;
+        // Step over its value, never over a `(` that a filter find would refuse left valueless.
+        if (value[j + 1]) j++;
+      }
+    }
+    groupNarrows.set(o, narrows && !negated(o));
+  }
+  // Each filter that narrows on its own, and the first place a group holding it closes without
+  // narrowing: an action past that place is out of the filter's reach. A group never closed holds
+  // every action after it.
+  const filter = new Array<boolean>(argv.length).fill(false);
+  const reach = new Array<number>(argv.length).fill(Infinity);
+  const stack = [Infinity];
+  for (let j = 0; j < argv.length; j++) {
+    if ((j & 4095) === 0) onTime(deadline);
+    const top = stack[stack.length - 1];
+    if (is(j, /^\($/)) {
+      const c = closeAt.get(j);
+      stack.push(c !== undefined && groupNarrows.get(j) !== true ? Math.min(top, c) : top);
+    } else if (is(j, /^\)$/)) {
+      if (stack.length > 1) stack.pop();
+    } else {
+      filter[j] = is(j, FIND_FILTERS) && !negated(j) && (argv[j] === "-empty" || !FIND_MATCH_ALL.test(argv[j + 1] ?? ""));
+      reach[j] = top;
+    }
+  }
+  return (actionAt) => {
+    const out = new Array<boolean>(actionAt).fill(false);
+    // The group that joins a filter to the action is the shallowest depth on the way; an `-o` at that depth splits them.
+    let joint = depth[actionAt];
+    const ors = new Set<number>();
+    for (let j = actionAt - 1; j >= 0; j--) {
+      if ((j & 4095) === 0) onTime(deadline);
+      out[j] = filter[j] && reach[j] > actionAt && !ors.has(joint);
+      joint = Math.min(joint, depth[j]);
+      if (or[j]) ors.add(depth[j]);
+    }
+    return out;
+  };
 }
+
+/** Find words that take the next word as their value; -fprintf takes two, and -exec and its kin every word up to `;` or `{} +`. */
+const FIND_VALUED = /^-(i?name|i?path|i?regex|i?wholename|i?lname|newer|anewer|cnewer|newer[aBcmt][aBcmt]|[acm](time|min)|used|size|user|group|uid|gid|perm|samefile|x?type|maxdepth|mindepth|fstype|inum|links|printf|fprint0?|fls|context|regextype|files0-from)$/;
+
+/** Per word of find's arguments, true where it is another word's value rather than part of the expression. */
+function findValues(argv: readonly string[]): boolean[] {
+  const value = new Array<boolean>(argv.length).fill(false);
+  for (let j = 0; j < argv.length; j++) {
+    const a = argv[j];
+    if (/^-(exec|execdir|ok|okdir)$/.test(a)) {
+      let k = j + 1;
+      for (; k < argv.length && argv[k] !== ";" && !(argv[k] === "+" && argv[k - 1] === "{}"); k++) value[k] = true;
+      if (k < argv.length) value[k] = true;
+      j = k;
+    } else if (a === "-fprintf") {
+      value.fill(true, j + 1, Math.min(j + 3, argv.length));
+      j += 2;
+    } else if (FIND_VALUED.test(a) && j + 1 < argv.length) value[++j] = true;
+  }
+  return value;
+}
+
+/** Past this many actions in one find, the guard does not work out what each deletes and judges the starts whole. */
+const FIND_MAX_ACTIONS = 16;
 
 function findRules(s: Stage, ctx: Context): Decision[] {
   const argv = s.argv.slice(1);
-  const actionAt = argv.findIndex((a, i) => a === "-delete" || (/^-exec(dir)?$/.test(a) && REMOVERS.has((argv[i + 1] ?? "").replace(/^\\/, ""))));
-  if (actionAt < 0) return [];
-  if (argv.some((_, i) => narrows(argv, i, actionAt))) return [];
+  const value = findValues(argv);
+  const actions: number[] = [];
+  argv.forEach((a, i) => {
+    if (!value[i] && (a === "-delete" || (/^-exec(dir)?$/.test(a) && REMOVERS.has((argv[i + 1] ?? "").replace(/^\\/, ""))))) actions.push(i);
+  });
+  if (actions.length === 0) return [];
+  // `-H`, `-L`, `-P`, `-D opts` and `-O3` come before the starting points.
+  let k = 0;
+  while (k < argv.length && /^-([HLP]|O\d*|D)$/.test(argv[k])) k += argv[k] === "-D" ? 2 : 1;
   const starts: string[] = [];
-  for (const a of argv) {
+  for (const a of argv.slice(k)) {
     if (a.startsWith("-") || a === "(" || a === "!") break;
     starts.push(a);
   }
   if (starts.length === 0) starts.push(".");
-  return starts.map((t) => judgeRemoveTarget(t, true, true, { ...s, cmd: "find -delete" }, ctx));
+  const stage = { ...s, cmd: "find -delete" };
+  // Every action must be narrowed: `-name foo -delete -o -delete` deletes everything else too.
+  const narrowedAt = actions.length > FIND_MAX_ACTIONS ? null : narrowingFilters(argv, value, ctx.deadline);
+  const narrowing = narrowedAt === null ? [] : actions.map(narrowedAt);
+  if (narrowing.length > 0 && narrowing.every((n) => n.includes(true))) {
+    // A filter narrows what goes, but not where: a start inside a protected directory, or a filter
+    // that names a protected file outright, still deletes it. A filter on the other side of `-o`
+    // (`-path ./.git -prune -o ...`) keeps what it names.
+    const named: string[] = [];
+    const names = new Set<string>();
+    for (let i = 0; i < argv.length; i++) {
+      if ((i & 4095) === 0) onTime(ctx.deadline);
+      if (!narrowing.some((n) => n[i])) continue;
+      const v = argv[i + 1] ?? "";
+      if (/^-i?name$/.test(argv[i]) && !/[*?[]/.test(v)) names.add(v);
+      if (/^-i?(path|wholename)$/.test(argv[i]) && !/[*?[]/.test(v)) named.push(v);
+    }
+    const distinct = [...new Set(starts)];
+    joinAll(distinct, [...names], named);
+    const guarded = new Set(["git-internals", "harness", "hook-config", "home-config", "lint-config", "test-config"]);
+    const out: Decision[] = [];
+    for (const t of [...distinct, ...named]) {
+      onTime(ctx.deadline);
+      if (!guarded.has(classifyWhole(t, ctx).category)) continue;
+      const d = judgeRemoveTarget(t, false, false, stage, ctx);
+      if (d.verdict !== "allow") out.push(d);
+    }
+    return out;
+  }
+  return starts.map((t) => judgeRemoveTarget(t, true, true, stage, ctx));
 }
 
 // ---------------------------------------------------------------------------
@@ -459,17 +787,29 @@ function gitRules(s: Stage, ctx: Context): Decision[] {
   const out: Decision[] = [];
   const argv = s.argv;
   let i = 1;
+  // `git -C dir rm x` removes dir/x; each -C is taken relative to the one before.
+  let cdir = "";
   while (i < argv.length && argv[i].startsWith("-")) {
     const a = argv[i];
     if (a === "-c" && HOOK_CONFIG_KEY.test(argv[i + 1] ?? "")) {
       out.push(deny("shell.hook-bypass", `git -c ${argv[i + 1]} disables hooks for this command`, HOOK_BYPASS_REMEDIATION));
     }
+    if (a === "-C" && argv[i + 1]) cdir = /^([\\/~]|[A-Za-z]:)/.test(argv[i + 1]) ? argv[i + 1] : cdir === "" ? argv[i + 1] : `${cdir}/${argv[i + 1]}`;
     if (["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"].includes(a)) i += 2;
     else i++;
   }
   const sub = argv[i];
   if (sub === undefined) return out;
   const rest = argv.slice(i + 1);
+  const at = (p: string): string => (cdir === "" || /^([\\/~]|[A-Za-z]:)/.test(p) ? p : `${cdir}/${p}`);
+  /** git rm, git mv and git clean delete from the work tree like rm and mv do. */
+  const removes = (paths: string[], destructive: boolean, recursive: boolean): void => {
+    for (const p of paths) {
+      const d = judgeRemoveTarget(at(p), destructive, recursive, { ...s, cmd: `git ${sub}` }, ctx);
+      // git touches only its own repository, which a subdirectory session shares with the paths above it.
+      if (d.verdict !== "allow" && d.rule !== "shell.rm-outside-project") out.push(d);
+    }
+  };
 
   if (rest.includes("--no-verify")) {
     out.push(deny("shell.hook-bypass", `git ${sub} --no-verify skips the project's hooks`, HOOK_BYPASS_REMEDIATION));
@@ -486,7 +826,7 @@ function gitRules(s: Stage, ctx: Context): Decision[] {
       break;
     }
     case "push":
-      out.push(...pushRules(rest, ctx));
+      append(out, pushRules(rest, ctx));
       break;
     case "reset":
       if (rest.includes("--hard")) {
@@ -501,16 +841,30 @@ function gitRules(s: Stage, ctx: Context): Decision[] {
       if (!dry && !ignoredOnly && !scoped && (f.short.has("f") || f.long.has("force"))) {
         out.push(deny("shell.git-clean", `git clean ${rest.join(" ")} removes every untracked file in the tree`, "Run `git clean -n` to list what would go, then clean named paths (`git clean -f -- dist/`) or only ignored files (`git clean -fdX`). Untracked files may be the user's uncommitted work."));
       }
+      if (!dry && scoped && (f.short.has("f") || f.long.has("force"))) removes(f.positionals, true, f.short.has("d"));
+      break;
+    }
+    case "rm": {
+      // --cached only untracks; the file stays where it is.
+      const f = flagsOf(rest, 0, ["--pathspec-from-file"]);
+      if (!f.long.has("cached") && !f.short.has("n") && !f.long.has("dry-run")) removes(f.positionals, f.short.has("r"), f.short.has("r"));
+      break;
+    }
+    case "mv": {
+      const f = flagsOf(rest, 0);
+      if (f.short.has("n") || f.long.has("dry-run") || f.positionals.length < 2) break;
+      removes(f.positionals.slice(0, -1), true, false);
+      append(out, writeRules(at(f.positionals[f.positionals.length - 1]), { ...s, cmd: "git mv" }, ctx));
       break;
     }
     case "checkout":
-      out.push(...checkoutRules(rest));
+      append(out, checkoutRules(rest));
       break;
     case "switch":
-      out.push(...switchRules(rest));
+      append(out, switchRules(rest));
       break;
     case "restore":
-      out.push(...restoreRules(rest));
+      append(out, restoreRules(rest));
       break;
     case "stash":
       if (rest[0] === "drop" || rest[0] === "clear") {
@@ -740,7 +1094,7 @@ function permissionRules(s: Stage, ctx: Context): Decision[] {
   }
   const { recursive, mode, targets } = parsePermissionArgs(s);
   for (const t of targets) {
-    const info = classifyPath(t, ctx);
+    const info = classifyWhole(t, ctx);
     if (info.category === "hook-config" || info.category === "git-internals") {
       if (s.cmd === "chmod" && /(^|,)[ugoa]*-[rwx]*x|^0*[0-6][0-6][0-6]$/.test(mode)) {
         out.push(deny("shell.hook-tamper", `chmod ${mode} ${t} disables a hook`, "Hooks stay executable. Tell the user if a hook blocks legitimate work."));
@@ -810,13 +1164,13 @@ function privateCredential(a: string, ctx: Context): string | null {
   const info = classifyPath(homeSpelling(a), ctx);
   if (info.isTestFile) return null;
   const rel = info.homeRel ?? info.rel ?? info.abs;
-  const isPrivate = PRIVATE_FILE.test(a) || (info.homeRel !== null && (SSH_PRIVATE.test(`/${info.homeRel}`) || PRIVATE_FILE.test(`/${info.homeRel}`) || /^\.(npmrc|aws\/credentials)$/.test(info.homeRel)));
+  const isPrivate = PRIVATE_FILE.test(a) || (info.homeRel !== null && (sshPrivate(`/${info.homeRel}`) || PRIVATE_FILE.test(`/${info.homeRel}`) || /^\.(npmrc|aws\/credentials)$/.test(info.homeRel)));
   return isPrivate ? rel : null;
 }
 
 /** `$HOME/x`, `${HOME:?}/x`, `$env:USERPROFILE\x`, `%USERPROFILE%\x` as `~/x`, so the home-relative classification sees them. */
 function homeSpelling(a: string): string {
-  const t = a.replace(/^["']+|["']+$/g, "");
+  const t = stripQuotes(a);
   const home = HOME_PREFIX.exec(t);
   return home ? `~${t.slice(home[0].length)}` : t;
 }
@@ -859,7 +1213,7 @@ function copyOperands(s: Stage): { sources: string[]; dest: string | undefined }
     } else if (a.startsWith("--target-directory=")) {
       dest = a.slice("--target-directory=".length);
     } else if (a === "--") {
-      positionals.push(...argv.slice(i + 1));
+      append(positionals, argv.slice(i + 1));
       break;
     } else if (!a.startsWith("-") || a === "-") {
       positionals.push(a);
@@ -868,9 +1222,9 @@ function copyOperands(s: Stage): { sources: string[]; dest: string | undefined }
   if (sources.length === 0 && dest === undefined) {
     if (positionals.length < 2) return { sources: [], dest: undefined };
     dest = positionals[positionals.length - 1];
-    sources.push(...positionals.slice(0, -1));
+    append(sources, positionals.slice(0, -1));
   } else if (sources.length === 0) {
-    sources.push(...positionals);
+    append(sources, positionals);
   } else if (dest === undefined && positionals.length > 0) {
     dest = positionals[positionals.length - 1];
   }
@@ -879,6 +1233,21 @@ function copyOperands(s: Stage): { sources: string[]; dest: string | undefined }
 
 /** Moving a protected path away is the same act as deleting it, so a mv source is judged like an rm target. */
 function moveSourceRules(s: Stage, ctx: Context): Decision[] {
+  if (RENAMERS.has(s.cmd)) {
+    let sources: string[];
+    if (s.cmd === "rename") {
+      // perl rename takes an expression (or -e/-E code) and the files; util-linux rename takes two strings and the files.
+      const f = flagsOf(s.argv, 1, ["-e", "-E"]);
+      if (f.short.has("n") || f.long.has("nono") || f.long.has("no-act") || f.long.has("dry-run")) return [];
+      const perl = f.short.has("e") || f.short.has("E") ? 0 : /^(?:s|y|tr)([^\w\s]).*\1/s.test(f.positionals[0] ?? "") ? 1 : 2;
+      sources = f.positionals.slice(perl);
+    } else {
+      if (s.argv.some((a) => /^-(whatif|wi)$/i.test(a))) return [];
+      sources = copyOperands({ ...s, cmd: "move-item" }).sources;
+    }
+    // A wildcard renames whatever the expression matches, which only the expression knows; a named file is judged.
+    return sources.filter((src) => !/[*?[]/.test(src)).map((src) => judgeRemoveTarget(src, true, false, s, ctx, true)).filter((d) => d.verdict !== "allow");
+  }
   if (!MOVERS.has(s.cmd)) return [];
   const { sources } = copyOperands(s);
   return sources.map((src) => judgeRemoveTarget(src, true, false, s, ctx)).filter((d) => d.verdict !== "allow");
@@ -1149,7 +1518,99 @@ function interpreterRules(s: Stage): Decision[] {
   if (what !== null) {
     out.push(ask("shell.interpreter-destructive", `${s.cmd} inline code ${what}`, "Inline code cannot be checked the way a shell command can. Run the deletion as a plain command (`rm -rf <path>`) so the target is visible, or ask the user."));
   }
+  const tamper = EXEC_HINT.test(code) ? ahInitTamperInCode(code) : null;
+  if (tamper !== null) {
+    out.push(deny("shell.hook-tamper", `${s.cmd} inline code runs ah init ${tamper}`, AH_TAMPER_REMEDIATION));
+  }
   return out;
+}
+
+/**
+ * `ah init --remove` and `ah init --ask-fallback warn` are the sanctioned way to
+ * unwire or weaken the guard, so an agent that was refused could reach for them.
+ * Plain `ah init` (re-wiring) and `ah doctor` pass. Spelled as `ah`, `npx
+ * @9thlevel/aegis`, `node .../dist/ah.mjs`, `./dist/ah.mjs`, `ah.ps1`,
+ * `pwsh [-File] ah.ps1`, `pnpm ah` or `yarn run ah`; the parser unwraps runners,
+ * `env -S`, `npx -c`, `iex`, `Start-Process`, compound commands and PowerShell
+ * blocks, and shellRules parses text piped into a shell, before this sees the stage.
+ */
+function ahCliRules(s: Stage): Decision[] {
+  const args = ahArgs(s);
+  if (args === null || args[0] !== "init") return [];
+  const what = ahInitTamper(args.slice(1));
+  if (what === null) return [];
+  return [deny("shell.hook-tamper", `ah init ${what}`, AH_TAMPER_REMEDIATION)];
+}
+
+const AH_TAMPER_REMEDIATION = "Hook wiring is how this project enforces its rules. Tell the user which refusal is in your way; changing the wiring is their call, made from their own terminal.";
+
+/** What `ah init <options>` does to the guard's wiring, or null when it leaves the guard as strong as it is. */
+function ahInitTamper(options: readonly string[]): string | null {
+  // Walk the options the way `ah init` parses them, so a flag's value is never read as a flag.
+  const flags = new Map<string, string | true>();
+  for (let i = 0; i < options.length; i++) {
+    const a = options[i];
+    const eq = a.startsWith("--") ? a.indexOf("=") : -1;
+    const name = eq > 0 ? a.slice(0, eq) : a;
+    if (AH_INIT_VALUED_OPTIONS.has(name)) flags.set(name, eq > 0 ? a.slice(eq + 1) : (options[++i] ?? ""));
+    else flags.set(name, true);
+  }
+  if (flags.has("--dry-run")) return null;
+  if (flags.has("--remove") || flags.has("--uninstall")) return "--remove removes the guard's hook wiring";
+  if (flags.get("--ask-fallback") === "warn") return "--ask-fallback warn turns the guard's asks into warnings on Codex";
+  if (flags.has("--guard") || flags.has("--node")) return `${flags.has("--guard") ? "--guard" : "--node"} points the hook at a program other than the installed guard`;
+  return null;
+}
+
+/** The ah CLI by its bin name, its `ah.ps1` shim, or the bundle file run through its shebang or an interpreter. `ah.cmd` arrives normalized to `ah`. */
+const AH_COMMAND = /^(?:ah|aegis)(?:\.m?js|\.ps1)?$/;
+/** Runtime options before the script that take the next word: `bun --cwd dir`, `deno run --config file`. */
+const RUNTIME_OPTS_WITH_ARG: Record<string, Set<string>> = { bun: new Set(["--cwd"]), deno: new Set(["-c", "--config", "--import-map"]) };
+
+/** The arguments after `ah` when the stage runs the ah CLI, else null. */
+function ahArgs(s: Stage): string[] | null {
+  if (AH_COMMAND.test(s.cmd)) return s.argv.slice(1);
+  if (["node", "nodejs", "bun", "deno"].includes(s.cmd)) {
+    for (let i = 1; i < s.argv.length; i++) {
+      const a = s.argv[i];
+      if (a === "run" && (s.cmd === "deno" || s.cmd === "bun")) continue;
+      if (INTERPRETER_VALUED_FLAGS.has(a) || RUNTIME_OPTS_WITH_ARG[s.cmd]?.has(a)) {
+        i++;
+        continue;
+      }
+      if (a.startsWith("-")) continue;
+      // `node dist/ah.mjs`, `node node_modules/.bin/ah` (the bin symlink), `bun ah`, `deno run npm:@9thlevel/aegis@0.0.1`.
+      return AH_COMMAND.test(normalizeCmd(a.replace(/^(npm:.+)@[^@/]*$/, "$1"))) ? s.argv.slice(i + 1) : null;
+    }
+  }
+  if (s.cmd === "pwsh" || s.cmd === "powershell") {
+    // `pwsh -File node_modules/.bin/ah.ps1 init --remove`, `pwsh -NoProfile ./ah.ps1 init --remove`: the script's own arguments follow it.
+    const run = pwshRun(s.argv);
+    return run !== null && "script" in run && AH_COMMAND.test(normalizeCmd(run.script)) ? run.args : null;
+  }
+  if (s.cmd === "pnpm" || s.cmd === "yarn") {
+    // `pnpm ah`, `yarn ah`, `yarn run ah`: the package manager runs a local bin by name.
+    let k = subcommandIndex(s.argv);
+    if (s.argv[k] === "run") k++;
+    return AH_COMMAND.test(normalizeCmd(s.argv[k] ?? "")) ? s.argv.slice(k + 1) : null;
+  }
+  return null;
+}
+
+/**
+ * An `ah init` command line inside code, as one string or an argv list: `'ah init --remove'`,
+ * `` `ah init --remove` ``, `['ah', 'init', '--remove']`, `spawnSync('ah', ['init', '--remove'])`.
+ * Runs to the end of the call or statement.
+ */
+const AH_INIT_IN_CODE = /(?<![\w.-])(?:ah|aegis)(?:\.m?js)?['"`]?(?:\s*,\s*\[?\s*['"`]?|\s+)init\b([^;)\n]*)/g;
+
+/** What an `ah init` spelled in inline code does to the guard, or null when the code runs none that weakens it. */
+function ahInitTamperInCode(code: string): string | null {
+  for (const m of code.matchAll(AH_INIT_IN_CODE)) {
+    const what = ahInitTamper(m[1].split(/[\s'"`,\][]+/).filter((w) => w !== ""));
+    if (what !== null) return what;
+  }
+  return null;
 }
 
 /** What the inline code deletes, or null when it deletes nothing the guard recognises. */
@@ -1161,14 +1622,108 @@ function destructiveCodeKind(code: string, cmd: string): string | null {
   return null;
 }
 
-function writeTargetsOf(s: Stage): string[] {
+/** Parameters of the writing cmdlets that take a value, and their aliases; true for those whose value is a path. */
+const CMDLET_VALUED: Record<string, boolean> = {
+  path: true, literalpath: true, pspath: true, lp: true, filepath: true, name: true,
+  value: false, target: false, inputobject: false, encoding: false, itemtype: false, type: false, filter: false, include: false, exclude: false,
+  credential: false, stream: false, width: false, options: false, erroraction: false, ea: false, warningaction: false, wa: false, informationaction: false,
+  infa: false, errorvariable: false, ev: false, warningvariable: false, wv: false, informationvariable: false, iv: false, outvariable: false,
+  ov: false, outbuffer: false, ob: false, pipelinevariable: false, pv: false, progressaction: false, proga: false,
+};
+const CMDLET_SWITCHES = ["force", "nonewline", "append", "noclobber", "passthru", "whatif", "wi", "confirm", "cf", "asbytestream", "verbose", "vb", "debug", "db", "usetransaction", "usetx"];
+
+type CmdletRole = "path" | "name" | "value";
+
+/**
+ * The files New-Item, Set-Content, Add-Content and Out-File write. Named parameters bind first
+ * and may be cut to any prefix PowerShell can tell apart; the arguments left over bind in order
+ * to the path and then the value (Out-File: the encoding), and any past those make PowerShell
+ * refuse the command. A value, such as a here-string's body, is not a file. A parameter it does
+ * not know, or a prefix that could be a switch, is read both as taking a value and as not.
+ *
+ * A comma joins words into one array (`a, b` and `a ,b` write both), but the quotes are gone by
+ * now, so a word ending in `,` may instead have been `'x,'`, after which the next word stands on
+ * its own, and a `-Path` after such a comma may be a parameter or text. Every reading is followed
+ * at once, as a small set of states (positionals so far, an array still open, a value expected),
+ * and a word is a file if any reading binds it to the path.
+ */
+function cmdletPaths(cmd: string, args: readonly string[], deadline: number | undefined): string[] {
+  const params = args.map((w) => {
+    const m = /^-([A-Za-z]+)(?::(.*))?$/s.exec(w);
+    if (m === null) return null;
+    const key = m[1].toLowerCase();
+    const valued = Object.keys(CMDLET_VALUED).filter((n) => n.startsWith(key));
+    const exact = Object.hasOwn(CMDLET_VALUED, key);
+    const switches = CMDLET_SWITCHES.some((n) => n.startsWith(key));
+    const takes = exact || (valued.length > 0 && !switches);
+    // A known switch takes nothing; one it does not know, or a prefix of both kinds, may take a value.
+    const maybeTakes = !takes && (valued.length > 0 || !switches);
+    const isPath = exact ? CMDLET_VALUED[key] : valued.some((n) => CMDLET_VALUED[n]);
+    const role: CmdletRole = !isPath ? "value" : (exact ? key === "name" : valued.every((n) => n === "name")) ? "name" : "path";
+    return { takes, maybeTakes, role, inline: m[2] !== undefined && m[2] !== "" ? m[2] : undefined };
+  });
+  // Whether a named path parameter is bound: surely, when it follows no comma; maybe, when it does.
+  const pathParam = (j: number) => params[j]?.takes === true && params[j]?.role === "path";
+  const surely = args.some((w, j) => pathParam(j) && !(args[j - 1] ?? "").endsWith(","));
+  const maybe = args.some((_, j) => pathParam(j));
+  const full = cmd === "out-file" ? ["path", "encoding"] : cmd === "new-item" || cmd === "ni" ? ["path"] : ["path", "value"];
+  const paths = new Set<string>();
+  const names = new Set<string>();
+  interface State { pos: number; open: CmdletRole | null; last: CmdletRole | null; expect: CmdletRole | null }
+  for (const bound of surely ? [true] : maybe ? [true, false] : [false]) {
+    const slots = full.filter((p) => p !== "path" || !bound);
+    let states = new Map<string, State>([["0", { pos: 0, open: null, last: null, expect: null }]]);
+    args.forEach((w, j) => {
+      if ((j & 1023) === 0) onTime(deadline);
+      const next = new Map<string, State>();
+      const emit = (st: State) => next.set(`${st.pos}|${st.open}|${st.last}|${st.expect}`, st);
+      // The word, or a parameter's inline value, takes a role; a trailing comma may keep its array open.
+      const take = (role: CmdletRole, text: string, st: State) => {
+        if (role === "path") paths.add(text);
+        else if (role === "name") names.add(text);
+        emit({ ...st, open: null, last: role, expect: null });
+        if (text.endsWith(",")) emit({ ...st, open: role, last: role, expect: null });
+      };
+      const fresh = (st: State) => {
+        const p = params[j];
+        if (p === null) take(slots[st.pos] === "path" ? "path" : "value", w, { ...st, pos: Math.min(st.pos + 1, 3) });
+        else if (!p.takes) {
+          emit({ ...st, open: null, last: null, expect: null });
+          if (p.maybeTakes && p.inline === undefined) emit({ ...st, open: null, last: null, expect: p.role });
+        } else if (p.inline !== undefined) take(p.role, p.inline, st);
+        else emit({ ...st, open: null, last: null, expect: p.role });
+      };
+      for (const st of states.values()) {
+        if (st.expect !== null) take(st.expect, w, st);
+        else if (st.open !== null) {
+          take(st.open, w, st);
+          if (params[j] !== null) fresh(st);
+        } else {
+          if (w.startsWith(",") && st.last !== null) take(st.last, w, st);
+          fresh(st);
+        }
+      }
+      states = next;
+    });
+  }
+  const dirs = new Set<string>();
+  for (const p of paths) {
+    dirs.add(p);
+    for (const q of p.split(",")) if (q !== "") dirs.add(q);
+  }
+  const out = [...dirs, ...names];
+  joinAll([...dirs], [...names], out);
+  return out;
+}
+
+function writeTargetsOf(s: Stage, deadline: number | undefined): string[] {
   const targets = [...s.writes];
   const positionals = s.argv.slice(1).filter((a) => !a.startsWith("-"));
   switch (s.cmd) {
     case "sed":
       if (s.argv.includes("-i") || s.argv.some((a) => /^-i/.test(a) || a === "--in-place")) {
         const hasScriptFlag = s.argv.some((a) => a === "-e" || a === "-f" || a === "--expression" || a === "--file");
-        targets.push(...(hasScriptFlag ? positionals : positionals.slice(1)));
+        append(targets, (hasScriptFlag ? positionals : positionals.slice(1)));
       }
       break;
     case "cp":
@@ -1188,11 +1743,15 @@ function writeTargetsOf(s: Stage): string[] {
     case "truncate":
     case "touch":
     case "mkdir":
+      append(targets, positionals.filter((p) => p !== "-s" && !/^\d+$/.test(p)));
+      break;
     case "new-item":
+    case "ni":
     case "set-content":
     case "add-content":
+    case "ac":
     case "out-file":
-      targets.push(...positionals.filter((p) => p !== "-s" && !/^\d+$/.test(p)));
+      append(targets, cmdletPaths(s.cmd, s.argv.slice(1), deadline));
       break;
     case "git":
       break;

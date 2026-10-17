@@ -1,0 +1,11 @@
+{
+  "name": "find deleting a group of empty entries or files is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . \\( -empty -o -type f \\) -delete"
+    }
+  },
+  "rule": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-019"
+}

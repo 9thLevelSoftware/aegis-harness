@@ -1,6 +1,8 @@
 import { runGuard } from "../guard/main.ts";
 import { VERSION } from "../version.ts";
 import { runBug } from "./bug.ts";
+import { runDoctor, DOCTOR_HELP } from "./doctor.ts";
+import { INIT_HELP, runInit } from "./init.ts";
 import { runTestHooks } from "./test-hooks.ts";
 
 const HELP = `ah ${VERSION}: a PreToolUse guard for Codex and Claude Code.
@@ -13,6 +15,8 @@ Usage:
       the defaults; CLAUDE_PROJECT_DIR is honoured as the project root.
   ah test-hooks [--fixtures DIR] [--guard FILE] [--in-process] [--budget-ms N] [--filter TEXT] [--json]
       Run every must_block / must_allow / must_ask fixture through the guard. Exits 1 on any miss.
+${INIT_HELP.replace(/^/gm, "  ").trimEnd()}
+${DOCTOR_HELP.replace(/^/gm, "  ").trimEnd()}
   ah bug add --rule RULE --title TEXT [--command TEXT] [--agent NAME] [--observed-on TEXT]
       Record an incident or false positive under .harness/memory/bugs/.
   ah bug list
@@ -28,6 +32,10 @@ export async function main(argv: readonly string[]): Promise<number> {
       return runGuard(rest);
     case "test-hooks":
       return runTestHooks(rest);
+    case "init":
+      return runInit(rest);
+    case "doctor":
+      return runDoctor(rest);
     case "bug":
       return runBug(rest);
     case "rules": {

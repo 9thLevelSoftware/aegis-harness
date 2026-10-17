@@ -1,0 +1,12 @@
+{
+  "name": "mv ../.claude/settings.local.json away from a subdirectory session is denied",
+  "cwd": "/home/dev/project/sub",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mv ../.claude/settings.local.json /tmp/settings.bak"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

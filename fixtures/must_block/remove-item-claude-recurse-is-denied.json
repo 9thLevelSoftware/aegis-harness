@@ -1,0 +1,12 @@
+{
+  "name": "Remove-Item .claude\\* -Recurse is denied",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Remove-Item .claude\\* -Recurse"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

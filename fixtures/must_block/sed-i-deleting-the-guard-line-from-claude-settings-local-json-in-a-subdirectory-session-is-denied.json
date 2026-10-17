@@ -1,0 +1,12 @@
+{
+  "name": "sed -i deleting the guard line from ../.claude/settings.local.json in a subdirectory session is denied",
+  "cwd": "/home/dev/project/sub",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sed -i '/guard.mjs/d' ../.claude/settings.local.json"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

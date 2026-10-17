@@ -1,0 +1,11 @@
+{
+  "name": "ah init --guard pointing the hook at another script is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ah init --guard /tmp/guard.mjs"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

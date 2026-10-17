@@ -1,4 +1,4 @@
-import { strictest, type Context, type Decision, type ToolCall } from "./model.ts";
+import { ask, strictest, TimeLimit, TIME_LIMIT_MS, type Context, type Decision, type ToolCall } from "./model.ts";
 import { editRules } from "./rules/edit.ts";
 import { otherRules } from "./rules/other.ts";
 import { shellRules } from "./rules/shell.ts";
@@ -16,7 +16,23 @@ export function decide(call: ToolCall, ctx: Context): Decision {
   }
 }
 
-/** A hook event can carry several calls (a multi-file patch); the strictest decision wins. */
+/**
+ * A hook event can carry several calls (a multi-file patch); the strictest decision wins.
+ * A call the guard fails on is put to the user rather than let through: an error a command
+ * can provoke would otherwise switch every check off for the whole command.
+ */
 export function decideAll(calls: readonly ToolCall[], ctx: Context): Decision {
-  return strictest(calls.map((c) => decide(c, ctx)));
+  const timed = ctx.deadline === undefined ? { ...ctx, deadline: performance.now() + TIME_LIMIT_MS } : ctx;
+  return strictest(calls.map((c) => {
+    try {
+      return decide(c, timed);
+    } catch (e) {
+      if (e instanceof TimeLimit) {
+        // A hook that runs out of time lets the call through, so the guard stops first and asks.
+        return ask("guard.time-limit", `the command took too long to check (${e.message})`, "Split it into smaller commands, or write a long script to a file first and run that, so each part can be checked.");
+      }
+      const why = e instanceof Error ? e.message : String(e);
+      return ask("guard.internal-error", `the guard failed while checking this call (${why.slice(0, 200)})`, "This is a bug in ah. Ask the user to run the command, and report it with the command that triggered it.");
+    }
+  }));
 }

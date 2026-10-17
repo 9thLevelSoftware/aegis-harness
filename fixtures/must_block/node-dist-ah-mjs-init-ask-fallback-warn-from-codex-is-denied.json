@@ -1,0 +1,12 @@
+{
+  "name": "node dist/ah.mjs init --ask-fallback warn from Codex is denied",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "node node_modules/@9thlevel/aegis/dist/ah.mjs init --ask-fallback warn"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

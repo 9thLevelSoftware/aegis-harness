@@ -1,0 +1,11 @@
+{
+  "name": "a here-document of docs that quotes git reset --hard in escaped backticks is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat > docs/undo.md <<EOF\nVersion $VERSION. To undo, run \\`git reset --hard HEAD~1\\`.\nEOF"
+    }
+  },
+  "near": "shell.git-discard-changes",
+  "source": "BUG-2026-019"
+}
