@@ -1,0 +1,12 @@
+{
+  "name": "Monitor running rm -rf ~/work is denied",
+  "payload": {
+    "tool_name": "Monitor",
+    "tool_input": {
+      "command": "rm -rf ~/work",
+      "description": "clean the work tree"
+    }
+  },
+  "rule": "shell.rm-outside-project",
+  "source": "BUG-2026-019"
+}

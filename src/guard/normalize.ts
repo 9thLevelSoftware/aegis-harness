@@ -67,6 +67,8 @@ function claudeCalls(toolName: string, input: unknown): ToolCall[] {
     case "Bash":
     case "PowerShell": // same fields as Bash; main.ts picks the PowerShell dialect from the tool name
       return [{ kind: "shell", command: str(i.command) ?? "" }];
+    case "Monitor": // runs `command` in the background under Bash's permission rules (Git Bash on Windows)
+      return typeof i.command === "string" ? [{ kind: "shell", command: i.command }] : [{ kind: "other", toolName, input }];
     case "Write":
       return [{ kind: "write", path: str(i.file_path) ?? "", content: str(i.content) ?? "" }];
     case "Edit":

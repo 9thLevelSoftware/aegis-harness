@@ -47,7 +47,7 @@ export function buildContext(event: HookEvent, o: GuardOptions, env: NodeJS.Proc
   const agent = o.agent ?? event.agent;
   // The dialect follows the tool: Claude Code's PowerShell tool is PowerShell on any
   // platform; Codex on Windows runs commands through PowerShell; everything else
-  // (Bash, Claude Code on Windows under Git Bash) is POSIX sh.
+  // (Bash and Monitor, Claude Code on Windows under Git Bash) is POSIX sh.
   const shellDialect = event.toolName === "PowerShell" || (platform === "windows" && agent === "codex") ? "powershell" : "posix";
   return { projectRoot, homeDir, platform, shellDialect, policy: DEFAULT_POLICY };
 }
