@@ -91,7 +91,8 @@ export function classifyPath(input: string, ctx: Context): PathInfo {
     let m: string | undefined;
     if ((m = matchGlobs(rel, policy.harnessPaths, platform))) return base("harness", m);
     if (rel === ".git" || rel.startsWith(".git/")) return base("git-internals", ".git/**");
-    if ((m = matchGlobs(rel, policy.hookConfigPaths, platform))) return base("hook-config", m);
+    // A session started inside a hook directory (`<top>/.codex`) has the hook files themselves in the project.
+    if ((m = matchGlobs(rel, policy.hookConfigPaths, platform) ?? hookConfigAbove(abs, ctx, true))) return base("hook-config", m);
     if ((m = matchGlobs(rel, policy.lockfilePaths, platform))) return base("lockfile", m);
     if ((m = matchGlobs(rel, policy.lintConfigPaths, platform))) return base("lint-config", m);
     if ((m = matchGlobs(rel, policy.testConfigPaths, platform))) return base("test-config", m);
@@ -107,7 +108,7 @@ export function classifyPath(input: string, ctx: Context): PathInfo {
     return base("normal");
   }
 
-  const hook = hookConfigAbove(abs, ctx);
+  const hook = hookConfigAbove(abs, ctx, false);
   if (hook !== undefined) return base("hook-config", hook);
   if (isSystemPath(abs)) return base("system");
   if (isTempPath(abs) || isTempPath(stripped)) return base("temp");
@@ -122,11 +123,16 @@ export function classifyPath(input: string, ctx: Context): PathInfo {
  * ancestor of the project root counts, each matched as if it were the project
  * (`lefthook.yml` directly in it, `.claude/settings.json` under it); in a linked
  * worktree so do the main checkout's twin of the project root and its ancestors.
+ * Paths inside the project are matched too, since a session rooted in `<top>/.codex`
+ * sees `hooks.json` as a project file, but only against layers below the home
+ * directory: a project inside ~/.codex (Codex keeps its worktrees there) is not
+ * made of hook files, and the home's own agent settings are home configuration.
  */
-function hookConfigAbove(abs: string, ctx: Context): string | undefined {
+function hookConfigAbove(abs: string, ctx: Context, inProject: boolean): string | undefined {
   const layers = ancestors(ctx.projectRoot, ctx.platform).slice(1);
   if (ctx.mainCheckout !== undefined) layers.push(...ancestors(ctx.mainCheckout, ctx.platform));
   for (const dir of layers) {
+    if (inProject && ctx.homeDir !== undefined && relativeTo(dir, ctx.homeDir, ctx.platform) !== null) continue;
     const r = relativeTo(dir, abs, ctx.platform);
     if (r === null || r === ".") continue;
     const m = ctx.policy.hookConfigPaths.find((g) => globToRegExp(g, ctx.platform).test(r));

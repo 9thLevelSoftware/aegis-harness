@@ -1,0 +1,13 @@
+{
+  "name": "rm hooks.json from a Codex session rooted in .codex is denied",
+  "agent": "codex",
+  "cwd": "/home/dev/project/.codex",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm hooks.json"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

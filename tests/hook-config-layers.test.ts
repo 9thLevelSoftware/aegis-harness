@@ -67,6 +67,33 @@ test("from a subdirectory session, removing or rewriting the top level's hook wi
   assert.equal(verdictOf(wr("../README.md", "x", SUB)), "ask edit.outside-project");
 });
 
+test("a session rooted inside a hook directory sees the hook files in it as hook configuration", () => {
+  const codex: Context = { ...POSIX, projectRoot: "/home/dev/project/.codex" };
+  assert.equal(classifyPath("hooks.json", codex).category, "hook-config");
+  assert.equal(classifyPath("hooks.json", codex).matched, ".codex/**");
+  assert.equal(classifyPath("/home/dev/project/.codex/config.toml", codex).category, "hook-config");
+  assert.equal(classifyPath("settings.local.json", { ...POSIX, projectRoot: "/home/dev/project/.claude" }).category, "hook-config");
+  assert.equal(classifyPath("hooks/check.sh", { ...POSIX, projectRoot: "/home/dev/project/.claude" }).category, "hook-config");
+  assert.equal(classifyPath("pre-commit", { ...POSIX, projectRoot: "/home/dev/project/.husky" }).category, "hook-config");
+  // Other files in .claude/ are not hook wiring.
+  assert.equal(classifyPath("commands/review.md", { ...POSIX, projectRoot: "/home/dev/project/.claude" }).category, "normal");
+  assert.equal(verdictOf(sh("rm hooks.json", codex)), "deny shell.hook-tamper");
+  assert.equal(verdictOf(wr("/home/dev/project/.claude/settings.local.json", "{}", { ...POSIX, projectRoot: "/home/dev/project/.claude" })), "deny edit.hook-config");
+  const win: Context = { ...WINDOWS_CODEX, projectRoot: "C:\\Users\\dev\\project\\.codex" };
+  assert.equal(classifyPath("Hooks.json", win).category, "hook-config");
+});
+
+test("a project inside the home directory's .codex is not made of hook files", () => {
+  // Codex keeps its worktrees under ~/.codex/worktrees; the home is no project layer for files inside the project.
+  const wt: Context = { ...POSIX, projectRoot: "/home/dev/.codex/worktrees/a1b2/project" };
+  for (const p of ["src/app.ts", "/home/dev/.codex/worktrees/a1b2/project/README.md", "package.json"]) assert.notEqual(classifyPath(p, wt).category, "hook-config", p);
+  assert.equal(classifyPath(".codex/hooks.json", wt).category, "hook-config");
+  assert.equal(classifyPath("/home/dev/.codex/hooks.json", wt).category, "home-config");
+  assert.equal(wr("src/app.ts", "x", wt).verdict, "allow");
+  // Nor through a main checkout's ancestors, which reach the home directory too.
+  assert.equal(classifyPath("src/app.ts", { ...wt, mainCheckout: "/home/dev/project" }).category, "normal");
+});
+
 /** A main checkout with a linked worktree beside it, laid out the way `git worktree add` leaves them. */
 function worktreeScratch() {
   const base = mkdtempSync(join(tmpdir(), "ah-worktree-"));
