@@ -1,6 +1,6 @@
 import { classifyPath, isBlockDevice, protectedInside, wildcardReach, type PathInfo } from "../classify.ts";
 import { ALLOW, ask, deny, onTime, strictest, TimeLimit, type Context, type Decision, type ShellCall } from "../model.ts";
-import { globToRegExp, hasVariable, isTempPath, normalize } from "../paths.ts";
+import { globToRegExp, hasVariable, isTempPath, normalize, stripQuotes, trimSeparators } from "../paths.ts";
 import { findSecrets, redact } from "../secrets.ts";
 import { allStages, append, BRACE_LIMIT, flagsOf, MAX_DEPTH, normalizeCmd, parseBudget, parseShell, pwshRun, subcommandIndex, type ParseBudget, type Pipeline, type ShellDialect, type Stage } from "../shell.ts";
 import { AH_INIT_VALUED_OPTIONS } from "../../wiring/init-options.ts";
@@ -26,7 +26,18 @@ const GIT_HOOKED = new Set(["commit", "push", "merge", "rebase", "cherry-pick", 
 const CRED_FILE = /(^|[\\/])(\.env(\.(?!example$|sample$|template$|dist$|defaults$)[^\\/]*)?|\.netrc|\.npmrc|\.pypirc|\.git-credentials|credentials|id_rsa|id_ed25519|id_ecdsa|id_dsa|secrets?\.(json|ya?ml|toml|env)|[^\\/]+\.(pem|key|p12|pfx|jks|keystore))$/i;
 const PRIVATE_FILE = /(^|[\\/])(id_rsa|id_ed25519|id_ecdsa|id_dsa)$|\.(pem|key|p12|pfx)$|(^|[\\/])\.(netrc|git-credentials|pypirc)$|(^|[\\/])\.aws[\\/]credentials$|(^|[\\/])\.docker[\\/]config\.json$|(^|[\\/])\.kube[\\/]config$/i;
 /** Files under ~/.ssh that hold private material: everything except public keys, config, known_hosts, authorized_keys, environment and rc. */
-const SSH_PRIVATE = /(^|[\\/])\.ssh[\\/](?!.*\.pub$)(?!(?:config|known_hosts(?:\.old)?|authorized_keys2?|environment|rc)$)[^\\/]+$/i;
+/**
+ * A file directly inside a `.ssh` directory that is not a public key or one of ssh's own
+ * settings files. Worked out from the last two components: a RegExp with `(?!.*\.pub$)` read the
+ * rest of the path again at every `.ssh/` in it.
+ */
+function sshPrivate(p: string): boolean {
+  const cut = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+  if (cut < 0) return false;
+  const dir = p.slice(0, cut);
+  const base = p.slice(cut + 1);
+  return dir.slice(Math.max(dir.lastIndexOf("/"), dir.lastIndexOf("\\")) + 1).toLowerCase() === ".ssh" && base !== "" && !/\.pub$/i.test(base) && !/^(?:config|known_hosts(?:\.old)?|authorized_keys2?|environment|rc)$/i.test(base);
+}
 
 const HOOK_ENV = /^(HUSKY|HUSKY_SKIP_HOOKS|LEFTHOOK|SKIP|PRE_COMMIT_ALLOW_NO_CONFIG|SKIP_SIMPLE_GIT_HOOKS|GIT_HOOKS_SKIP)$/;
 /** git config keys that redirect or disable hooks. `hooks.allownonascii` and friends are read by hooks, not bypasses. */
@@ -325,7 +336,8 @@ function joinAll(dirs: readonly string[], names: readonly string[], out: string[
   if (dirs.length * names.length > MAX_JOINED || names.length * sum(dirs) + dirs.length * sum(names) > MAX_JOINED_CHARS) {
     throw new TimeLimit(`it names more than ${MAX_JOINED} paths, or ${MAX_JOINED_CHARS} characters of them`);
   }
-  const trimmed = dirs.map((d) => d.replace(/[\\/]+$/, ""));
+  if (dirs.length === 0 || names.length === 0) return;
+  const trimmed = dirs.map(trimSeparators);
   for (const n of names) for (const d of trimmed) out.push(`${d}/${n}`);
 }
 
@@ -409,8 +421,8 @@ const CWD_PREFIX = /^(?:\$\{PWD(?::[?-][^}]*)?\}|\$PWD|\$\(\s*pwd\s*\)|`\s*pwd\s
 /** A guarded expansion (`VAR:?unset` in braces) or a command substitution: unverifiable, but safe once a literal sub-path follows. */
 const GUARDED_PREFIX = /^(?:\$\{[A-Za-z_][A-Za-z0-9_]*:\?[^}]*\}|\$\([^()]*(?:\([^()]*\)[^()]*)*\)|`[^`]*`)(?=[\\/])/;
 const SUBSTITUTION = /\$\(|`/;
-/** "Everything inside" suffixes: `dir/*`, `dir/.*`, `dir/**`, `dir/*.*`, `dir/.`, `dir\*`, and the hidden-file globs (`dir/.[!.]*`, `dir/.[!.]?*`, `dir/.??*`, `dir/.?*`). */
-const WIPE_SUFFIX = /[\\/]+(?:\*|\.\*|\*\*|\*\.\*|\.|\.(?:\[[!^]\.\]|\?)[?*]*\*)[\\/]*$/;
+/** "Everything inside" last components: `dir/*`, `dir/.*`, `dir/**`, `dir/*.*`, `dir/.`, `dir\*`, and the hidden-file globs (`dir/.[!.]*`, `dir/.[!.]?*`, `dir/.??*`, `dir/.?*`). */
+const WIPE_PART = /^(?:\*|\.\*|\*\*|\*\.\*|\.|\.(?:\[[!^]\.\]|\?)[?*]*\*)$/;
 
 const UNRESOLVED_REMEDIATION = "An empty or wrong variable turns this into `rm -rf /`. Use a literal path (`rm -rf dist`), anchor it to the working directory (`rm -rf \"$PWD/dist\"`), or brace the variable with a `:?unset` guard and append a sub-path, so an empty value aborts instead of deleting the parent.";
 const SUBSTITUTION_REMEDIATION = "A command substitution cannot be checked before it runs. Use a literal path (`rm -rf dist`), or append a sub-path to the substitution (`rm -rf \"$(pwd)/dist\"`) so an empty result cannot delete the parent.";
@@ -428,14 +440,24 @@ function safeSubPath(rest: string): boolean {
   return n !== "." && n !== ".." && !n.startsWith("../") && !CWD_WIPE_LITERAL.test(n);
 }
 
-/** Strip trailing `/*`, `/.*`, `/**`, `/.` (and the Windows forms), repeatedly, so `dir/./*` becomes `dir`. */
+/**
+ * Strip trailing `/*`, `/.*`, `/**`, `/.` (and the Windows forms), repeatedly, so `dir/./*` becomes
+ * `dir`. One walk back from the end: a RegExp ending in `[\\/]*$` read a long run of separators
+ * again from each of them, and stripping one suffix at a time copied the path for each.
+ */
 function stripWipeSuffix(t: string): string {
-  let base = t;
+  const sep = (i: number) => t[i] === "/" || t[i] === "\\";
+  let end = t.length;
   for (;;) {
-    const next = base.replace(WIPE_SUFFIX, "");
-    if (next === base) return base;
-    if (next === "") return /^[\\/]/.test(base) ? "/" : base; // `//*` is the root's contents
-    base = next;
+    let e = end;
+    while (e > 0 && sep(e - 1)) e--;
+    let start = e;
+    while (start > 0 && !sep(start - 1)) start--;
+    if (start === 0 || !WIPE_PART.test(t.slice(start, e))) return t.slice(0, end);
+    let before = start;
+    while (before > 0 && sep(before - 1)) before--;
+    if (before === 0) return "/"; // `//*` is the root's contents
+    end = before;
   }
 }
 
@@ -459,7 +481,7 @@ function classifyWhole(t: string, ctx: Context, whole = true): PathInfo {
  * it is: wiping the working directory is not something they can do.
  */
 function judgeRemoveTarget(target: string, destructive: boolean, recursive: boolean, s: Stage, ctx: Context, rename = false): Decision {
-  let t = target.replace(/^["']+|["']+$/g, "");
+  let t = stripQuotes(target);
   if (t === "" || t === "--") return ALLOW;
 
   // `$HOME/x`, `$env:USERPROFILE\x`, `$PWD/x`, `$(pwd)/x`: the prefix is known, so classify the rest like `~/x` or `./x`.
@@ -1142,13 +1164,13 @@ function privateCredential(a: string, ctx: Context): string | null {
   const info = classifyPath(homeSpelling(a), ctx);
   if (info.isTestFile) return null;
   const rel = info.homeRel ?? info.rel ?? info.abs;
-  const isPrivate = PRIVATE_FILE.test(a) || (info.homeRel !== null && (SSH_PRIVATE.test(`/${info.homeRel}`) || PRIVATE_FILE.test(`/${info.homeRel}`) || /^\.(npmrc|aws\/credentials)$/.test(info.homeRel)));
+  const isPrivate = PRIVATE_FILE.test(a) || (info.homeRel !== null && (sshPrivate(`/${info.homeRel}`) || PRIVATE_FILE.test(`/${info.homeRel}`) || /^\.(npmrc|aws\/credentials)$/.test(info.homeRel)));
   return isPrivate ? rel : null;
 }
 
 /** `$HOME/x`, `${HOME:?}/x`, `$env:USERPROFILE\x`, `%USERPROFILE%\x` as `~/x`, so the home-relative classification sees them. */
 function homeSpelling(a: string): string {
-  const t = a.replace(/^["']+|["']+$/g, "");
+  const t = stripQuotes(a);
   const home = HOME_PREFIX.exec(t);
   return home ? `~${t.slice(home[0].length)}` : t;
 }

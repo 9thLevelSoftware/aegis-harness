@@ -195,7 +195,10 @@ impact: >-
   between two time checks. A twelfth review, of those fixes only, found a quoted value ending in a
   comma (`Set-Content 'x,' -Path .git/config`) swallowing the `-Path` after it, ignore entries
   written as an array value (`-Value '.env', '.claude/settings.local.json'`) judged as files, and
-  joined find paths over 16 K characters each made slow by the Set that deduplicated them.
+  joined find paths over 16 K characters each made slow by the Set that deduplicated them. A
+  thirteenth review found the trailing-separator trim moved where every cmdlet and find ran it,
+  so a long run of `/` took seconds; the same kind of end-anchored RegExp (quote stripping, the
+  `rm` wipe suffix, the ssh private-key test) was slow on long runs too.
 countermeasure:
   kind: test
   ref:
@@ -299,6 +302,10 @@ countermeasure:
     read every way a comma (`x,` or `'x,'`) and an unknown parameter allow, and a word is a file
     if any reading binds it to the path; arguments past the cmdlet's positions are not files, as
     PowerShell refuses them; joined paths are capped in characters too and never put in a Set.
+    After the thirteenth review: quotes, trailing separators and wipe suffixes are stripped by
+    loops, and the ssh key test reads the last two components. Still over-cautious: a value
+    array that starts with an empty string before a positional path (`ac -Value '', 'x' .gitignore`)
+    may judge the array's entries as files.
     A
     protected basename (`lefthook.yml`) inside a directory being removed is not seen,
     since the guard reads no filesystem. Still beyond any

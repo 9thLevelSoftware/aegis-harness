@@ -709,6 +709,11 @@ test("the writing cmdlets bind their parameters: a value is not a file, a colon-
   assert.equal(verdictOf(win("'x' | Out-File -FilePath a.txt, .git/hooks/pre-commit")), "deny shell.write-git-internals");
   assert.equal(verdictOf(win("New-Item -Path a, .claude -Name settings.json")), "deny shell.hook-tamper");
   assert.equal(win("Set-Content -Path notes.txt -Value a, b").verdict, "allow");
+  for (const c of ["Set-Content -Path a" + "/".repeat(150_000) + "b -Value x", "New-Item -Path a" + "/".repeat(150_000) + "b -Name c"]) {
+    const t0 = performance.now();
+    assert.equal(decideAll([{ kind: "shell", command: c }], WINDOWS_CODEX).verdict, "allow");
+    assert.ok(performance.now() - t0 < 1500, `took ${Math.round(performance.now() - t0)} ms`);
+  }
   // Thousands of distinct names joined to thousands of paths ask rather than build them all.
   const t = performance.now();
   const many = (flag: string, n: number) => Array.from({ length: n }, (_, i) => `${flag}a${i}`).join(" ");
@@ -725,6 +730,8 @@ test("bracket scans that never close are not repeated, class names are not objec
   }
   assert.equal(verdictOf(sh("rm -f .ruff.tom[^[:toString:]]")), "deny shell.write-lint-config");
   for (const c of ["rm -rf .claud[![:alpha:]]", "rm -rf .claud[![=e=]]"]) assert.equal(sh(c).verdict, "allow", c);
+  for (const c of ["cat ~/.ssh/id_rsa", "cat ~/x/.SSH/id_ed25519"]) assert.equal(verdictOf(sh(c)), "deny shell.credential-read", c);
+  for (const c of ["cat ~/.ssh/id_rsa.pub", "cat ~/.ssh/config", "cat ~/.ssh/known_hosts.old"]) assert.equal(sh(c).verdict, "allow", c);
   const actions = Array.from({ length: 15 }, (_, i) => `-name a${i} -delete`).join(" , ");
   for (const [label, c, verdict] of [
     ["repeated [[:x:]", "rm -rf " + "[[:x:]".repeat(30_000) + ".claude", "allow"],
@@ -734,6 +741,11 @@ test("bracket scans that never close are not repeated, class names are not objec
     ["runs of [[: before one :]", "rm -rf " + "[[:".repeat(40_000) + ":]", "allow"],
     ["a protected start among many, with many names", "find .git " + "a ".repeat(100_000) + "-name config ".repeat(200) + "-delete", "deny"],
     ["long starts joined to many names", "find " + Array.from({ length: 10 }, (_, i) => "d".repeat(17_000) + i).join(" ") + " \\( " + Array.from({ length: 600 }, (_, i) => `-name n${i}`).join(" -o ") + " \\) -delete", "ask"],
+    ["a long run of separators in a removed path", "rm -rf a" + "/".repeat(150_000) + "b", "allow"],
+    ["a long run of ./ before a wipe", "rm -rf a" + "/.".repeat(150_000) + "/*", "allow"],
+    ["a long run of escaped quotes", "rm a" + "\\'".repeat(100_000) + "b", "allow"],
+    ["many .ssh components", "cat ~" + "/.ssh".repeat(100_000) + "/x", "deny"],
+    ["a long run of separators in a narrowed find", "find a" + "/".repeat(150_000) + "b -name x.tmp -delete", "allow"],
     ["valueless filters before nested groups", "find . -name '*.pyc' -delete " + "\\( -newerzz ".repeat(40_000) + "-name y " + "\\) ".repeat(40_000), "allow"],
   ] as const) {
     const t = performance.now();

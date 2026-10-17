@@ -20,6 +20,25 @@ export function isAbsolute(p: string): boolean {
 const UNNORMAL = /\\|\/\/|(?:^|\/|^[A-Za-z]:)\.{1,2}(?:\/|$)/;
 
 /** Resolve `.` and `..` segments lexically. Keeps a leading drive or `/`. */
+/**
+ * The word without the quotes at either end. A loop rather than `/^["']+|["']+$/`, which tries
+ * the end anchor from every quote of a run inside the word and takes time in its square.
+ */
+export function stripQuotes(s: string): string {
+  let a = 0;
+  let b = s.length;
+  while (a < b && (s[a] === '"' || s[a] === "'")) a++;
+  while (b > a && (s[b - 1] === '"' || s[b - 1] === "'")) b--;
+  return s.slice(a, b);
+}
+
+/** The path without trailing separators, by the same loop and for the same reason. */
+export function trimSeparators(s: string): string {
+  let b = s.length;
+  while (b > 0 && (s[b - 1] === "/" || s[b - 1] === "\\")) b--;
+  return s.slice(0, b);
+}
+
 export function normalize(p: string): string {
   // Most paths reach here already normal, many times each for a long command.
   if (p !== "" && !UNNORMAL.test(p) && !(p.length > 1 && p.endsWith("/")) && p.trim() === p) return p;

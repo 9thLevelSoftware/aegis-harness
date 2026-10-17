@@ -17,6 +17,7 @@ import {
   resolvePath,
   bracketReader,
   segmentMatcher,
+  stripQuotes,
 } from "./paths.ts";
 
 export type PathCategory =
@@ -64,7 +65,7 @@ const KEY_GLOB = /\.(pem|key|p12|pfx|jks|keystore)$|^id_(rsa|ed25519|ecdsa)$/;
 export function classifyPath(input: string, ctx: Context): PathInfo {
   onTime(ctx.deadline);
   const { policy, platform } = ctx;
-  const stripped = input.replace(/^["']+|["']+$/g, "");
+  const stripped = stripQuotes(input);
   const abs = resolvePath(stripped, ctx.projectRoot, ctx.homeDir, platform);
   const rel = relativeTo(ctx.projectRoot, abs, platform);
   const homeRel = relativeToHome(abs, ctx.homeDir, platform);
@@ -268,7 +269,7 @@ function spellings(glob: string): string[] {
  */
 export function wildcardReach(input: string, ctx: Context, whole: boolean): PathInfo | undefined {
   const { platform } = ctx;
-  const stripped = input.replace(/^["']+|["']+$/g, "");
+  const stripped = stripQuotes(input);
   if (!WILDCARD.test(stripped) || hasVariable(stripped)) return undefined;
   const pattern = resolvePath(stripped, ctx.projectRoot, ctx.homeDir, platform).split("/");
   const compiled = new Map<string, (name: string) => boolean>();
