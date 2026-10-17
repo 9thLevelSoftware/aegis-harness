@@ -94,7 +94,7 @@ test("codex: in a linked worktree, local scope wires the main checkout's file, t
     writeFileSync(join(s.home, ".codex", "config.toml"), `[projects.${JSON.stringify(s.root)}]\ntrust_level = "trusted"\n`);
     const d = doctor({ agents: ["codex"], root: wt, json: false }, s.env, deps);
     assert.doesNotMatch(titles(d.checks, "fail"), /not trusted in/);
-    assert.match(titles(d.checks, "ok"), /\.codex\/hooks\.json: ah hook bound/);
+    assert.match(titles(d.checks, "ok"), /\.codex[\\/]hooks\.json: ah hook bound/);
   } finally {
     s.done();
   }
@@ -110,7 +110,7 @@ test("codex: in a linked worktree, --scope project says Codex does not read that
     assert.equal(c?.file, join(wt, ".codex", "hooks.json"));
     assert.match(c?.detail ?? "", /in a linked worktree Codex reads .* in the main checkout, not this file/);
     const d = doctor({ agents: ["codex"], root: wt, json: false }, s.env, deps);
-    assert.match(titles(d.checks, "info"), /\.codex\/hooks\.json has an ah entry, but in a linked worktree Codex reads \.codex\/hooks\.json from the main checkout/);
+    assert.match(titles(d.checks, "info"), /\.codex[\\/]hooks\.json has an ah entry, but in a linked worktree Codex reads \.codex\/hooks\.json from the main checkout/);
     assert.match(titles(d.checks, "fail"), /no ah PreToolUse hook/);
     // --remove cleans the worktree copy too.
     const rm = init(opts(wt, { remove: true }), s.env);
