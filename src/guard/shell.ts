@@ -8,11 +8,13 @@
  * `pwsh -Command "..."`, `cmd /c ...`, `eval`, `iex`, `Start-Process`,
  * `npx -c`, `$(...)` and backtick substitutions, process substitutions and
  * PowerShell's `( )` and `{ }` blocks, so that rules see every command that
- * will actually run. It throws rather than guess (ParseTimeout once a
- * parse runs past its budget's deadline), and the guard asks when it does:
+ * will actually run. It throws rather than guess (TimeLimit once a parse
+ * runs past its budget's deadline), and the guard asks when it does:
  * a call it cannot read must not pass unread. Work stays close to linear in
  * the command's length, since a hook that times out lets the call through.
  */
+
+import { onTime, TIME_LIMIT_MS } from "./model.ts";
 
 export interface Stage {
   /** Arguments after env assignments and wrappers were removed. `argv[0]` is the command. */
@@ -35,6 +37,12 @@ export interface Stage {
   unexpanded?: string;
   /** Set on a stand-in for code nested past MAX_DEPTH, which the parser did not read. */
   tooDeep?: true;
+  /**
+   * Set when the stage is a `( )` or `{ }` group: the pipelines directly inside it. Its own argv is
+   * `:`, carrying only the group's redirections; the commands inside are pipelines of their own,
+   * and this lets a pipe into or out of the group reach them (`echo x | ( sh )`).
+   */
+  group?: Pipeline[];
   raw: string;
 }
 
@@ -116,22 +124,14 @@ export interface ParseBudget {
   deadline: number;
 }
 
-/** How long one command may take to parse; past it the guard asks, well inside the hook's timeout. */
-export const PARSE_MS = 2000;
-
-export class ParseTimeout extends Error {
-  constructor() {
-    super(`parsing took longer than ${PARSE_MS} ms`);
-  }
+/** A fresh budget; without a deadline, the parse may take TIME_LIMIT_MS. */
+export function parseBudget(deadline = performance.now() + TIME_LIMIT_MS): ParseBudget {
+  return { words: BRACE_LIMIT, deadline };
 }
 
-export function parseBudget(ms = PARSE_MS): ParseBudget {
-  return { words: BRACE_LIMIT, deadline: performance.now() + ms };
-}
-
-/** Throws ParseTimeout once the budget's deadline has passed. Loops call it every few thousand steps. */
+/** Throws TimeLimit once the budget's deadline has passed. Loops call it every few thousand steps. */
 export function checkTime(budget: ParseBudget): void {
-  if (performance.now() > budget.deadline) throw new ParseTimeout();
+  onTime(budget.deadline);
 }
 
 /** Parses a command line. It throws on input it cannot read, so that the caller asks rather than judging a guess. */
@@ -161,9 +161,13 @@ function parseInner(command: string, depth: number, nested: boolean, dialect: Sh
     for (const s of stageStrings) {
       const text = s.text.trim();
       if (!text) continue;
-      // A stage that is one `( )` or `{ }` group whole: its commands, read once.
+      // A stage that is one `( )` or `{ }` group, maybe redirected: its commands, read once.
       if (s.group !== undefined) {
-        append(extra, parseInner(s.group, depth + 1, true, dialect, budget));
+        const inner = parseInner(s.group, depth + 1, true, dialect, budget);
+        append(extra, inner);
+        const stage = buildStage(s.tail === undefined ? ":" : `: ${s.tail}`, dialect, budget);
+        stage.group = inner.filter((p) => p.depth === depth + 1);
+        stages.push(stage);
         continue;
       }
       const stage = buildStage(text, dialect, budget);
@@ -431,6 +435,8 @@ interface SplitStage {
    * In sh a group's `{` is a word of its own, so `{rm,-rf,x}` is one brace-expanded command.
    */
   group?: string;
+  /** The redirections after such a group (`( a ) > log`), when there are any. */
+  tail?: string;
 }
 
 interface Split {
@@ -478,13 +484,14 @@ function splitTop(s: string, dialect: ShellDialect, budget?: ParseBudget): Split
   let running = 0;
   let braceDepth = 0;
   let braceStart = 0;
+  // Inside a group that is recorded whole, whose text holds whatever is nested in it.
+  const enclosed = () => running > 0 || braceDepth > 0;
 
   const endStage = () => {
-    let length = cur.length;
-    while (length > 0 && cur[length - 1].trim() === "") length--;
     const text = cur.join("");
-    if (opener !== null && opener.length === length) {
-      stages.push({ text, group: substitutions[opener.sub] ?? "" });
+    const tail = opener === null ? "" : cur.slice(opener.length).join("").trim();
+    if (opener !== null && (tail === "" || /^(?:\d*[<>]|&>)/.test(tail))) {
+      stages.push({ text, group: substitutions[opener.sub] ?? "", ...(tail === "" ? {} : { tail }) });
       substitutions[opener.sub] = null;
     } else stages.push({ text });
     cur = [];
@@ -533,10 +540,27 @@ function splitTop(s: string, dialect: ShellDialect, budget?: ParseBudget): Split
     if (backtickStart >= 0) {
       add(c);
       if (c === "`") {
-        substitutions.push(s.slice(backtickStart, i));
+        // Inside backticks `\``, `\$` and `\\` stand for the character itself: `\`rm x\`` runs when the outer one does.
+        if (!enclosed()) substitutions.push(s.slice(backtickStart, i).replace(/\\([\\`$])/g, "$1"));
         backtickStart = -1;
       }
       continue;
+    }
+    if (!inDouble) {
+      // A comment runs to the end of its line; a quote or bracket in it opens nothing.
+      const end = commentEnd(s, i, dialect, lastEscape);
+      if (end > i) {
+        i = end - 1;
+        continue;
+      }
+      const hs = dialect === "powershell" ? hereStringEnd(s, i) : -1;
+      if (hs > i) {
+        const body = s.slice(i, hs);
+        add(body);
+        if (s[i + 1] === '"' && !enclosed()) append(substitutions, subexpressions(body));
+        i = hs - 1;
+        continue;
+      }
     }
     if (subs.length > 0) {
       add(c);
@@ -554,7 +578,7 @@ function splitTop(s: string, dialect: ShellDialect, budget?: ParseBudget): Split
         if (sub !== undefined && sub.start >= 0) {
           inDouble = sub.outerDouble;
           // Only the outermost substitution is recorded; parsing it finds the inner ones once.
-          if (subs.length === 0) substitutions.push(s.slice(sub.start, i));
+          if (subs.length === 0 && !enclosed()) substitutions.push(s.slice(sub.start, i));
         }
       } else if (c === "$" && next === "(") {
         subs.push({ start: i + 2, outerDouble: false });
@@ -603,7 +627,7 @@ function splitTop(s: string, dialect: ShellDialect, budget?: ParseBudget): Split
       if (group.runs) running--;
       add(c);
       // Only the outermost group that runs is recorded; parsing it finds the inner ones once.
-      if (group.runs && running === 0) {
+      if (group.runs && running === 0 && braceDepth === 0) {
         substitutions.push(s.slice(group.start, i));
         if (group.opens) opener = { sub: substitutions.length - 1, length: cur.length };
       }
@@ -664,12 +688,56 @@ function splitTop(s: string, dialect: ShellDialect, budget?: ParseBudget): Split
   // Text left inside a construct that never closes is still read as commands; bash would refuse
   // the line, but the guard should not judge less than what it was shown.
   const open = [subs.find((x) => x.start >= 0)?.start, groups.find((g) => g.runs)?.start, backtickStart >= 0 ? backtickStart : undefined, braceDepth > 0 ? braceStart : undefined];
-  for (const at of open) if (at !== undefined) substitutions.push(s.slice(at));
+  // The first to open holds the others.
+  const first = Math.min(...open.map((at) => at ?? Infinity));
+  if (first !== Infinity) substitutions.push(s.slice(first));
   endCommand();
   return {
     commands: commands.map((st) => st.filter((x) => x.text.trim() !== "")).filter((st) => st.length > 0),
     substitutions: substitutions.filter((x): x is string => x !== null),
   };
+}
+
+/**
+ * Where the comment starting at `i` ends (the newline after it, or the end of `s`), or -1 when
+ * there is none: `#` at the start of a word, in sh and PowerShell, or PowerShell's `<# ... #>`.
+ */
+function commentEnd(s: string, i: number, dialect: ShellDialect, lastEscape: number): number {
+  if (dialect === "cmd") return -1;
+  if (dialect === "powershell" && s[i] === "<" && s[i + 1] === "#") {
+    const close = s.indexOf("#>", i + 2);
+    return close < 0 ? s.length : close + 2;
+  }
+  if (s[i] !== "#" || lastEscape === i - 1 || !(i === 0 || /[\s;&|()]/.test(s[i - 1]) || (dialect === "powershell" && /[{}]/.test(s[i - 1])))) return -1;
+  const nl = s.indexOf("\n", i);
+  return nl < 0 ? s.length : nl;
+}
+
+/** Where a PowerShell here-string (`@'` or `@"`, a newline, ..., a newline and `'@` or `"@`) starting at `i` ends, or -1. */
+function hereStringEnd(s: string, i: number): number {
+  const q = s[i + 1];
+  if (s[i] !== "@" || (q !== "'" && q !== '"')) return -1;
+  const nl = s[i + 2] === "\r" ? i + 3 : i + 2;
+  if (s[nl] !== "\n") return -1;
+  const close = s.indexOf(`\n${q}@`, nl);
+  return close < 0 ? -1 : close + 3;
+}
+
+/** The `$( ... )` subexpressions in an expandable PowerShell string, which run when it is read. */
+function subexpressions(text: string): string[] {
+  const out: string[] = [];
+  for (let i = text.indexOf("$("); i >= 0; i = text.indexOf("$(", i + 1)) {
+    let depth = 0;
+    for (let j = i + 1; j < text.length; j++) {
+      if (text[j] === "(") depth++;
+      else if (text[j] === ")" && --depth === 0) {
+        out.push(text.slice(i + 2, j));
+        i = j;
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 /** Whether the stage so far ends in `<` or `>` and digits, so that a `&` next is part of a redirection (`>&2`). */
@@ -918,6 +986,15 @@ function tokenize(stage: string, dialect: ShellDialect, budget?: ParseBudget): T
       else if (c === ")") depth--;
       continue;
     }
+    const hs = dialect === "powershell" ? hereStringEnd(stage, i) : -1;
+    if (hs > i) {
+      // A PowerShell here-string is one word, quotes inside and all.
+      dead(stage.slice(i, hs));
+      has = true;
+      bare = false;
+      i = hs - 1;
+      continue;
+    }
     if (c === "'") { ansi = dropQuotingDollar(); inSingle = true; has = true; bare = false; continue; }
     if (c === '"') { dropQuotingDollar(); inDouble = true; has = true; bare = false; continue; }
     if (c === "$" && next === "(") { dead("$("); has = true; bare = false; depth = 1; i++; continue; }
@@ -1028,16 +1105,16 @@ function buildStage(text: string, dialect: ShellDialect, budget: ParseBudget): S
 
   if (dialect === "posix") stripCompoundLeads(argv);
 
-  // Leading VAR=value assignments.
-  while (argv.length > 0) {
-    const m = ENV_ASSIGN.exec(argv[0]);
-    if (!m) break;
-    env[m[1]] = m[2];
-    argv.shift();
-  }
+  // Leading VAR=value assignments. Words are counted off and cut in one splice throughout: a shift
+  // per word takes time in the square of a long command's length.
+  let lead = 0;
+  for (let m; lead < argv.length && (m = ENV_ASSIGN.exec(argv[lead])) !== null; lead++) env[m[1]] = m[2];
+  argv.splice(0, lead);
 
   const wrappers: string[] = [];
   let guard = 0;
+  let splits = 0;
+  let tooDeep = false;
   while (argv.length > 0 && guard++ < 8) {
     const name = normalizeCmd(argv[0]);
     if (!WRAPPERS.has(name)) break;
@@ -1046,30 +1123,37 @@ function buildStage(text: string, dialect: ShellDialect, budget: ParseBudget): S
     argv.shift();
     const withArg = WRAPPER_OPTS_WITH_ARG[name] ?? new Set<string>();
     let skipPositional = WRAPPER_POSITIONAL_SKIP[name] ?? 0;
-    while (argv.length > 0) {
-      const a = argv[0];
-      if (a === "--") { argv.shift(); break; }
+    let k = 0;
+    while (k < argv.length) {
+      const a = argv[k];
+      if (a === "--") { k++; break; }
       const envMatch = (name === "env" || name === "sudo" || name === "doas") ? ENV_ASSIGN.exec(a) : null;
-      if (envMatch) { env[envMatch[1]] = envMatch[2]; argv.shift(); continue; }
-      const split = name === "env" ? splitStringOf(argv) : null;
+      if (envMatch) { env[envMatch[1]] = envMatch[2]; k++; continue; }
+      const split = name === "env" ? splitStringAt(argv, k) : null;
       if (split !== null) {
-        // `env -S 'ah init --remove'`: env splits the string into words that take its place.
-        argv.unshift(...tokenize(split, "posix").map((t) => t.text));
+        // `env -S 'ah init --remove'`: env splits the string into words that take its place, and
+        // those can be `-S` again; past the nesting limit the stage asks.
+        if (++splits > MAX_DEPTH) { tooDeep = true; break; }
+        const rest = argv.splice(k + split.words);
+        argv.length = k;
+        append(argv, tokenize(split.value, "posix").map((t) => t.text));
+        append(argv, rest);
         continue;
       }
       if (a.startsWith("-") && a.length > 1) {
-        argv.shift();
+        k++;
         const key = a.includes("=") ? a.slice(0, a.indexOf("=")) : a;
         if (withArg.has(key) && !a.includes("=")) {
-          argv.shift();
+          k++;
         } else if (!a.startsWith("--") && a.length > 2 && withArg.has(a.slice(0, 2))) {
           // glued value, e.g. `-n1`, `-I{}`
         }
         continue;
       }
-      if (skipPositional > 0) { skipPositional--; argv.shift(); continue; }
+      if (skipPositional > 0) { skipPositional--; k++; continue; }
       break;
     }
+    argv.splice(0, k);
     // `corepack pnpm@9.1.0 ah`: corepack runs the package manager it names, at that version.
     if (name === "corepack" && argv.length > 0) argv[0] = argv[0].replace(/^(npm|pnpm|yarn)@.*$/i, "$1");
   }
@@ -1086,26 +1170,21 @@ function buildStage(text: string, dialect: ShellDialect, budget: ParseBudget): S
   const opaque = isOpaque(cmd, argv);
   const stage = makeStage(argv, env, wrappers, writes, opaque, text, reads, hereStrings);
   if (unexpanded !== undefined) stage.unexpanded = unexpanded;
+  if (tooDeep) stage.tooDeep = true;
   return stage;
 }
 
 /**
- * The string of `env -S STR`, `-SSTR`, `--split-string STR` or `--split-string=STR` at argv[0],
- * shifted off argv, with env's switches clustered before the S (`-iS STR`); null for any other word.
+ * The string of `env -S STR`, `-SSTR`, `--split-string STR` or `--split-string=STR` at argv[k],
+ * and how many words it takes, with env's switches clustered before the S (`-iS STR`); null for any other word.
  */
-function splitStringOf(argv: string[]): string | null {
-  const a = argv[0];
+function splitStringAt(argv: string[], k: number): { value: string; words: number } | null {
+  const a = argv[k];
   const short = /^-[iv0]*S(.*)$/s.exec(a);
-  let value: string | undefined;
-  let separate = false;
-  if (a === "--split-string" || (short !== null && short[1] === "")) {
-    value = argv[1] ?? "";
-    separate = true;
-  } else if (a.startsWith("--split-string=")) value = a.slice("--split-string=".length);
-  else if (short !== null) value = short[1];
-  if (value === undefined) return null;
-  argv.splice(0, separate ? 2 : 1);
-  return value;
+  if (a === "--split-string" || (short !== null && short[1] === "")) return { value: argv[k + 1] ?? "", words: 2 };
+  if (a.startsWith("--split-string=")) return { value: a.slice("--split-string=".length), words: 1 };
+  if (short !== null) return { value: short[1], words: 1 };
+  return null;
 }
 
 function makeStage(argv: string[], env: Record<string, string>, wrappers: string[], writes: string[], opaque: boolean, raw: string, reads: string[] = [], hereStrings: string[] = []): Stage {
@@ -1165,18 +1244,22 @@ function unwrapRunner(argv: string[], wrappers: string[]): void {
     if (consumed === 0) return;
     wrappers.push(consumed === 1 ? argv[0] : `${argv[0]} ${argv[consumed - 1]}`);
     argv.splice(0, consumed);
-    while (argv.length > 0 && argv[0].startsWith("-")) {
-      const opt = argv.shift() as string;
+    let k = 0;
+    while (k < argv.length && argv[k].startsWith("-")) {
+      const opt = argv[k++];
       if (opt === "-c" || opt === "--call" || opt.startsWith("--call=") || opt === "--shell-mode") {
         // `npx -c 'cmd'`, `npm exec --call 'cmd'`, `pnpm exec -c cmd` (`--shell-mode`): the rest runs as a shell
         // command line, so the stage becomes that shell's `-c` and the parser reads the command inside.
-        const line = opt.startsWith("--call=") ? [opt.slice("--call=".length), ...argv] : [...argv];
-        argv.splice(0, argv.length, "sh", "-c", line.join(" "));
+        const rest = argv.slice(k);
+        const line = opt.startsWith("--call=") ? [opt.slice("--call=".length), ...rest] : rest;
+        argv.length = 0;
+        argv.push("sh", "-c", line.join(" "));
         return;
       }
-      if (RUNNER_OPTS_WITH_ARG.has(opt)) argv.shift();
+      if (RUNNER_OPTS_WITH_ARG.has(opt)) k++;
       if (opt === "--") break;
     }
+    argv.splice(0, k);
     if (argv.length > 0) {
       // `@scope/name@version` -> `name`
       argv[0] = argv[0].replace(/^@[^/]+\//, "").replace(/(.)@[^@]*$/, "$1");
@@ -1422,6 +1505,6 @@ export function flagsOf(argv: readonly string[], start = 1, optsWithValue: reado
 /** Every stage from every pipeline, nested ones included. */
 export function allStages(pipelines: readonly Pipeline[]): Stage[] {
   const out: Stage[] = [];
-  for (const p of pipelines) out.push(...p.stages);
+  for (const p of pipelines) append(out, p.stages);
   return out;
 }

@@ -87,8 +87,25 @@ export interface Context {
    */
   mainCheckout?: string;
   policy: Policy;
-  /** How long parsing one shell command may take before the guard asks instead (PARSE_MS by default). */
-  parseMs?: number;
+  /**
+   * performance.now() past which the guard stops checking and asks: a hook that runs into its
+   * timeout lets the call through. decideAll sets it, TIME_LIMIT_MS ahead; without it there is no limit.
+   */
+  deadline?: number;
+}
+
+/** How long checking one hook event may take before the guard asks instead, well inside the hook's timeout. */
+export const TIME_LIMIT_MS = 2000;
+
+export class TimeLimit extends Error {
+  constructor() {
+    super(`checking it took longer than ${TIME_LIMIT_MS} ms`);
+  }
+}
+
+/** Throws TimeLimit once `deadline` has passed. Loops whose length the command sets call it as they go. */
+export function onTime(deadline: number | undefined): void {
+  if (deadline !== undefined && performance.now() > deadline) throw new TimeLimit();
 }
 
 export interface Decision {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { classifyPath } from "../src/guard/classify.ts";
-import { driveForm, globToRegExp, isTempPath, normalize, relativeTo, resolvePath } from "../src/guard/paths.ts";
+import { driveForm, globToRegExp, isTempPath, matchGlobs, normalize, relativeTo, resolvePath } from "../src/guard/paths.ts";
 import { POSIX, WINDOWS_CODEX } from "./helpers.ts";
 
 test("lexical normalisation", () => {
@@ -127,4 +127,32 @@ test("globs are compiled once and classifyPath stays cheap", () => {
     ms = Math.min(ms, performance.now() - t);
   }
   assert.ok(ms < 150, `1000 classifyPath calls took ${ms.toFixed(0)} ms in the fastest of five rounds`);
+});
+
+test("basename globs match as their RegExp does, in time that grows with the name (BUG-2026-019)", () => {
+  for (const [name, globs, want] of [
+    ["x-baseline.json", ["*baseline*.json"], "*baseline*.json"],
+    ["a.test.ts", ["*.test.*"], "*.test.*"],
+    ["ESLINT.CONFIG.JS", ["eslint.config.*"], undefined],
+    ["a.yaml", ["*.{yml,yaml}"], "*.{yml,yaml}"],
+    ["a[b].js", ["a[b].js"], "a[b].js"],
+    ["ab.js", ["a[b].js"], undefined],
+    [".harness/x\ny", [".harness/**"], ".harness/**"],
+  ] as const) {
+    assert.equal(matchGlobs(name, globs, "posix"), want, name);
+    assert.equal(matchGlobs(name, globs, "posix"), globs.find((g) => globToRegExp(g, "posix").test(g.includes("/") ? name : name.slice(name.lastIndexOf("/") + 1))), name);
+  }
+  assert.equal(matchGlobs("ESLINT.CONFIG.JS", ["eslint.config.*"], "windows"), "eslint.config.*");
+  const t = performance.now();
+  assert.equal(matchGlobs("baseline".repeat(20_000) + "x", ["*baseline*.json"], "posix"), undefined);
+  assert.ok(performance.now() - t < 200, `took ${Math.round(performance.now() - t)} ms`);
+});
+
+test("normalize keeps a path with a newline, and returns a normal path unchanged (BUG-2026-019)", () => {
+  assert.equal(normalize("/a/b\nc/../d"), "/a/d");
+  assert.equal(normalize("/a/b\nc"), "/a/b\nc");
+  assert.equal(normalize("C:."), "C:");
+  assert.equal(normalize("C:./a"), "C:a");
+  assert.equal(normalize("/a/b"), "/a/b");
+  assert.equal(normalize(" /a"), "/a");
 });

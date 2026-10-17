@@ -1,0 +1,11 @@
+{
+  "name": "find deleting empty directories in a group is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . \\( -type d -empty \\) -delete"
+    }
+  },
+  "near": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-019"
+}

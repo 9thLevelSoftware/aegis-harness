@@ -350,10 +350,15 @@ test("code nested past the depth limit is a stand-in that asks, never dropped (B
 });
 
 test("a stage that is one ( ) or { } group is read once, not once per way in (BUG-2026-019)", () => {
-  assert.deepEqual(cmds("( ( ( a; b; c ) ) )"), ["a", "b", "c"]);
-  assert.deepEqual(cmds("{ { a; }; }"), ["a"]);
-  assert.deepEqual(cmds("{ a &}"), ["a"]);
-  assert.deepEqual(cmds("( a ) | sh"), ["sh", "a"]);
+  // A group keeps its place in its pipeline as `:`, carrying its redirections.
+  const inside = (command: string) => cmds(command).filter((c) => c !== ":");
+  assert.deepEqual(cmds("( ( ( a; b; c ) ) )"), [":", ":", ":", "a", "b", "c"]);
+  assert.deepEqual(inside("{ { a; }; }"), ["a"]);
+  assert.deepEqual(inside("{ a &}"), ["a"]);
+  assert.deepEqual(inside("{ ( rm -f a ) ; }"), ["rm"]);
+  assert.deepEqual(cmds("( a ) | sh"), [":", "sh", "a"]);
+  const [group] = allStages(parseShell("{ { npm ci; } > /dev/null; } > ci.log"));
+  assert.deepEqual([group.argv, group.writes], [[":"], ["ci.log"]]);
   const t = performance.now();
   parseShell("( ".repeat(8) + Array.from({ length: 300 }, (_, i) => `cp a${i} b${i}`).join("; ") + " )".repeat(8));
   assert.ok(performance.now() - t < 1500, "eight subshells around 300 commands took too long");

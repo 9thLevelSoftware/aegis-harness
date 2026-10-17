@@ -1,0 +1,13 @@
+{
+  "name": "a PowerShell here-string with an apostrophe and an unclosed parenthesis is allowed (Claude Code, Windows PowerShell)",
+  "agent": "claude",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "$msg = @\"\nIt's done (git reset --hard was not needed\n\"@\ngit commit -m $msg"
+    }
+  },
+  "near": "shell.git-discard-changes",
+  "source": "BUG-2026-019"
+}

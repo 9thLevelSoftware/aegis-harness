@@ -1,5 +1,5 @@
 import { classifyPath, isBlockDevice, protectedInside, wildcardReach, type PathInfo } from "../classify.ts";
-import { ALLOW, ask, deny, strictest, type Context, type Decision, type ShellCall } from "../model.ts";
+import { ALLOW, ask, deny, onTime, strictest, type Context, type Decision, type ShellCall } from "../model.ts";
 import { globToRegExp, hasVariable, isTempPath, normalize } from "../paths.ts";
 import { findSecrets, redact } from "../secrets.ts";
 import { allStages, append, BRACE_LIMIT, flagsOf, MAX_DEPTH, normalizeCmd, parseBudget, parseShell, pwshRun, subcommandIndex, type ParseBudget, type Pipeline, type ShellDialect, type Stage } from "../shell.ts";
@@ -61,11 +61,17 @@ export function shellRules(call: ShellCall, ctx: Context): Decision {
     }
   }
 
-  const budget = parseBudget(ctx.parseMs);
+  const budget = parseBudget(ctx.deadline ?? Infinity);
   const pipelines = parseShell(raw, { dialect: ctx.shellDialect ?? "posix", budget });
   append(pipelines, pipedCommands(pipelines, budget));
-  for (const p of pipelines) decisions.push(...pipelineRules(p, ctx));
-  for (const s of allStages(pipelines)) decisions.push(...stageRules(s, ctx));
+  for (const p of pipelines) {
+    onTime(ctx.deadline);
+    append(decisions, pipelineRules(p, ctx));
+  }
+  for (const s of allStages(pipelines)) {
+    onTime(ctx.deadline);
+    append(decisions, stageRules(s, ctx));
+  }
   return strictest(decisions);
 }
 
@@ -73,27 +79,45 @@ export function shellRules(call: ShellCall, ctx: Context): Decision {
 // Pipelines
 
 function pipelineRules(p: Pipeline, ctx: Context): Decision[] {
-  const out: Decision[] = [];
-  const stages = p.stages;
-  for (let i = 0; i < stages.length; i++) {
-    const src = stages[i];
-    const isDownloader = DOWNLOADERS.has(src.cmd);
-    const isDecoder = DECODERS.has(src.cmd) && src.argv.some((a) => /^(-d|--decode|-D|-r|enc)$/.test(a));
-    const readsCredential = credentialSourceOf(src, ctx) !== null;
-    const dumpsEnv = ENV_LISTERS.has(src.cmd)
-      ? src.argv.slice(1).some((a) => /^env:/i.test(a))
-      : ENV_DUMPERS.has(src.cmd) && (src.argv.length <= 1 || src.argv.slice(1).every((a) => a.startsWith("-")));
-    for (let j = i + 1; j < stages.length; j++) {
-      const sink = stages[j];
-      if ((isDownloader || isDecoder) && INTERPRETERS.has(sink.cmd) && readsStdinAsCode(sink)) {
-        out.push(deny("shell.pipe-to-shell", `${src.cmd} output is piped into ${sink.cmd}, which runs it as code`, "Download to a file, read it, then run it: `curl -fsSL URL -o install.sh && cat install.sh` first. Piping remote content into an interpreter runs code nobody reviewed."));
+  // From the right, so that each stage meets the nearest later sink in one pass, not every later stage.
+  const found: Decision[][] = [];
+  let interpreter: Stage | undefined;
+  let network: Stage | undefined;
+  for (let i = p.stages.length - 1; i >= 0; i--) {
+    onTime(ctx.deadline);
+    const here: Decision[] = [];
+    for (const src of exits(p.stages[i])) {
+      const isDownloader = DOWNLOADERS.has(src.cmd);
+      const isDecoder = DECODERS.has(src.cmd) && src.argv.some((a) => /^(-d|--decode|-D|-r|enc)$/.test(a));
+      if ((isDownloader || isDecoder) && interpreter !== undefined) {
+        here.push(deny("shell.pipe-to-shell", `${src.cmd} output is piped into ${interpreter.cmd}, which runs it as code`, "Download to a file, read it, then run it: `curl -fsSL URL -o install.sh && cat install.sh` first. Piping remote content into an interpreter runs code nobody reviewed."));
       }
-      if ((readsCredential || dumpsEnv) && NETWORK_SINKS.has(sink.cmd)) {
-        out.push(deny("shell.credential-exfil", `${describe(src)} is piped into ${sink.cmd}`, "Credentials and the environment never leave the machine through an agent session. If a service needs a value, the user configures it."));
+      if (network === undefined) continue;
+      const readsCredential = credentialSourceOf(src, ctx) !== null;
+      const dumpsEnv = ENV_LISTERS.has(src.cmd)
+        ? src.argv.slice(1).some((a) => /^env:/i.test(a))
+        : ENV_DUMPERS.has(src.cmd) && (src.argv.length <= 1 || src.argv.slice(1).every((a) => a.startsWith("-")));
+      if (readsCredential || dumpsEnv) {
+        here.push(deny("shell.credential-exfil", `${describe(src)} is piped into ${network.cmd}`, "Credentials and the environment never leave the machine through an agent session. If a service needs a value, the user configures it."));
       }
     }
+    found.push(here);
+    for (const sink of entries(p.stages[i])) {
+      if (INTERPRETERS.has(sink.cmd) && readsStdinAsCode(sink)) interpreter = sink;
+      if (NETWORK_SINKS.has(sink.cmd)) network = sink;
+    }
   }
-  return out;
+  return found.reverse().flat();
+}
+
+/** The commands a pipe into `s` feeds: `s` itself, or for a `( )` or `{ }` group the first command of each pipeline in it. */
+function entries(s: Stage): Stage[] {
+  return s.group === undefined ? [s] : s.group.flatMap((p) => (p.stages.length > 0 ? entries(p.stages[0]) : []));
+}
+
+/** The commands whose output a pipe out of `s` carries: `s`, or for a group the last command of each pipeline in it. */
+function exits(s: Stage): Stage[] {
+  return s.group === undefined ? [s] : s.group.flatMap((p) => (p.stages.length > 0 ? exits(p.stages[p.stages.length - 1]) : []));
 }
 
 /** Shells that run the command lines arriving on stdin, and the dialect they read them in. */
@@ -111,18 +135,28 @@ function pipedCommands(pipelines: readonly Pipeline[], budget: ParseBudget): Pip
   const out: Pipeline[] = [];
   for (const p of pipelines) {
     for (let j = 0; j < p.stages.length; j++) {
-      const sink = p.stages[j];
-      const dialect = STDIN_SHELLS[sink.cmd];
-      if (dialect === undefined || !readsStdinAsCode(sink)) continue;
-      const text = sink.hereStrings.length > 0 ? sink.hereStrings.join("\n") : j > 0 ? literalOutput(p.stages[j - 1]) : null;
-      if (text === null) continue;
-      // The text runs one shell deeper than the pipeline feeding it, so nesting counts on from there.
-      const inner = parseShell(text, { dialect, budget, depth: p.depth + 1 });
-      append(out, inner);
-      append(out, pipedCommands(inner, budget));
+      const stage = p.stages[j];
+      for (const sink of entries(stage)) {
+        const dialect = STDIN_SHELLS[sink.cmd];
+        if (dialect === undefined || !readsStdinAsCode(sink)) continue;
+        // A here-string on a group (`( sh ) <<< 'x'`) feeds the shell inside it.
+        const fed = sink.hereStrings.length > 0 ? sink.hereStrings : stage.hereStrings;
+        const text = fed.length > 0 ? fed.join("\n") : j > 0 ? outputOf(p.stages[j - 1]) : null;
+        if (text === null) continue;
+        // The text runs one shell deeper than the pipeline feeding it, so nesting counts on from there.
+        const inner = parseShell(text, { dialect, budget, depth: p.depth + 1 });
+        append(out, inner);
+        append(out, pipedCommands(inner, budget));
+      }
     }
   }
   return out;
+}
+
+/** What a stage pipes on when its output is literal text; a group pipes on what each command in it prints. */
+function outputOf(s: Stage): string | null {
+  const printed = exits(s).map(literalOutput).filter((t): t is string => t !== null);
+  return printed.length > 0 ? printed.join("\n") : null;
 }
 
 const ECHOES = new Set(["echo", "write-output", "write", "printf"]);
@@ -175,7 +209,7 @@ function readsStdinAsCode(sink: Stage): boolean {
     const positionals: string[] = [];
     for (let i = 0; i < args.length; i++) {
       const a = args[i];
-      if (a === "--") { positionals.push(...args.slice(i + 1)); break; }
+      if (a === "--") { append(positionals, args.slice(i + 1)); break; }
       if (a === "--rcfile" || a === "--init-file") { i++; continue; }
       if (/^[-+][A-Za-z]+$/.test(a)) {
         if (a.includes("c")) return false;
@@ -236,29 +270,29 @@ function stageRules(s: Stage, ctx: Context): Decision[] {
     out.push(ask("shell.brace-expansion-limit", `${s.unexpanded.slice(0, 60)} takes this command's brace expansion past ${BRACE_LIMIT} words, too many to check one by one`, "Spell the paths out, or split the command, so each word can be checked."));
   }
 
-  if (REMOVERS.has(s.cmd)) out.push(...removeRules(s, ctx));
-  else if (s.cmd === "find") out.push(...findRules(s, ctx));
-  else if (s.cmd === "git") out.push(...gitRules(s, ctx));
-  else if (s.cmd === "chmod" || s.cmd === "chown" || s.cmd === "chgrp" || s.cmd === "icacls") out.push(...permissionRules(s, ctx));
-  else if (s.cmd === "dd" || s.cmd.startsWith("mkfs") || ["mkswap", "wipefs", "fdisk", "sfdisk", "parted", "diskpart", "format"].includes(s.cmd)) out.push(...diskRules(s));
-  else if (POWER.has(s.cmd) || s.cmd === "init" || s.cmd === "systemctl") out.push(...powerRules(s));
-  else if (s.cmd === "kill" || s.cmd === "killall5") out.push(...killRules(s));
-  else if (DOWNLOADERS.has(s.cmd) || ["scp", "rsync", "sftp", "nc", "ncat", "netcat", "socat"].includes(s.cmd)) out.push(...uploadRules(s, ctx));
-  else if (FILE_READERS.has(s.cmd)) out.push(...credentialReadRules(s, ctx));
-  else if (s.cmd === "docker" || s.cmd === "podman" || s.cmd === "docker-compose") out.push(...dockerRules(s));
+  if (REMOVERS.has(s.cmd)) append(out, removeRules(s, ctx));
+  else if (s.cmd === "find") append(out, findRules(s, ctx));
+  else if (s.cmd === "git") append(out, gitRules(s, ctx));
+  else if (s.cmd === "chmod" || s.cmd === "chown" || s.cmd === "chgrp" || s.cmd === "icacls") append(out, permissionRules(s, ctx));
+  else if (s.cmd === "dd" || s.cmd.startsWith("mkfs") || ["mkswap", "wipefs", "fdisk", "sfdisk", "parted", "diskpart", "format"].includes(s.cmd)) append(out, diskRules(s));
+  else if (POWER.has(s.cmd) || s.cmd === "init" || s.cmd === "systemctl") append(out, powerRules(s));
+  else if (s.cmd === "kill" || s.cmd === "killall5") append(out, killRules(s));
+  else if (DOWNLOADERS.has(s.cmd) || ["scp", "rsync", "sftp", "nc", "ncat", "netcat", "socat"].includes(s.cmd)) append(out, uploadRules(s, ctx));
+  else if (FILE_READERS.has(s.cmd)) append(out, credentialReadRules(s, ctx));
+  else if (s.cmd === "docker" || s.cmd === "podman" || s.cmd === "docker-compose") append(out, dockerRules(s));
   else if (["pwsh", "powershell"].includes(s.cmd) && s.opaque) {
     out.push(ask("shell.encoded-command", "PowerShell is given an encoded command", "Pass the command as plain text so it can be reviewed."));
   }
 
-  out.push(...databaseRules(s));
-  out.push(...publishRules(s));
-  out.push(...baselineRefreshRules(s));
-  out.push(...interpreterRules(s));
-  out.push(...ahCliRules(s));
-  out.push(...moveSourceRules(s, ctx));
-  out.push(...copySourceRules(s, ctx));
+  append(out, databaseRules(s));
+  append(out, publishRules(s));
+  append(out, baselineRefreshRules(s));
+  append(out, interpreterRules(s));
+  append(out, ahCliRules(s));
+  append(out, moveSourceRules(s, ctx));
+  append(out, copySourceRules(s, ctx));
 
-  for (const target of writeTargetsOf(s)) out.push(...writeRules(target, s, ctx));
+  for (const target of writeTargetsOf(s)) append(out, writeRules(target, s, ctx));
   return out;
 }
 
@@ -303,10 +337,10 @@ function removeSpec(s: Stage): RemoveSpec {
       else if (pwshValuedParam(a)) i++;
       else if (/^-(path|literalpath|lp|p)$/i.test(a)) {
         const v = argv[i + 1];
-        if (v !== undefined) targets.push(...v.split(","));
+        if (v !== undefined) append(targets, v.split(","));
         i++;
-      } else if (/^-(path|literalpath):(.+)$/i.test(a)) targets.push(...a.replace(/^-[a-z]+:/i, "").split(","));
-      else if (!a.startsWith("-")) targets.push(...a.split(","));
+      } else if (/^-(path|literalpath):(.+)$/i.test(a)) append(targets, a.replace(/^-[a-z]+:/i, "").split(","));
+      else if (!a.startsWith("-")) append(targets, a.split(","));
     }
     return { recursive, targets, noPreserveRoot: false };
   }
@@ -502,70 +536,82 @@ const FIND_FILTERS = /^-(i?name|i?path|i?regex|i?wholename|i?lname|newer\w*|[acm
 const FIND_MATCH_ALL = /^(?:(?:\.\/)?(?:[*?]*\*[*?]*|\*\/\*)|\^?\.[*+]\$?)$/;
 
 /**
- * True when a filter at `i` actually narrows the delete: it precedes the action (`-delete`
- * placed first runs on every entry), is not negated (`! -name x` matches everything else),
- * is not a catch-all (`-name '*'`), and has no `-o` between it and the action in the group that
- * joins them (`-name x -o -delete` and `-name x -prune -o -delete` act on the other branch).
+ * Which words before the action at `actionAt` are filters that actually narrow the delete: the
+ * filter precedes the action (`-delete` placed first runs on every entry), is not negated
+ * (`! -name x` matches everything else), is not a catch-all (`-name '*'`), and has no `-o` between
+ * it and the action in the group that joins them (`-name x -o -delete` and `-name x -prune -o
+ * -delete` act on the other branch). Each group that holds the filter but not the action must
+ * narrow as a whole: `\( -name a -o -name b \) -delete` deletes only those two names,
+ * `\( -name a -o -type f \) -delete` deletes every file. Worked out for every word in three
+ * passes: judging each filter on its own took time in the square of a long expression's length.
  */
-function narrows(argv: readonly string[], i: number, actionAt: number): boolean {
-  if (i >= actionAt || !FIND_FILTERS.test(argv[i])) return false;
-  if (/^(!|-not)$/.test(argv[i - 1] ?? "")) return false;
-  if (FIND_MATCH_ALL.test(argv[i + 1] ?? "")) return false;
-  // Depths are relative to the filter. The shallowest depth on the way to the action is the group
-  // that joins the two; an `-o` there puts them in different branches. Each group that holds the
-  // filter but not the action must narrow as a whole: `\( -name a -o -name b \) -delete` deletes
-  // only those two names, `\( -name a -o -type f \) -delete` deletes every file.
-  let depth = 0;
-  let joint = 0;
-  const ors: number[] = [];
-  const closes: number[] = [];
-  for (let j = i + 1; j < actionAt; j++) {
-    if (argv[j] === "(") depth++;
-    else if (argv[j] === ")") {
-      if (--depth < joint) closes.push(j);
-      joint = Math.min(joint, depth);
-    } else if (/^-or?$/.test(argv[j])) ors.push(depth);
-  }
-  if (ors.includes(joint)) return false;
-  depth = 0;
-  for (let j = i - 1, k = 0; j >= 0 && k < closes.length; j--) {
-    if (argv[j] === ")") depth++;
-    else if (argv[j] === "(" && --depth < -k) {
-      if (/^(!|-not)$/.test(argv[j - 1] ?? "") || !findExprNarrows(argv, j + 1, closes[k])) return false;
-      k++;
-    }
-  }
-  return true;
-}
-
-/**
- * Whether the find expression in argv[from, to) matches only what some narrowing filter names:
- * every `-o` branch must hold a filter (or a group that does) that is not negated and not a
- * catch-all. `-type f`, `-true` or `! -name x` alone narrow nothing.
- */
-function findExprNarrows(argv: readonly string[], from: number, to: number): boolean {
-  let branch = false;
-  let any = false;
-  for (let j = from; j <= to; j++) {
-    if (j === to || /^-or?$/.test(argv[j])) {
-      if (!branch) return false;
-      branch = false;
-      any = true;
-      continue;
-    }
-    const negated = /^(!|-not)$/.test(argv[j - 1] ?? "");
+function narrowingFilters(argv: readonly string[], actionAt: number): boolean[] {
+  const negated = (j: number) => /^(!|-not)$/.test(argv[j - 1] ?? "");
+  const isOr = (j: number) => /^-or?$/.test(argv[j]);
+  // The depth before each word, and where each `(` closes; one still open at the action holds it too.
+  const depth = new Array<number>(actionAt + 1);
+  const closeAt = new Map<number, number>();
+  const opens: number[] = [];
+  let d = 0;
+  for (let j = 0; j < actionAt; j++) {
+    depth[j] = d;
     if (argv[j] === "(") {
-      let d = 1;
-      let k = j + 1;
-      for (; k < to && d > 0; k++) if (argv[k] === "(") d++; else if (argv[k] === ")") d--;
-      if (!negated && findExprNarrows(argv, j + 1, k - 1)) branch = true;
-      j = k - 1;
-    } else if (FIND_FILTERS.test(argv[j])) {
-      if (!negated && !FIND_MATCH_ALL.test(argv[j + 1] ?? "")) branch = true;
-      j++;
+      opens.push(j);
+      d++;
+    } else if (argv[j] === ")") {
+      d--;
+      const o = opens.pop();
+      if (o !== undefined) closeAt.set(o, j);
     }
   }
-  return any;
+  depth[actionAt] = d;
+  // Whether each closed group, not negated, matches only what some filter in it names: every `-o`
+  // branch must hold a filter (or a group that does) that is not negated and not a catch-all.
+  // `-type f`, `-true` or `! -name x` alone narrow nothing. Groups close inner first, so a group's
+  // inner groups are judged before it.
+  const groupNarrows = new Map<number, boolean>();
+  for (const [o, c] of closeAt) {
+    let branch = false;
+    let narrows = false;
+    for (let j = o + 1; j <= c; j++) {
+      if (j === c || isOr(j)) {
+        if (!branch) break;
+        narrows = j === c;
+        branch = false;
+        continue;
+      }
+      if (argv[j] === "(") {
+        if (groupNarrows.get(j) === true) branch = true;
+        j = closeAt.get(j) ?? c;
+      } else if (argv[j] === "-empty") {
+        if (!negated(j)) branch = true;
+      } else if (FIND_FILTERS.test(argv[j])) {
+        if (!negated(j) && !FIND_MATCH_ALL.test(argv[j + 1] ?? "")) branch = true;
+        j++;
+      }
+    }
+    groupNarrows.set(o, narrows && !negated(o));
+  }
+  const out = new Array<boolean>(actionAt).fill(false);
+  // Down the stack of open groups, how many close before the action without narrowing.
+  const failing = [0];
+  for (let j = 0; j < actionAt; j++) {
+    if (argv[j] === "(") failing.push(failing[failing.length - 1] + (closeAt.has(j) && groupNarrows.get(j) !== true ? 1 : 0));
+    else if (argv[j] === ")") {
+      if (failing.length > 1) failing.pop();
+    } else {
+      out[j] = failing[failing.length - 1] === 0 && FIND_FILTERS.test(argv[j]) && !negated(j) && (argv[j] === "-empty" || !FIND_MATCH_ALL.test(argv[j + 1] ?? ""));
+    }
+  }
+  // The group that joins a filter to the action is the shallowest depth on the way; an `-o` at that depth splits them.
+  let joint = depth[actionAt];
+  const ors = new Set<number>();
+  for (let j = actionAt - 1; j >= 0; j--) {
+    if (out[j] && ors.has(joint)) out[j] = false;
+    joint = Math.min(joint, depth[j]);
+    if (isOr(j)) ors.add(depth[j]);
+  }
+  return out;
 }
 
 function findRules(s: Stage, ctx: Context): Decision[] {
@@ -579,15 +625,16 @@ function findRules(s: Stage, ctx: Context): Decision[] {
   }
   if (starts.length === 0) starts.push(".");
   const stage = { ...s, cmd: "find -delete" };
-  if (argv.some((_, i) => narrows(argv, i, actionAt))) {
+  const narrowing = narrowingFilters(argv, actionAt);
+  if (narrowing.includes(true)) {
     // A filter narrows what goes, but not where: a start inside a protected directory, or a filter
     // that names a protected file outright, still deletes it. A filter on the other side of `-o`
     // (`-path ./.git -prune -o ...`) keeps what it names.
     const named: string[] = [];
     for (let i = 0; i < actionAt; i++) {
-      if (!narrows(argv, i, actionAt)) continue;
+      if (!narrowing[i]) continue;
       const v = argv[i + 1] ?? "";
-      if (/^-i?name$/.test(argv[i]) && !/[*?[]/.test(v)) named.push(...starts.map((st) => `${st.replace(/[\\/]+$/, "")}/${v}`));
+      if (/^-i?name$/.test(argv[i]) && !/[*?[]/.test(v)) append(named, starts.map((st) => `${st.replace(/[\\/]+$/, "")}/${v}`));
       if (/^-i?(path|wholename)$/.test(argv[i]) && !/[*?[]/.test(v)) named.push(v);
     }
     const guarded = new Set(["git-internals", "harness", "hook-config", "home-config", "lint-config", "test-config"]);
@@ -662,7 +709,7 @@ function gitRules(s: Stage, ctx: Context): Decision[] {
       break;
     }
     case "push":
-      out.push(...pushRules(rest, ctx));
+      append(out, pushRules(rest, ctx));
       break;
     case "reset":
       if (rest.includes("--hard")) {
@@ -690,17 +737,17 @@ function gitRules(s: Stage, ctx: Context): Decision[] {
       const f = flagsOf(rest, 0);
       if (f.short.has("n") || f.long.has("dry-run") || f.positionals.length < 2) break;
       removes(f.positionals.slice(0, -1), true, false);
-      out.push(...writeRules(at(f.positionals[f.positionals.length - 1]), { ...s, cmd: "git mv" }, ctx));
+      append(out, writeRules(at(f.positionals[f.positionals.length - 1]), { ...s, cmd: "git mv" }, ctx));
       break;
     }
     case "checkout":
-      out.push(...checkoutRules(rest));
+      append(out, checkoutRules(rest));
       break;
     case "switch":
-      out.push(...switchRules(rest));
+      append(out, switchRules(rest));
       break;
     case "restore":
-      out.push(...restoreRules(rest));
+      append(out, restoreRules(rest));
       break;
     case "stash":
       if (rest[0] === "drop" || rest[0] === "clear") {
@@ -1049,7 +1096,7 @@ function copyOperands(s: Stage): { sources: string[]; dest: string | undefined }
     } else if (a.startsWith("--target-directory=")) {
       dest = a.slice("--target-directory=".length);
     } else if (a === "--") {
-      positionals.push(...argv.slice(i + 1));
+      append(positionals, argv.slice(i + 1));
       break;
     } else if (!a.startsWith("-") || a === "-") {
       positionals.push(a);
@@ -1058,9 +1105,9 @@ function copyOperands(s: Stage): { sources: string[]; dest: string | undefined }
   if (sources.length === 0 && dest === undefined) {
     if (positionals.length < 2) return { sources: [], dest: undefined };
     dest = positionals[positionals.length - 1];
-    sources.push(...positionals.slice(0, -1));
+    append(sources, positionals.slice(0, -1));
   } else if (sources.length === 0) {
-    sources.push(...positionals);
+    append(sources, positionals);
   } else if (dest === undefined && positionals.length > 0) {
     dest = positionals[positionals.length - 1];
   }
@@ -1465,7 +1512,7 @@ function writeTargetsOf(s: Stage): string[] {
     case "sed":
       if (s.argv.includes("-i") || s.argv.some((a) => /^-i/.test(a) || a === "--in-place")) {
         const hasScriptFlag = s.argv.some((a) => a === "-e" || a === "-f" || a === "--expression" || a === "--file");
-        targets.push(...(hasScriptFlag ? positionals : positionals.slice(1)));
+        append(targets, (hasScriptFlag ? positionals : positionals.slice(1)));
       }
       break;
     case "cp":
@@ -1489,7 +1536,7 @@ function writeTargetsOf(s: Stage): string[] {
     case "set-content":
     case "add-content":
     case "out-file":
-      targets.push(...positionals.filter((p) => p !== "-s" && !/^\d+$/.test(p)));
+      append(targets, positionals.filter((p) => p !== "-s" && !/^\d+$/.test(p)));
       break;
     case "git":
       break;

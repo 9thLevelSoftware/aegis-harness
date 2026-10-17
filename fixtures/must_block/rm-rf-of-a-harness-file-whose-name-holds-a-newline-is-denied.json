@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf of a harness file whose name holds a newline is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf $'.harness/x\\ny'"
+    }
+  },
+  "rule": "shell.write-harness",
+  "source": "BUG-2026-019"
+}

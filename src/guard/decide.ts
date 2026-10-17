@@ -1,5 +1,4 @@
-import { ask, strictest, type Context, type Decision, type ToolCall } from "./model.ts";
-import { ParseTimeout } from "./shell.ts";
+import { ask, strictest, TimeLimit, TIME_LIMIT_MS, type Context, type Decision, type ToolCall } from "./model.ts";
 import { editRules } from "./rules/edit.ts";
 import { otherRules } from "./rules/other.ts";
 import { shellRules } from "./rules/shell.ts";
@@ -23,11 +22,12 @@ export function decide(call: ToolCall, ctx: Context): Decision {
  * can provoke would otherwise switch every check off for the whole command.
  */
 export function decideAll(calls: readonly ToolCall[], ctx: Context): Decision {
+  const timed = ctx.deadline === undefined ? { ...ctx, deadline: performance.now() + TIME_LIMIT_MS } : ctx;
   return strictest(calls.map((c) => {
     try {
-      return decide(c, ctx);
+      return decide(c, timed);
     } catch (e) {
-      if (e instanceof ParseTimeout) {
+      if (e instanceof TimeLimit) {
         // A hook that runs out of time lets the call through, so the guard stops first and asks.
         return ask("guard.time-limit", `the command took too long to check (${e.message})`, "Split it into smaller commands, or write a long script to a file first and run that, so each part can be checked.");
       }

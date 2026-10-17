@@ -170,7 +170,14 @@ impact: >-
   splitter re-read the growing word at every quote and brace), each enough to time the hook out;
   that `find . \( -name foo -o -type f \) -delete` passed; that `{ { rm -rf .claude; }; }` passed
   because nested brace groups were paired wrongly; and that an escaped backtick in an unquoted
-  here-document was run as a substitution.
+  here-document was run as a substitution. An eighth review found that a quote in a `#` comment
+  hid the lines after it; that text piped into or out of a `( )` or `{ }` group (`echo rm -rf
+  .claude | ( sh )`) was never read; that `-empty` was taken to swallow the next word, so
+  `\( -empty -o -type f \) -delete` passed; that nested backticks ran unread; that the 2 s limit
+  covered parsing only, while rules, option lists, find expressions and policy globs stayed
+  quadratic (a `rm -rf *********Z` took seconds, 150 KB of `env -u x` seven); that a group sent
+  to /dev/null inside a redirected group asked as a write to /dev/null; and that a `(` in a
+  comment or in a PowerShell here-string with an apostrophe was read as commands.
 countermeasure:
   kind: test
   ref:
@@ -253,7 +260,12 @@ countermeasure:
     searches are remembered, words are built as character arrays) and stops with an ask
     (guard.time-limit) past 2 s; brace output is capped at a million characters; a group joined
     by -o narrows a find only if every branch does; nested brace groups pair, `&}` closes one,
-    and text in a construct that never closes is read as commands. A
+    and text in a construct that never closes is read as commands. After the eighth review:
+    comments and PowerShell here-strings are dead text to the splitter; a group in a pipe passes
+    text through its first and last stages; `-empty` takes no value; nested backticks unescape
+    as bash does; the 2 s limit runs through the rules too; options, `env -S`, find expressions,
+    wildcards and policy globs are matched in linear passes, and `env -S` past eight levels asks.
+    A
     protected basename (`lefthook.yml`) inside a directory being removed is not seen,
     since the guard reads no filesystem. Still beyond any
     deny-list: variable indirection (`A=ah; $A init --remove`, `$(which ah) init --remove`,

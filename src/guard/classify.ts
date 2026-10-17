@@ -2,7 +2,7 @@
  * Path classification shared by the edit rules and by the shell rules that
  * look at redirection and copy targets. Purely lexical.
  */
-import type { Context, Platform } from "./model.ts";
+import { onTime, type Context, type Platform } from "./model.ts";
 import {
   driveForm,
   globToRegExp,
@@ -15,6 +15,7 @@ import {
   relativeTo,
   relativeToHome,
   resolvePath,
+  segmentMatcher,
 } from "./paths.ts";
 
 export type PathCategory =
@@ -60,6 +61,7 @@ const HOME_SHAPED = /^(\/home\/[^/]+|\/Users\/[^/]+|\/root|[A-Za-z]:\/Users\/[^/
 const KEY_GLOB = /\.(pem|key|p12|pfx|jks|keystore)$|^id_(rsa|ed25519|ecdsa)$/;
 
 export function classifyPath(input: string, ctx: Context): PathInfo {
+  onTime(ctx.deadline);
   const { policy, platform } = ctx;
   const stripped = input.replace(/^["']+|["']+$/g, "");
   const abs = resolvePath(stripped, ctx.projectRoot, ctx.homeDir, platform);
@@ -137,8 +139,8 @@ function hookConfigAbove(abs: string, ctx: Context, inProject: boolean): string 
     if (inProject && ctx.homeDir !== undefined && relativeTo(dir, ctx.homeDir, ctx.platform) !== null) continue;
     const r = relativeTo(dir, abs, ctx.platform);
     if (r === null || r === ".") continue;
-    const m = ctx.policy.hookConfigPaths.find((g) => globToRegExp(g, ctx.platform).test(r));
-    if (m !== undefined) return m;
+    const i = anchors(ctx).hookGlobs.findIndex((re) => re.test(r));
+    if (i >= 0) return ctx.policy.hookConfigPaths[i];
   }
   return undefined;
 }
@@ -160,6 +162,8 @@ interface Anchors {
   names: string[];
   /** `dir/head` for each glob with a literal head (case-folded on Windows), and what removing a directory above it removes. */
   holders: { folded: string; glob: string; category: "home-config" | "hook-config" }[];
+  /** The policy's hook configuration globs, compiled, each matched against a whole path below a layer. */
+  hookGlobs: RegExp[];
 }
 
 const ANCHORS = new WeakMap<Context, Anchors>();
@@ -192,7 +196,8 @@ function anchors(ctx: Context): Anchors {
   }
   const basenames = [...policy.hookConfigPaths, ...policy.lintConfigPaths, ...policy.testConfigPaths].filter((g) => !g.includes("/"));
   const names = [...basenames.filter((b) => !WILDCARD.test(b)), ...basenames.filter((b) => WILDCARD.test(b))].flatMap(spellings);
-  const a: Anchors = { layers, heads: heads.map((h) => h.split("/")), names, holders };
+  const hookGlobs = policy.hookConfigPaths.map((g) => globToRegExp(g, platform));
+  const a: Anchors = { layers, heads: heads.map((h) => h.split("/")), names, holders, hookGlobs };
   ANCHORS.set(ctx, a);
   return a;
 }
@@ -217,34 +222,6 @@ function isGitRel(r: string, platform: Platform): boolean {
 }
 
 const WILDCARD = /[*?[]/;
-
-/**
- * One segment of a sh glob as a RegExp. A wildcard does not match a leading
- * dot unless the pattern spells it (sh without dotglob, Git Bash included);
- * with `dots` it does, as PowerShell and cmd wildcards do. On Windows it
- * case folds. A bracket class that is no valid class (`[z-a]`) matches
- * nothing, as it does in bash.
- */
-function segmentPattern(seg: string, platform: Platform, dots: boolean): RegExp {
-  let re = "";
-  for (let i = 0; i < seg.length; i++) {
-    const c = seg[i];
-    const close = c === "[" ? seg.indexOf("]", i + 2) : -1;
-    if (c === "*") re += "[^/]*";
-    else if (c === "?") re += "[^/]";
-    else if (close > 0) {
-      const body = seg.slice(i + 1, close);
-      re += `[${/^[!^]/.test(body) ? "^" : ""}${body.replace(/^[!^]/, "").replace(/[\\\]^]/g, "\\$&")}]`;
-      i = close;
-    } else re += c.replace(/[.+^${}()|\\[\]]/g, "\\$&");
-  }
-  const lead = !dots && WILDCARD.test(seg[0] ?? "") ? "(?!\\.)" : "";
-  try {
-    return new RegExp(`^${lead}${re}$`, platform === "windows" ? "i" : "");
-  } catch {
-    return /(?!)/;
-  }
-}
 
 /** The literal text of a glob segment, its wildcards and bracket classes dropped: `.eslintrc` from `.eslintrc*`, `.js` from `*.js`. */
 function literalText(seg: string): string {
@@ -286,13 +263,13 @@ export function wildcardReach(input: string, ctx: Context, whole: boolean): Path
   const stripped = input.replace(/^["']+|["']+$/g, "");
   if (!WILDCARD.test(stripped) || hasVariable(stripped)) return undefined;
   const pattern = resolvePath(stripped, ctx.projectRoot, ctx.homeDir, platform).split("/");
-  const compiled = new Map<string, RegExp>();
+  const compiled = new Map<string, (name: string) => boolean>();
   const dots = (ctx.shellDialect ?? (platform === "windows" ? "powershell" : "posix")) !== "posix";
   const same = (p: string, seg: string): boolean => {
     if (!WILDCARD.test(p)) return platform === "windows" ? p.toLowerCase() === seg.toLowerCase() : p === seg;
-    let re = compiled.get(p);
-    if (re === undefined) compiled.set(p, (re = segmentPattern(p, platform, dots)));
-    return re.test(seg);
+    let match = compiled.get(p);
+    if (match === undefined) compiled.set(p, (match = segmentMatcher(p, platform, dots)));
+    return match(seg);
   };
   const reached = (lit: string): PathInfo | undefined => {
     const info = classifyPath(lit, ctx);

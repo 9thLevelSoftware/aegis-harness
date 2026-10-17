@@ -16,10 +16,15 @@ export function isAbsolute(p: string): boolean {
   return p.startsWith("/") || /^[A-Za-z]:(\/|$)/.test(p);
 }
 
+/** Text normalize would change: a backslash, a doubled slash, or a `.` or `..` segment (`C:.` included). */
+const UNNORMAL = /\\|\/\/|(?:^|\/|^[A-Za-z]:)\.{1,2}(?:\/|$)/;
+
 /** Resolve `.` and `..` segments lexically. Keeps a leading drive or `/`. */
 export function normalize(p: string): string {
+  // Most paths reach here already normal, many times each for a long command.
+  if (p !== "" && !UNNORMAL.test(p) && !(p.length > 1 && p.endsWith("/")) && p.trim() === p) return p;
   const s = toPosix(p);
-  const m = /^([A-Za-z]:)?(\/)?(.*)$/.exec(s);
+  const m = /^([A-Za-z]:)?(\/)?(.*)$/s.exec(s);
   const drive = m?.[1] ?? "";
   const rooted = m?.[2] ?? "";
   const rest = m?.[3] ?? "";
@@ -140,7 +145,7 @@ function compileGlob(glob: string, platform: Platform): RegExp {
   // `rm -rf .harness` is the same act as `rm -rf .harness/*`.
   if (glob.endsWith("/**")) {
     const inner = globToRegExp(glob.slice(0, -3), platform).source.replace(/^\^|\$$/g, "");
-    return new RegExp(`^${inner}(?:/.*)?$`, platform === "windows" ? "i" : "");
+    return new RegExp(`^${inner}(?:/.*)?$`, platform === "windows" ? "is" : "s");
   }
   let re = "";
   for (let i = 0; i < glob.length; i++) {
@@ -177,7 +182,7 @@ function compileGlob(glob: string, platform: Platform): RegExp {
       re += c;
     }
   }
-  return new RegExp(`^${re}$`, platform === "windows" ? "i" : "");
+  return new RegExp(`^${re}$`, platform === "windows" ? "is" : "s");
 }
 
 /**
@@ -191,21 +196,104 @@ export function matchGlobs(rel: string, globs: readonly string[], platform: Plat
   const compiled = compiledList(globs, platform);
   for (let i = 0; i < globs.length; i++) {
     const c = compiled[i];
-    if (c.re.test(c.whole ? path : base)) return globs[i];
+    if (c.whole ? c.whole.test(path) : c.name(base)) return globs[i];
   }
   return undefined;
 }
 
-/** A policy list compiled once per platform; the lists are static and judged against every word of a command. */
-const LIST_CACHE = new WeakMap<readonly string[], Partial<Record<Platform, { re: RegExp; whole: boolean }[]>>>();
+type CompiledGlob = { whole: RegExp; name?: undefined } | { whole?: undefined; name: (name: string) => boolean };
 
-function compiledList(globs: readonly string[], platform: Platform): { re: RegExp; whole: boolean }[] {
+/** A policy list compiled once per platform; the lists are static and judged against every word of a command. */
+const LIST_CACHE = new WeakMap<readonly string[], Partial<Record<Platform, CompiledGlob[]>>>();
+
+/**
+ * A glob with `/` as a RegExp (the policy's are a literal head and `/**`, which match in one pass);
+ * a basename glob as a segment matcher, one per `{a,b}` alternative, since a RegExp of
+ * `*baseline*.json` backtracks over a long name in time proportional to its square.
+ */
+function compiledList(globs: readonly string[], platform: Platform): CompiledGlob[] {
   let byPlatform = LIST_CACHE.get(globs);
   if (byPlatform === undefined) LIST_CACHE.set(globs, (byPlatform = {}));
-  return (byPlatform[platform] ??= globs.map((g) => ({ re: globToRegExp(g, platform), whole: g.includes("/") })));
+  return (byPlatform[platform] ??= globs.map((g): CompiledGlob => {
+    if (g.includes("/")) return { whole: globToRegExp(g, platform) };
+    const each = alternatives(g).map((a) => segmentMatcher(a.replace(/\[/g, "[[]"), platform, true));
+    return { name: (n) => each.some((m) => m(n)) };
+  }));
+}
+
+/** `{a,b}` expanded as globToRegExp reads it: to the next `}`, one level, an unclosed `{` literal. */
+function alternatives(glob: string): string[] {
+  const open = glob.indexOf("{");
+  const close = open < 0 ? -1 : glob.indexOf("}", open);
+  if (close < 0) return [glob];
+  const head = glob.slice(0, open);
+  const tails = alternatives(glob.slice(close + 1));
+  return glob.slice(open + 1, close).split(",").flatMap((a) => tails.map((t) => head + a + t));
 }
 
 export function basename(p: string): string {
   const s = toPosix(p);
   return s.slice(s.lastIndexOf("/") + 1);
+}
+
+type GlobToken = { kind: "star" } | { kind: "one" } | { kind: "class"; negate: boolean; test: (c: string) => boolean } | { kind: "lit"; ch: string };
+
+/**
+ * One segment of a sh glob as a matcher. A wildcard does not match a leading dot unless the
+ * pattern spells it (sh without dotglob, Git Bash included); with `dots` it does, as PowerShell
+ * and cmd wildcards do. On Windows it case folds. A reversed range (`[z-a]`) matches nothing, as
+ * in bash. It runs in time proportional to the name times the pattern, never backtracking more:
+ * a RegExp of `*********Z` took seconds on a short name.
+ */
+export function segmentMatcher(seg: string, platform: Platform, dots: boolean): (name: string) => boolean {
+  const fold = platform === "windows" ? (c: string) => c.toLowerCase() : (c: string) => c;
+  const toks: GlobToken[] = [];
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    const close = c === "[" ? seg.indexOf("]", i + 2) : -1;
+    if (c === "*") {
+      if (toks[toks.length - 1]?.kind !== "star") toks.push({ kind: "star" });
+    } else if (c === "?") toks.push({ kind: "one" });
+    else if (close > 0) {
+      let body = seg.slice(i + 1, close);
+      const negate = /^[!^]/.test(body);
+      if (negate) body = body.slice(1);
+      const singles = new Set<string>();
+      const ranges: [string, string][] = [];
+      for (let k = 0; k < body.length; k++) {
+        if (body[k + 1] === "-" && k + 2 < body.length) {
+          if (body[k] <= body[k + 2]) ranges.push([body[k], body[k + 2]]);
+          k += 2;
+        } else singles.add(fold(body[k]));
+      }
+      const member = (ch: string) => singles.has(fold(ch)) || ranges.some(([a, b]) => (ch >= a && ch <= b) || (platform === "windows" && [ch.toLowerCase(), ch.toUpperCase()].some((x) => x >= a && x <= b)));
+      toks.push({ kind: "class", negate, test: member });
+      i = close;
+    } else toks.push({ kind: "lit", ch: fold(c) });
+  }
+  const one = (t: GlobToken, ch: string): boolean =>
+    t.kind === "one" || (t.kind === "lit" && t.ch === fold(ch)) || (t.kind === "class" && t.test(ch) !== t.negate);
+  const lead = !dots && /[*?[]/.test(seg[0] ?? "");
+  return (name: string): boolean => {
+    if (lead && name.startsWith(".")) return false;
+    let p = 0;
+    let n = 0;
+    let star = -1;
+    let resume = 0;
+    while (n < name.length) {
+      const t = toks[p];
+      if (t !== undefined && t.kind === "star") {
+        star = p++;
+        resume = n;
+      } else if (t !== undefined && one(t, name[n])) {
+        p++;
+        n++;
+      } else if (star >= 0) {
+        p = star + 1;
+        n = ++resume;
+      } else return false;
+    }
+    while (toks[p]?.kind === "star") p++;
+    return p === toks.length;
+  };
 }

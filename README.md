@@ -121,8 +121,8 @@ folder a session started in, and in a linked worktree's main checkout, so a sess
 cannot remove `../.claude/settings.local.json` or `../.git/hooks/pre-commit` either.
 
 `ah rules` prints the full list with each rule's provenance. The authoritative definition is the
-fixture corpus: [`fixtures/`](fixtures/README.md) holds about 325 calls that must be denied,
-59 that must ask and 257 legitimate neighbours that must pass, and CI runs all of them through the
+fixture corpus: [`fixtures/`](fixtures/README.md) holds about 330 calls that must be denied,
+60 that must ask and 260 legitimate neighbours that must pass, and CI runs all of them through the
 built guard on Linux and Windows. Commands inside loops, `if` blocks, functions and PowerShell
 `{ }` blocks meet every rule, so a `for` loop that runs `rm -rf "$d"` asks like the bare command.
 sh brace expansion is applied first, as bash does it (`mv .ruff.toml{,.bak}`, `.claud{e..e}`,
