@@ -4,8 +4,9 @@
  * byte-order mark are kept, a malformed block is refused, JSON that cannot be
  * read back exactly is refused, symlinks are written through and never deleted.
  * Where the block goes (a CLAUDE.md above the project counts, an @-import is
- * read relative to the file that holds it), what --remove leaves for an agent
- * that stays wired, and .git/info/exclude coming back as it was.
+ * read where Claude Code's Markdown lexer reads text, relative to the file
+ * that holds it), what --remove leaves for an agent that stays wired, and
+ * .git/info/exclude coming back as it was.
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -249,6 +250,48 @@ test("an @AGENTS.md import counts only outside fenced code, by CommonMark's fenc
   assert.equal(imports("````\n```\n@AGENTS.md\n````\n"), false, "a shorter fence does not close a longer one");
   assert.equal(imports("```md\n~~~\n@AGENTS.md\n```\n"), false, "a tilde fence does not close a backtick one");
   assert.equal(imports("```sh\n@AGENTS.md\n"), false, "a fence that never closes runs to the end");
+});
+
+test("an @AGENTS.md import counts only where Claude Code's Markdown lexer reads text, and its path is cut and unescaped as Claude Code does", () => {
+  const imports = (text: string) => importsAgentsMd(text, "/home/dev/proj/CLAUDE.md", "/home/dev/proj/AGENTS.md", "/home/dev");
+  const skipped: [string, string][] = [
+    ["# Notes\n\n<!-- @AGENTS.md (re-enable once Codex users are on board) -->\n", "an HTML comment"],
+    ["<!--\n@AGENTS.md\n-->\n", "an HTML comment over several lines"],
+    ["# Notes\n\n    @AGENTS.md\n", "indented code"],
+    ["# Notes\n\n\t@AGENTS.md\n", "indented code, by a tab"],
+    ["Title\n=====\n    @AGENTS.md\n", "indented code after a setext heading"],
+    ["- To import it:\n\n      @AGENTS.md\n", "indented code in a list item"],
+    ["<div>\n@AGENTS.md\n</div>\n", "an HTML block"],
+    ["<details>\n@AGENTS.md\n</details>\n", "an HTML block that is not a comment"],
+    ["Use `cat @AGENTS.md | head` to read it.\n", "a code span"],
+    ["- ```\n  @AGENTS.md\n  ```\n", "a fence in a list item"],
+    ["> ```\n> @AGENTS.md\n> ```\n", "a fence in a block quote"],
+    ["---\nimports: @AGENTS.md\n---\n# Notes\n", "front matter"],
+    ["[rules]: @AGENTS.md\n", "a link reference definition"],
+  ];
+  for (const [text, where] of skipped) assert.equal(imports(text), false, where);
+  const read: [string, string][] = [
+    ["@AGENTS.md#rules\n", "a #fragment is cut off"],
+    ["@my\\ notes/../AGENTS.md\n", "`\\ ` is a space"],
+    ["<!-- shared rules --> @AGENTS.md\n", "what is left of a comment block"],
+    ["<details>\n<summary>Rules</summary>\n\n@AGENTS.md\n\n</details>\n", "a paragraph between HTML blocks"],
+    ["Some text\n    @AGENTS.md\n", "an indented line that continues a paragraph"],
+    ["- Shared rules:\n\n    @AGENTS.md\n", "a paragraph in a list item"],
+    ["> @AGENTS.md\n", "a block quote"],
+    ["﻿---\ntitle: notes\n---\n@AGENTS.md\n", "after front matter"],
+  ];
+  for (const [text, where] of read) assert.equal(imports(text), true, where);
+  assert.equal(importsAgentsMd("@~/My\\ Projects/proj/AGENTS.md\n", "/home/dev/My Projects/proj/CLAUDE.md", "/home/dev/My Projects/proj/AGENTS.md", "/home/dev"), true);
+
+  const d = scratch();
+  try {
+    const root = join(d, "proj");
+    mkdirSync(root);
+    writeFileSync(join(root, "CLAUDE.md"), "# Notes\n\n<!-- @AGENTS.md -->\n");
+    assert.equal(claudeMdState(root, join(d, "home")).target, join(root, "CLAUDE.md"), "a commented-out import leaves the block to go in");
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
 });
 
 test("an import names the file relative to the CLAUDE.md that holds it, so .claude/CLAUDE.md imports the root's as @../AGENTS.md", () => {

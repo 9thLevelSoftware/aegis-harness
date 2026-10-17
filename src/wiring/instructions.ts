@@ -19,7 +19,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { agentsBlockLines, AGENTS_BLOCK_BODY } from "./agents-md.ts";
 import { readText } from "./files.ts";
 import { symlinkCheckedOutAsText } from "./project.ts";
-import { blockEndByte, fencedLines, readBlock, removeBlock, upsertBlock, type BlockEdit } from "./text-block.ts";
+import { blockEndByte, readBlock, removeBlock, upsertBlock, type BlockEdit } from "./text-block.ts";
 
 export interface InstructionEdit {
   path: string;
@@ -46,24 +46,269 @@ function isFile(p: string): boolean {
   }
 }
 
-/** An @-import. A backslash ends the path, so only `/` paths count, which Claude Code follows on every OS. */
-const IMPORT = /(?:^|\s)@([^\s\\]+)/g;
+/**
+ * An @-import as Claude Code reads one: the path runs to whitespace, `\ ` is
+ * a space in it, and any other backslash ends it, so only `/` paths count,
+ * which it follows on every OS.
+ */
+const IMPORT = /(?:^|\s)@((?:[^\s\\]|\\ )+)/g;
 
 /**
- * A line of `text`, the content of `file`, that imports `agents`, outside
- * fenced code. Claude Code resolves an import against the directory of the
- * file it is in (a leading ~ is the home directory), so `@AGENTS.md` in
+ * `text`, the content of `file`, imports `agents`. Claude Code cuts a
+ * `#fragment` off the path and resolves it against the directory of the file
+ * it is in (a leading ~/ is the home directory), so `@AGENTS.md` in
  * .claude/CLAUDE.md is .claude/AGENTS.md; the root's is `@../AGENTS.md` there.
  */
 export function importsAgentsMd(text: string, file: string, agents: string, home: string = homedir()): boolean {
-  const lines = text.split(/\r?\n/);
-  const code = fencedLines(lines, true);
   const want = resolve(agents);
   const names = (spec: string): boolean => {
-    const p = spec === "~" || spec.startsWith("~/") ? resolve(home, spec.slice(2)) : resolve(dirname(file), spec);
-    return p === want || same(p, want);
+    const p = spec.split("#")[0].replaceAll("\\ ", " ");
+    if (!/^(?:\.\/|~\/|\/.|[\w.-])/.test(p)) return false;
+    const t = p.trim();
+    const abs = t.startsWith("~/") ? resolve(home, t.slice(2)) : resolve(dirname(file), t);
+    return abs === want || same(abs, want);
   };
-  return lines.some((l, i) => !code[i] && [...l.matchAll(IMPORT)].some((m) => names(m[1])));
+  return importText(text).some((t) => [...t.matchAll(IMPORT)].some((m) => names(m[1])));
+}
+
+/** A block quote, or a list item whose content starts `col` columns in. */
+interface Box {
+  /** null for a quote. */
+  col: number | null;
+  /** Item: its first line was blank, or a blank line has been in it since. */
+  blank: boolean;
+  /** No lazy line comes after its last line: in an item, code, a fence, a heading or a rule; in a quote, a blank line or code. */
+  stop: boolean;
+  /** Item: nothing has followed its first line yet. */
+  first: boolean;
+  /** Quote: its last line was a lazy one. */
+  lazy: boolean;
+}
+
+/** A block Claude Code does not read for imports: HTML (of a comment, what is left once the comments are out), or a link reference definition. */
+interface Skipped {
+  /** What ends it; null for a blank line. */
+  end: RegExp | null;
+  /** The lines of an HTML comment block. */
+  lines: string[] | null;
+  /** It ends on the line it starts on. */
+  closed: boolean;
+}
+
+const BLANK = /^[ \t]*$/;
+const QUOTE = /^ {0,3}>[ \t]?/;
+const HR = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\*[ \t]*){3,})$/;
+const SETEXT = /^ {0,3}(?:=+|-+)[ \t]*$/;
+const HEADING = /^ {0,3}#{1,6}(?:\s|$)/;
+/** A list's first item: marked wants text after the space, or nothing at all, after the marker. Later items need neither. */
+const BULLET = /^( {0,3}(?:[*+-]|\d{1,9}[.)]))((?:[ \t].+)?)$/;
+const BULLET_ANY = /^( {0,3}(?:[*+-]|\d{1,9}[.)]))((?:[ \t].*)?)$/;
+const FENCE_OPEN = /^ {0,3}(`{3,}(?=[^`]*$)|~{3,})/;
+const DEF = /^ {0,3}\[(?:\\.|[^[\]\\])+\]:/;
+const BLOCK_TAGS = "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|meta|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul";
+const BLOCK_TAG = new RegExp(`^</?(?:${BLOCK_TAGS})(?:[\\s/>]|$)`, "i");
+/** What ends a paragraph for marked's quote, which takes every other line lazily. */
+const PARA_END = new RegExp(`^(?: {0,3}(?:#{1,6}(?:\\s|$)|>|\`{3,}[^\`]*$|~{3,}|(?:[*+-]|1[.)]) |(?:(?:-[ \\t]*){3,}|(?:_[ \\t]*){3,}|(?:\\*[ \\t]*){3,})$)|</?(?:${BLOCK_TAGS})(?: +|$|/?>)|<(?:script|pre|style|textarea|!--))`);
+const LONE_TAG = /^(?:<[a-z][\w-]*(?:\s(?:[^<>"']|"[^"]*"|'[^']*')*)?\/?>|<\/[a-z][\w-]*\s*>)[ \t]*$/i;
+const INLINE_HTML = /^(?:<!--(?:-?>|[\s\S]*?-->)|<\/?[a-z][\w:-]*(?:\s(?:[^<>"']|"[^"]*"|'[^']*')*)?\/?>|<\?[\s\S]*?\?>|<![a-z][^>]*>|<!\[CDATA\[[\s\S]*?\]\]>)/i;
+const LINK = /^(!?)\[((?:\\.|[^[\]\\])*)\]\((?:\\.|[^()\\]|\([^()]*\))*\)/;
+
+function width(s: string): number {
+  return s.replace(/\t/g, "    ").search(/[^ ]/);
+}
+
+/** The HTML block `s` starts, if any; a tag alone on its line counts only where `lone`. */
+function htmlStart(s: string, lone: boolean): Skipped | null {
+  const t = /^ {0,3}(<.*)$/.exec(s)?.[1];
+  if (t === undefined) return null;
+  const block = (end: RegExp | null, from: number): Skipped => ({ end, lines: null, closed: end !== null && end.test(t.slice(from)) });
+  const raw = /^<(script|pre|style|textarea)(?:[\s>]|$)/i.exec(t);
+  if (raw !== null) return block(new RegExp(`</${raw[1]}>`, "i"), raw[0].length);
+  if (t.startsWith("<!--")) return { end: /-->/, lines: [], closed: /^<!--(?:-?>|[\s\S]*?-->)/.test(t) };
+  if (t.startsWith("<?")) return block(/\?>/, 2);
+  if (t.startsWith("<![CDATA[")) return block(/\]\]>/, 9);
+  if (/^<![a-z]/i.test(t)) return block(/>/, 2);
+  return BLOCK_TAG.test(t) || (lone && LONE_TAG.test(t)) ? block(null, 0) : null;
+}
+
+/** `s` ends the paragraph above it. In a list item every line is tried as a new block. */
+function interrupts(s: string, inItem: boolean): boolean {
+  return BLANK.test(s) || HR.test(s) || HEADING.test(s) || /^ {0,3}>/.test(s) || FENCE_OPEN.test(s) || htmlStart(s, inItem) !== null || (inItem ? /^ {0,3}(?:[*+-]|\d{1,9}[.)])(?:[ \t]|$)/ : /^ {0,3}(?:[*+-]|1[.)]) /).test(s);
+}
+
+/** The line, indented less than an item's content at `col`, starts a fence, heading, HTML, item or rule, which ends the item. */
+function endsItem(s: string, col: number): boolean {
+  return new RegExp(`^ {0,${Math.min(3, col - 1)}}(?:\`\`\`|~~~|#|<(?:[a-z].*>|!--)|(?:[*+-]|\\d{1,9}[.)])(?:[ \\t]|$)|(?:(?:- *){3,}|(?:_ *){3,}|(?:\\* *){3,})$)`, "i").test(s);
+}
+
+/** The line, in an item at `col`, is one after which marked takes no lazy line. */
+function stopsLazy(s: string, col: number): boolean {
+  return width(s) >= 4 || new RegExp(`^ {0,${Math.min(3, col - 1)}}(?:\`\`\`|~~~|#|(?:(?:- *){3,}|(?:_ *){3,}|(?:\\* *){3,})$)`).test(s);
+}
+
+/** A paragraph's text as Claude Code reads it for imports: code spans, inline HTML, link targets and images out; an escaped character splits the text. */
+function inline(text: string): string {
+  let out = "";
+  for (let i = 0; i < text.length; ) {
+    const rest = text.slice(i);
+    const c = text[i];
+    let m: RegExpExecArray | null;
+    if (c === "\\" && /^\\[!-/:-@[-`{-~]/.test(rest)) {
+      out += " ";
+      i += 2;
+    } else if (c === "`") {
+      const run = /^`+/.exec(rest)![0];
+      const close = new RegExp(`(?<!\`)${run}(?!\`)`, "g");
+      close.lastIndex = run.length;
+      const end = close.exec(rest);
+      out += end === null ? run : " ";
+      i += end === null ? run.length : end.index + run.length;
+    } else if (c === "<" && (m = INLINE_HTML.exec(rest)) !== null) {
+      out += " ";
+      i += m[0].length;
+    } else if ((c === "[" || c === "!") && (m = LINK.exec(rest)) !== null) {
+      out += m[1] === "!" ? " " : ` ${inline(m[2])} `;
+      i += m[0].length;
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}
+
+/**
+ * The text Claude Code looks for @-imports in. It lexes the file as Markdown
+ * (marked, without GFM) and reads the text of paragraphs and headings, and of
+ * an HTML comment block what is left once the comments are out. Fenced and
+ * indented code, code spans, other HTML and front matter it skips. This
+ * follows marked through block quotes and list items, lazy lines included,
+ * though not into every way the two nest: a quote's lazy lines that marked
+ * hands on to a list inside it can still part them. Elsewhere, where they
+ * could part, less is read here, so the block goes in twice rather than nowhere.
+ */
+function importText(text: string): string[] {
+  const out: string[] = [];
+  const boxes: Box[] = [];
+  let para: string[] | null = null;
+  let fence: RegExp | null = null;
+  let skip: Skipped | null = null;
+  const flush = (): void => {
+    if (para !== null) out.push(inline(para.join("\n")));
+    para = null;
+  };
+  const endSkip = (): void => {
+    if (skip?.lines) out.push(skip.lines.join("\n").replace(/<!--[\s\S]*?-->/g, ""));
+    skip = null;
+  };
+  const body = text.replace(/^﻿/, "").replace(/^---\s*\n[\s\S]*?---\s*\n?/, "");
+  for (const line of body.split(/\r\n|\r|\n/)) {
+    let s = line;
+    // A lazy line is outside a box it is still in. marked's quote takes one
+    // that could carry on a paragraph, if its last line had text, and hands it
+    // to the list or quote inside; a list item takes one that starts no block,
+    // unless a blank line or a line that stops it came first.
+    let lazy = false;
+    let sibling = false;
+    for (let n = 0; n < boxes.length; n++) {
+      const b = boxes[n];
+      const q = b.col === null ? QUOTE.exec(s) : null;
+      const blank = BLANK.test(s);
+      let inside = true;
+      if (q !== null) {
+        s = s.slice(q[0].length);
+        b.stop = BLANK.test(s);
+        b.lazy = false;
+      } else if (b.col === null) {
+        inside = lazy = !b.stop && !blank && !PARA_END.test(s) && (n + 1 < boxes.length || fence === null);
+        // Lazy lines after quoted ones are lexed afresh, so HTML from the quoted lines ends there.
+        if (inside && n + 1 === boxes.length && !b.lazy) skip = null;
+        b.lazy = true;
+      } else if (blank || width(s) >= b.col) {
+        s = blank ? "" : s.replace(/\t/g, "    ").slice(b.col);
+        // An item that starts blank ends at a blank line right after it.
+        inside = !(blank && b.first && b.blank);
+        b.stop = !blank && stopsLazy(s, b.col);
+      } else {
+        inside = lazy = !endsItem(s, b.col) && !b.blank && !b.stop;
+        sibling = !inside && BULLET_ANY.test(s);
+        b.stop = stopsLazy(s.replace(/\t/g, "    ").slice(b.col), b.col);
+      }
+      if (b.col !== null) {
+        b.blank ||= blank;
+        b.first = false;
+      }
+      if (!inside) {
+        boxes.length = n;
+        lazy = false;
+        flush();
+        fence = null;
+        skip = null;
+      }
+    }
+    const inner = boxes.at(-1);
+    if (fence !== null) {
+      if (!lazy && fence.test(s)) fence = null;
+      // A quote whose last line is code takes no lazy line.
+      if (inner?.col === null) inner.stop = true;
+      continue;
+    }
+    if (skip !== null) {
+      skip.lines?.push(s);
+      if (skip.end === null ? BLANK.test(s) : skip.end.test(s)) endSkip();
+      continue;
+    }
+    if (para !== null) {
+      // A setext underline makes the paragraph a heading, which nothing carries on.
+      const underline = !lazy && SETEXT.test(s);
+      if (!underline && (width(s) >= 4 || !interrupts(s, lazy || (inner !== undefined && inner.col !== null)))) {
+        para.push(s);
+        continue;
+      }
+      if (underline) para.push(s);
+      flush();
+      if (underline) continue;
+    }
+    for (;;) {
+      if (width(s) >= 4 || HR.test(s)) break;
+      const q = QUOTE.exec(s);
+      if (q !== null) {
+        s = s.slice(q[0].length);
+        boxes.push({ col: null, blank: false, stop: BLANK.test(s), first: false, lazy: false });
+        continue;
+      }
+      const m = (sibling ? BULLET_ANY : BULLET).exec(s);
+      sibling = false;
+      if (m === null) break;
+      // Where marked starts the item's content: a tab counts as text there, and 5+ spaces as one, then code.
+      const empty = BLANK.test(m[2]);
+      const w = m[2].search(/[^ ]/);
+      const col = m[1].length + (empty || w > 4 ? 1 : w);
+      const first = m[2].replace(/^\t+/, (t) => "   ".repeat(t.length));
+      boxes.push({ col, blank: empty, stop: !empty && stopsLazy(first, col), first: true, lazy: false });
+      s = empty ? "" : first.slice(col - m[1].length);
+    }
+    if (BLANK.test(s) || width(s) >= 4) {
+      const b = boxes.at(-1);
+      if (b?.col === null) b.stop = true;
+      continue;
+    }
+    const f = FENCE_OPEN.exec(s);
+    if (f !== null) {
+      fence = new RegExp(`^ {0,3}${f[1]}[~\`]* *$`);
+      continue;
+    }
+    skip = htmlStart(s, true) ?? (DEF.test(s) ? { end: null, lines: null, closed: false } : null);
+    if (skip !== null) {
+      skip.lines?.push(s);
+      if (skip.closed) endSkip();
+      continue;
+    }
+    if (HEADING.test(s)) out.push(inline(s));
+    else if (!HR.test(s)) para = [s];
+  }
+  flush();
+  return out;
 }
 
 export interface ClaudeMdFile {
