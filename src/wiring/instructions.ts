@@ -1,7 +1,7 @@
 /**
  * Where the guard's instructions go so each agent reads them.
  *
- * AGENTS.md at the project root always gets the managed block. Claude Code
+ * AGENTS.md at the project root gets the managed block. Claude Code
  * reads AGENTS.md only when there is no CLAUDE.md, .claude/CLAUDE.md or
  * CLAUDE.local.md at the project root or in any directory above it
  * (~/.claude/CLAUDE.md aside). When one of those exists, the same block goes
@@ -11,7 +11,10 @@
  * AGENTS.md wholesale would change what Claude Code reads beyond ah's few
  * lines, so ah never adds the import itself. A root file that git has as a
  * symlink but checked out as a plain file holding the link's target (Git for
- * Windows' default) is never written into: see claudeMdState.
+ * Windows' default) is never written into: see rootTextLinks. When AGENTS.md
+ * is one, Codex gets the block in an AGENTS.override.md made for that checkout
+ * alone, and Claude Code in the root's CLAUDE.md, or else in a new
+ * CLAUDE.local.md (see claudeMdState).
  */
 import { realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -26,6 +29,12 @@ export interface InstructionEdit {
   original: string | null;
   edit: BlockEdit;
   why: string;
+  /**
+   * ah made the file to stand in for a text link (see rootTextLinks): it is
+   * for this checkout alone and stays out of git. Set too when --remove
+   * deletes such a file.
+   */
+  local?: boolean;
 }
 
 export const CLAUDE_MD_CANDIDATES = ["CLAUDE.md", join(".claude", "CLAUDE.md"), "CLAUDE.local.md"];
@@ -345,6 +354,21 @@ export interface ClaudeMdState {
   textLinks: TextLink[];
 }
 
+/**
+ * The instruction files at `root` that git has as symlinks but that are
+ * checked out as plain files holding the link's target (core.symlinks=false,
+ * Git for Windows' default). An agent reads that one line, not the file it
+ * names, and git takes any edit for a new target, so ah writes into none of
+ * them: a block an older ah left in one comes out.
+ */
+export function rootTextLinks(root: string): TextLink[] {
+  return ["AGENTS.md", "AGENTS.override.md", ...CLAUDE_MD_CANDIDATES].flatMap((p) => {
+    const path = join(root, p);
+    const target = symlinkCheckedOutAsText(path);
+    return target === null ? [] : [{ path, target }];
+  });
+}
+
 /** `home` is the user's home directory, whose .claude/CLAUDE.md is user memory and does not count. */
 export function claudeMdState(root: string, home: string = homedir()): ClaudeMdState {
   const agents = join(root, "AGENTS.md");
@@ -362,24 +386,33 @@ export function claudeMdState(root: string, home: string = homedir()): ClaudeMdS
     const target = symlinkCheckedOutAsText(path);
     return target === null ? [] : [{ path, target }];
   });
-  const isLink = (p: string): boolean => textLinks.some((l) => l.path === p);
-  if (suppressing.length === 0) return { present, target: null, reason: "no CLAUDE.md, so Claude Code reads AGENTS.md itself (2.1.277 or later)", suppressing, textLinks };
+  // A text-linked AGENTS.md holds no block, so neither reading nor importing it counts.
+  const agentsLink = symlinkCheckedOutAsText(agents) !== null;
+  const isLink = (p: string): boolean => textLinks.some((l) => l.path === p) || (agentsLink && same(p, agents));
+  if (suppressing.length === 0) {
+    if (!agentsLink) return { present, target: null, reason: "no CLAUDE.md, so Claude Code reads AGENTS.md itself (2.1.277 or later)", suppressing, textLinks };
+    const target = join(root, "CLAUDE.local.md");
+    return { present, target, reason: "AGENTS.md is a symlink checked out as plain text, which ah does not write into; the block goes in a new CLAUDE.local.md, which Claude Code reads in its place", suppressing, textLinks };
+  }
   if (present.length === 0) {
     const target = join(root, "CLAUDE.md");
     return { present, target, reason: `${suppressing[0].path} is above the project, so Claude Code does not read AGENTS.md; the block goes in a new CLAUDE.md`, suppressing, textLinks };
   }
-  for (const p of present.filter((p) => !isLink(p))) {
-    if (same(p, agents)) return { present, target: null, reason: `${rel(root, p)} is AGENTS.md`, suppressing, textLinks };
-    if (importsAgentsMd(readText(p).text ?? "", p, agents, home)) return { present, target: null, reason: `${rel(root, p)} imports AGENTS.md`, suppressing, textLinks };
+  if (!agentsLink) {
+    for (const p of present.filter((p) => !isLink(p))) {
+      if (same(p, agents)) return { present, target: null, reason: `${rel(root, p)} is AGENTS.md`, suppressing, textLinks };
+      if (importsAgentsMd(readText(p).text ?? "", p, agents, home)) return { present, target: null, reason: `${rel(root, p)} imports AGENTS.md`, suppressing, textLinks };
+    }
   }
-  if (textLinks.length > 0) {
+  const links = present.filter(isLink);
+  if (links.length > 0) {
     // Git takes any edit to a text link for a new link target, so the block
     // goes beside it, in CLAUDE.local.md if it can: Claude Code reads that
     // alongside CLAUDE.md, and it is meant to stay out of git, like the broken
     // checkout it makes up for. A block in a committed file would also reach
     // checkouts whose link works, where Claude Code reads AGENTS.md already.
     const safe = [join(root, "CLAUDE.local.md"), join(root, ".claude", "CLAUDE.md"), join(root, "CLAUDE.md")].find((p) => !isLink(p)) ?? null;
-    const why = `${textLinks.map((l) => rel(root, l.path)).join(" and ")} ${textLinks.length === 1 ? "is a symlink" : "are symlinks"} checked out as plain text, which ah does not write into`;
+    const why = `${links.map((p) => rel(root, p)).join(" and ")} ${links.length === 1 ? "is a symlink" : "are symlinks"} checked out as plain text, which ah does not write into`;
     return { present, target: safe, reason: safe === null ? why : `${why}; the block goes in ${rel(root, safe)}, which Claude Code reads too`, suppressing, textLinks };
   }
   return { present, target: present[0], reason: `${rel(root, present[0])} exists, so Claude Code does not read AGENTS.md; the block goes there too`, suppressing, textLinks };
@@ -402,6 +435,24 @@ function placeBlock(original: string | null, file: string, codex: boolean): { ed
   return { edit: upsertBlock(original, AGENTS_BLOCK_BODY, file, "start"), note: `at the top of the file: Codex reads only the first ${CODEX_DOC_BUDGET / 1024} KiB` };
 }
 
+const UNLINKED = "a symlink checked out as plain text: ah's block comes out, so it holds just the link's target again";
+
+/**
+ * Take a block an older ah wrote out of a text link. When the rest is the
+ * link's target but for line breaks (ah once put one after it), the file gets
+ * the target's exact bytes back, so git sees the link it has.
+ */
+function unblockLink(l: TextLink, original: string | null): BlockEdit {
+  const edit = removeBlock(original, l.path);
+  const rest = edit.text?.trimEnd() ?? "";
+  return edit.action === "removed" && (rest === "" || rest === l.target.trimEnd()) ? { text: l.target, action: "removed" } : edit;
+}
+
+/** The file holds nothing but ah's block, or is not there yet: ah made it. */
+function ahsOwn(text: string | null, file: string): boolean {
+  return text === null || removeBlock(text, file).text === null;
+}
+
 /**
  * The block edits for `ah init` (or `--remove`) with `agents`. On remove,
  * `keep` names the agents that stay wired, and a block one of them reads stays.
@@ -412,25 +463,49 @@ export function planInstructions(root: string, agents: readonly string[], remove
   const codex = agents.includes("codex");
   const agentsPath = join(root, "AGENTS.md");
   const overridePath = join(root, "AGENTS.override.md");
-  const a = readText(agentsPath).text;
-  const placed = placeBlock(a, agentsPath, codex);
-  out.push({ path: agentsPath, original: a, edit: placed.edit, why: ["read by Codex, and by Claude Code when there is no CLAUDE.md", placed.note].filter(Boolean).join("; ") });
-  const o = readText(overridePath).text;
-  if (codex && o !== null && !same(overridePath, agentsPath)) {
-    const placed = placeBlock(o, overridePath, true);
-    out.push({ path: overridePath, original: o, edit: placed.edit, why: ["Codex reads AGENTS.override.md instead of AGENTS.md in this directory", placed.note].filter(Boolean).join("; ") });
+  const links = rootTextLinks(root);
+  const agentsLink = links.find((l) => l.path === agentsPath);
+  const overrideLink = links.find((l) => l.path === overridePath);
+  if (agentsLink === undefined) {
+    const a = readText(agentsPath).text;
+    const placed = placeBlock(a, agentsPath, codex);
+    out.push({ path: agentsPath, original: a, edit: placed.edit, why: ["read by Codex, and by Claude Code when there is no CLAUDE.md", placed.note].filter(Boolean).join("; ") });
+  } else {
+    const a = readText(agentsPath).text;
+    const edit = unblockLink(agentsLink, a);
+    if (edit.action === "removed") out.push({ path: agentsPath, original: a, edit, why: UNLINKED });
+  }
+  if (codex && overrideLink !== undefined) {
+    // Codex reads the override in place of AGENTS.md, so no file ah may write reaches it.
+    const o = readText(overridePath).text;
+    const edit = unblockLink(overrideLink, o);
+    const removed = edit.action === "removed";
+    const why = "AGENTS.override.md is a symlink checked out as plain text, which ah does not write into, and Codex reads it in place of AGENTS.md, so Codex gets no block here; check it out as a real symlink (git config core.symlinks true, which Windows allows in Developer Mode, then git checkout -- AGENTS.override.md) and re-run `ah init`";
+    out.push({ path: overridePath, original: o, edit: removed ? edit : { text: o, action: "unchanged" }, why: removed ? `${UNLINKED}; ${why}` : why });
+  } else if (codex && !same(overridePath, agentsPath)) {
+    const o = readText(overridePath).text;
+    if (o !== null || agentsLink !== undefined) {
+      const placed = placeBlock(o, overridePath, true);
+      const why =
+        o === null
+          ? "AGENTS.md is a symlink checked out as plain text, which ah does not write into, and Codex reads AGENTS.override.md in its place; this one is for this checkout alone, so it stays out of git"
+          : "Codex reads AGENTS.override.md instead of AGENTS.md in this directory";
+      const local = agentsLink !== undefined && ahsOwn(o, overridePath);
+      out.push({ path: overridePath, original: o, edit: placed.edit, why: [why, placed.note].filter(Boolean).join("; "), ...(local ? { local } : {}) });
+    }
   }
   if (agents.includes("claude")) {
     const s = claudeMdState(root);
     if (s.target !== null) {
       const t = readText(s.target).text;
-      out.push({ path: s.target, original: t, edit: upsertBlock(t, AGENTS_BLOCK_BODY, s.target), why: s.reason });
+      // A CLAUDE.local.md that stands in for a text link; one of the user's own is theirs to keep or commit.
+      const local = links.length > 0 && s.target === join(root, "CLAUDE.local.md") && ahsOwn(t, s.target);
+      out.push({ path: s.target, original: t, edit: upsertBlock(t, AGENTS_BLOCK_BODY, s.target), why: s.reason, ...(local ? { local } : {}) });
     }
-    // An older ah put its block in a text link; taking it out gives git its link back.
     for (const l of s.textLinks) {
       const t = readText(l.path).text;
-      const edit = removeBlock(t, l.path);
-      if (edit.action === "removed") out.push({ path: l.path, original: t, edit, why: "a symlink checked out as plain text: ah's block comes out, so it holds just the link's target again" });
+      const edit = unblockLink(l, t);
+      if (edit.action === "removed") out.push({ path: l.path, original: t, edit, why: UNLINKED });
     }
   }
   return out;
@@ -445,14 +520,19 @@ function planRemoval(root: string, agents: readonly string[], keep: readonly str
   const out: InstructionEdit[] = [];
   const agentsPath = join(root, "AGENTS.md");
   const overridePath = join(root, "AGENTS.override.md");
+  const links = rootTextLinks(root);
   const take = (path: string, why: string): void => {
+    const l = links.find((x) => x.path === path);
     const t = readText(path).text;
-    const edit = removeBlock(t, path);
-    if (edit.action !== "absent") out.push({ path, original: t, edit, why });
+    const edit = l !== undefined ? unblockLink(l, t) : removeBlock(t, path);
+    if (edit.action === "absent") return;
+    const local = edit.text === null && (path === overridePath || path === join(root, "CLAUDE.local.md"));
+    out.push({ path, original: t, edit, why: l !== undefined ? UNLINKED : why, ...(local ? { local } : {}) });
   };
   const drops = (agent: string): boolean => agents.includes(agent) && !keep.includes(agent);
+  // Nobody reads a block in a text link, so it comes out whoever stays.
   const stillRead = keep.includes("codex") || (keep.includes("claude") && claudeMdState(root).target === null);
-  if (!stillRead) take(agentsPath, "ah's block");
+  if (!stillRead || links.some((l) => l.path === agentsPath)) take(agentsPath, "ah's block");
   if (drops("codex") && !same(overridePath, agentsPath)) take(overridePath, "ah's block");
   if (drops("claude")) for (const c of CLAUDE_MD_CANDIDATES.map((p) => join(root, p))) if (!same(c, agentsPath)) take(c, "ah's block for Claude Code");
   return out;

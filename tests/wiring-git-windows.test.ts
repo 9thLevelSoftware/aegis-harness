@@ -1,10 +1,11 @@
 /**
  * What Git on Windows does to the files `ah init` reads: a committed symlink
  * checked out as a plain file holding the link's target (core.symlinks=false,
- * Git for Windows' default) is never written into, and the paths an MSYS2 or
- * Cygwin git prints (/c/..., /cygdrive/c/...) are read as the drive paths
- * they are. The text link is made by hand in the index, so this runs the same
- * on every OS.
+ * Git for Windows' default) is never written into, CLAUDE.md, AGENTS.md or
+ * AGENTS.override.md alike, and a block an older ah left in one comes out to
+ * the target's exact bytes. The paths an MSYS2 or Cygwin git prints
+ * (/c/..., /cygdrive/c/...) are read as the drive paths they are. The text
+ * link is made by hand in the index, so this runs the same on every OS.
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -13,9 +14,9 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { test } from "node:test";
 import { upsertBlock } from "../src/wiring/text-block.ts";
-import { AGENTS_BLOCK_BODY } from "../src/wiring/agents-md.ts";
+import { agentsBlockLines, AGENTS_BLOCK_BODY } from "../src/wiring/agents-md.ts";
 import { writeAtomic } from "../src/wiring/files.ts";
-import { claudeMdState, planInstructions, type InstructionEdit } from "../src/wiring/instructions.ts";
+import { claudeMdState, planInstructions, rootTextLinks, type InstructionEdit } from "../src/wiring/instructions.ts";
 import { fromGitPath, symlinkCheckedOutAsText } from "../src/wiring/project.ts";
 
 function git(cwd: string, ...args: string[]): string {
@@ -108,6 +109,90 @@ test("with a text link, an import elsewhere still counts, and a CLAUDE.local.md 
     assert.equal(s.target, join(both.root, ".claude", "CLAUDE.md"));
   } finally {
     both.done();
+  }
+});
+
+test("an AGENTS.md symlink checked out as text is never written into: Codex gets the block in an AGENTS.override.md for this checkout alone", () => {
+  const c = checkout({ "CLAUDE.md": "# Team\n" }, { "AGENTS.md": "CLAUDE.md" });
+  try {
+    const agents = join(c.root, "AGENTS.md");
+    const override = join(c.root, "AGENTS.override.md");
+    assert.deepEqual(rootTextLinks(c.root), [{ path: agents, target: "CLAUDE.md" }]);
+    const plan = planInstructions(c.root, ["claude", "codex"], false);
+    assert.deepEqual(plan.map((e) => [relative(c.root, e.path), e.edit.action, e.local]), [["AGENTS.override.md", "created", true], ["CLAUDE.md", "appended", undefined]]);
+    assert.match(plan[0].why, /^AGENTS\.md is a symlink checked out as plain text, which ah does not write into, and Codex reads AGENTS\.override\.md in its place/);
+    apply(plan);
+    assert.equal(readFileSync(agents, "utf8"), "CLAUDE.md");
+    assert.equal(git(c.root, "diff", "--name-only", "--", "AGENTS.md"), "", "git sees the link it has");
+    const again = planInstructions(c.root, ["claude", "codex"], false);
+    assert.ok(again.every((e) => e.edit.action === "unchanged"), "a second run changes nothing");
+    assert.equal(again.find((e) => e.path === override)?.local, true, "the override is still ah's own");
+    const removal = planInstructions(c.root, ["claude", "codex"], true);
+    assert.deepEqual(removal.map((e) => [relative(c.root, e.path), e.edit.action, e.local]), [["AGENTS.override.md", "removed", true], ["CLAUDE.md", "removed", undefined]]);
+    apply(removal);
+    assert.equal(existsSync(override), false);
+    assert.equal(readFileSync(join(c.root, "CLAUDE.md"), "utf8"), "# Team\n");
+    assert.equal(readFileSync(agents, "utf8"), "CLAUDE.md");
+  } finally {
+    c.done();
+  }
+});
+
+test("with AGENTS.md a text link, Claude Code gets the block in a CLAUDE.local.md of ah's own, and an @AGENTS.md import does not count", () => {
+  const bare = checkout({}, { "AGENTS.md": "docs/AGENTS.md" });
+  try {
+    const s = claudeMdState(bare.root, bare.home);
+    assert.equal(s.target, join(bare.root, "CLAUDE.local.md"));
+    assert.equal(s.reason, "AGENTS.md is a symlink checked out as plain text, which ah does not write into; the block goes in a new CLAUDE.local.md, which Claude Code reads in its place");
+    assert.deepEqual(planInstructions(bare.root, ["claude"], false).map((e) => [relative(bare.root, e.path), e.edit.action, e.local]), [["CLAUDE.local.md", "created", true]]);
+  } finally {
+    bare.done();
+  }
+  const imported = checkout({ "CLAUDE.md": "@AGENTS.md\n" }, { "AGENTS.md": "docs/AGENTS.md" });
+  try {
+    assert.equal(claudeMdState(imported.root, imported.home).target, join(imported.root, "CLAUDE.md"), "the import brings in the link's one line, not a block");
+  } finally {
+    imported.done();
+  }
+});
+
+test("an AGENTS.override.md symlink checked out as text is left alone, and the plan says Codex gets no block", () => {
+  const cases: Record<string, string>[] = [{ "AGENTS.override.md": "AGENTS.md" }, { "AGENTS.override.md": "AGENTS.md", "AGENTS.md": "CLAUDE.md" }];
+  for (const links of cases) {
+    const c = checkout("AGENTS.md" in links ? {} : { "AGENTS.md": "# Agents\n" }, links);
+    try {
+      const plan = planInstructions(c.root, ["codex"], false);
+      assert.deepEqual(plan.map((e) => [relative(c.root, e.path), e.edit.action]), [...("AGENTS.md" in links ? [] : [["AGENTS.md", "appended"]]), ["AGENTS.override.md", "unchanged"]]);
+      assert.match(plan.at(-1)!.why, /^AGENTS\.override\.md is a symlink checked out as plain text, which ah does not write into, and Codex reads it in place of AGENTS\.md, so Codex gets no block here/);
+      apply(plan);
+      assert.equal(readFileSync(join(c.root, "AGENTS.override.md"), "utf8"), "AGENTS.md");
+      assert.equal(git(c.root, "diff", "--name-only", "--", "AGENTS.override.md"), "");
+    } finally {
+      c.done();
+    }
+  }
+});
+
+test("a block an older ah wrote into a text link, a line break after the target and all, comes out to the target's exact bytes", () => {
+  const c = checkout({}, { "AGENTS.md": "CLAUDE.md", "CLAUDE.md": "AGENTS.md" });
+  try {
+    const agents = join(c.root, "AGENTS.md");
+    const claude = join(c.root, "CLAUDE.md");
+    // What ah wrote before it kept a file's missing final line break missing.
+    const older = (target: string): string => `${target}\n\n${agentsBlockLines().join("\n")}\n`;
+    for (const remove of [false, true]) {
+      writeFileSync(agents, older("CLAUDE.md"));
+      writeFileSync(claude, older("AGENTS.md"));
+      const plan = planInstructions(c.root, ["claude"], remove);
+      assert.deepEqual(plan.filter((e) => e.path !== join(c.root, "CLAUDE.local.md")).map((e) => [relative(c.root, e.path), e.edit.action, e.edit.text]), [["AGENTS.md", "removed", "CLAUDE.md"], ["CLAUDE.md", "removed", "AGENTS.md"]], `remove: ${remove}`);
+      apply(plan);
+      assert.equal(git(c.root, "diff", "--name-only"), "", `remove: ${remove}`);
+    }
+    writeFileSync(agents, upsertBlock(null, AGENTS_BLOCK_BODY, agents).text!);
+    apply(planInstructions(c.root, ["codex"], false));
+    assert.equal(readFileSync(agents, "utf8"), "CLAUDE.md", "a link that held only the block gets its target back");
+  } finally {
+    c.done();
   }
 });
 

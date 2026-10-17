@@ -36,9 +36,9 @@ export function defaultMachine(root: string, guardPath: string, env: NodeJS.Proc
   return { root: resolve(root), home, os, env, nodePath: process.execPath, guardPath };
 }
 
-function git(cwd: string, args: string[]): { ok: boolean; out: string } {
+function git(cwd: string, args: string[]): { ok: boolean; out: string; raw: string } {
   const r = spawnSync("git", args, { cwd, encoding: "utf8", windowsHide: true });
-  return { ok: r.status === 0, out: (r.stdout ?? "").trim() };
+  return { ok: r.status === 0, out: (r.stdout ?? "").trim(), raw: r.stdout ?? "" };
 }
 
 /**
@@ -85,8 +85,8 @@ export function gitStatusOf(file: string): GitStatus {
 /**
  * What `file` links to when git has it as a symlink but the checkout wrote a
  * plain file holding the link's target instead (core.symlinks=false, Git for
- * Windows' default), else null. Git takes an edit to that file for a new
- * link target.
+ * Windows' default), else null: the target's exact bytes, which are all the
+ * checkout wrote. Git takes an edit to that file for a new link target.
  */
 export function symlinkCheckedOutAsText(file: string): string | null {
   try {
@@ -98,7 +98,7 @@ export function symlinkCheckedOutAsText(file: string): string | null {
   const link = /^120000 ([0-9a-f]+) /.exec(staged.out);
   if (!staged.ok || link === null) return null;
   const target = git(dirname(file), ["cat-file", "blob", link[1]]);
-  return target.ok ? target.out : null;
+  return target.ok ? target.raw : null;
 }
 
 function existingDir(d: string): string | null {
