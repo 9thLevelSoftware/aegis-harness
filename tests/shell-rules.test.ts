@@ -662,7 +662,8 @@ test("brace chains, runs of [, long bracket classes, pwsh options and here-strin
   assert.ok(performance.now() - t < 3000, `took ${Math.round(performance.now() - t)} ms`);
 });
 
-test("the writing cmdlets bind their parameters: a value is not a file, a colon-bound or positional path is (BUG-2026-019)", () => {
+test("the writing cmdlets bind their parameters: a value is not a file, a colon-bound or positional path is (BUG-2026-019)", async () => {
+  const { decideAll } = await import("../src/guard/decide.ts");
   for (const c of [
     "Add-Content -Path .gitignore -Value @'\n.env\n'@",
     "Add-Content .gitignore @'\n.env\n'@",
@@ -685,19 +686,42 @@ test("the writing cmdlets bind their parameters: a value is not a file, a colon-
     "ac .ruff.toml x",
     // `-V` could be -Verbose, so the word after it is read as a path.
     "Set-Content -V .ruff.toml notes.txt",
+    // `a, b` and `a ,b` are one array; a quoted `'x,'` leaves the next word an argument of its own.
+    "Set-Content -Path a.txt, .ruff.toml -Value x",
+    "Set-Content a.txt, .ruff.toml x",
+    "Set-Content -Path a.txt ,.ruff.toml -Value x",
+    "Set-Content -Path:a.txt, .ruff.toml -Value x",
+    "Set-Content -Value 'x,' .ruff.toml",
   ]) {
     assert.equal(verdictOf(win(c)), "deny shell.write-lint-config", c);
   }
+  assert.equal(verdictOf(win("'x' | Out-File -FilePath a.txt, .git/hooks/pre-commit")), "deny shell.write-git-internals");
+  assert.equal(verdictOf(win("New-Item -Path a, .claude -Name settings.json")), "deny shell.hook-tamper");
+  assert.equal(win("Set-Content -Path notes.txt -Value a, b").verdict, "allow");
+  // Thousands of distinct names joined to thousands of paths ask rather than build them all.
+  const t = performance.now();
+  const many = (flag: string, n: number) => Array.from({ length: n }, (_, i) => `${flag}a${i}`).join(" ");
+  assert.equal(verdictOf(decideAll([{ kind: "shell", command: `New-Item ${many("-Name ", 12_000)} ${many("", 12_000)}` }], WINDOWS_CODEX)), "ask guard.time-limit");
+  assert.ok(performance.now() - t < 1500, `took ${Math.round(performance.now() - t)} ms`);
 });
 
 test("bracket scans that never close are not repeated, class names are not object keys, and long find expressions stay fast (BUG-2026-019)", async () => {
   const { decideAll } = await import("../src/guard/decide.ts");
-  for (const c of ["rm -rf .claud[[:__proto__:]]", "rm -rf .claud[[:toString:]]", "rm -rf .claud[[:constructor:]]"]) assert.equal(verdictOf(sh(c)), "deny shell.hook-tamper", c);
+  // A class bash may not know could match any character, so negated or not the bracket matches every one.
+  for (const c of ["rm -rf .claud[[:__proto__:]]", "rm -rf .claud[[:toString:]]", "rm -rf .claud[![:__proto__:]]", "rm -rf .claud[^[:constructor:]]", "rm -rf .claud[![:x:]]", "rm -rf .claud[![.space.]]"]) {
+    assert.equal(verdictOf(sh(c)), "deny shell.hook-tamper", c);
+  }
+  assert.equal(verdictOf(sh("rm -f .ruff.tom[^[:toString:]]")), "deny shell.write-lint-config");
+  for (const c of ["rm -rf .claud[![:alpha:]]", "rm -rf .claud[![=e=]]"]) assert.equal(sh(c).verdict, "allow", c);
   const actions = Array.from({ length: 15 }, (_, i) => `-name a${i} -delete`).join(" , ");
   for (const [label, c, verdict] of [
     ["repeated [[:x:]", "rm -rf " + "[[:x:]".repeat(30_000) + ".claude", "allow"],
     ["a run of [ before a class", "rm -rf " + "[".repeat(100_000) + "[:a:]x", "allow"],
     ["sixteen actions after a long expression", "find . " + "-name z -o ".repeat(60_000) + actions + " , -name q -delete", "allow"],
+    ["runs of [:", "rm -rf " + "[:".repeat(60_000) + "]", "allow"],
+    ["runs of [[: before one :]", "rm -rf " + "[[:".repeat(40_000) + ":]", "allow"],
+    ["a protected start among many, with many names", "find .git " + "a ".repeat(100_000) + "-name config ".repeat(200) + "-delete", "deny"],
+    ["valueless filters before nested groups", "find . -name '*.pyc' -delete " + "\\( -newerzz ".repeat(40_000) + "-name y " + "\\) ".repeat(40_000), "allow"],
   ] as const) {
     const t = performance.now();
     const d = decideAll([{ kind: "shell", command: c }], POSIX_CTX);

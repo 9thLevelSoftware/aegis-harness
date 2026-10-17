@@ -97,9 +97,10 @@ export interface Context {
 /** How long checking one hook event may take before the guard asks instead, well inside the hook's timeout. */
 export const TIME_LIMIT_MS = 2000;
 
+/** Thrown when checking would run past the time limit: the deadline passed, or a command names more paths than can be checked within it. */
 export class TimeLimit extends Error {
-  constructor() {
-    super(`checking it took longer than ${TIME_LIMIT_MS} ms`);
+  constructor(why = `checking it took longer than ${TIME_LIMIT_MS} ms`) {
+    super(why);
   }
 }
 

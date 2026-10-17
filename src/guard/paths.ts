@@ -262,12 +262,24 @@ const POSIX_CLASSES: Record<string, RegExp> = Object.assign(Object.create(null) 
  * `[.c.]`) and gives where it closes and a membership test, or null when it never closes and the
  * `[` is a plain character. Past its first character a search goes the same way wherever it
  * started, so the positions a search that never closed passed through end any later search that
- * reaches them: a segment of thousands of `[` or `[[:x:]` costs its length. A test is worked out
- * once per character.
+ * reaches them: a segment of thousands of `[` or `[[:x:]` costs its length, and where each `:]`,
+ * `=]` and `.]` next closes is worked out once. A test is worked out once per character. A class
+ * bash may not know (`[:x:]`, `[.space.]`) could match any character, negated or not, so the
+ * bracket is taken to match every character: the guard asks what a glob may name.
  */
 export function bracketReader(seg: string, platform: Platform): (i: number) => { end: number; negate: boolean; test: (c: string) => boolean } | null {
   const lastClose = seg.lastIndexOf("]");
-  const last: Record<string, number> = { ":": seg.lastIndexOf(":]"), "=": seg.lastIndexOf("=]"), ".": seg.lastIndexOf(".]") };
+  const nexts = new Map<string, Int32Array>();
+  // Where the next `${kind}]` starts at or after each position, or -1.
+  const nextClose = (kind: string, from: number): number => {
+    let next = nexts.get(kind);
+    if (next === undefined) {
+      next = new Int32Array(seg.length + 1).fill(-1);
+      for (let p = seg.length - 2; p >= 0; p--) next[p] = seg[p] === kind && seg[p + 1] === "]" ? p : next[p + 1];
+      nexts.set(kind, next);
+    }
+    return from < seg.length ? next[from] : -1;
+  };
   const folds = platform === "windows";
   const dead = new Uint8Array(seg.length);
   return (i) => {
@@ -289,11 +301,12 @@ export function bracketReader(seg: string, platform: Platform): (i: number) => {
       const c = seg[k];
       if (c === "]" && !first) break;
       const kind = seg[k + 1];
-      if (c === "[" && (kind === ":" || kind === "=" || kind === ".") && last[kind] > k + 1) {
-        const close = seg.indexOf(`${kind}]`, k + 2);
-        const name = seg.slice(k + 2, close);
-        if (kind !== ":") singles.add(name);
-        else if (POSIX_CLASSES[name] !== undefined) classes.push(POSIX_CLASSES[name]);
+      const close = c === "[" && (kind === ":" || kind === "=" || kind === ".") ? nextClose(kind, k + 2) : -1;
+      if (close >= 0) {
+        // No class name is longer than "xdigit": a longer one is never sliced out.
+        const name = close - k - 2 <= 8 ? seg.slice(k + 2, close) : "";
+        if (kind !== ":" && name.length === 1) singles.add(name);
+        else if (kind === ":" && Object.hasOwn(POSIX_CLASSES, name)) classes.push(POSIX_CLASSES[name]);
         else anything = true;
         k = close + 1;
       } else if (kind === "-" && k + 2 < seg.length && seg[k + 2] !== "]") {
@@ -313,7 +326,7 @@ export function bracketReader(seg: string, platform: Platform): (i: number) => {
       if (m === undefined) known.set(ch, (m = member(ch) || (folds && (member(ch.toLowerCase()) || member(ch.toUpperCase())))));
       return m;
     };
-    return { end: k, negate, test };
+    return { end: k, negate: negate && !anything, test };
   };
 }
 

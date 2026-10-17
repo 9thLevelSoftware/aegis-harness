@@ -1,5 +1,5 @@
 import { classifyPath, isBlockDevice, protectedInside, wildcardReach, type PathInfo } from "../classify.ts";
-import { ALLOW, ask, deny, onTime, strictest, type Context, type Decision, type ShellCall } from "../model.ts";
+import { ALLOW, ask, deny, onTime, strictest, TimeLimit, type Context, type Decision, type ShellCall } from "../model.ts";
 import { globToRegExp, hasVariable, isTempPath, normalize } from "../paths.ts";
 import { findSecrets, redact } from "../secrets.ts";
 import { allStages, append, BRACE_LIMIT, flagsOf, MAX_DEPTH, normalizeCmd, parseBudget, parseShell, pwshRun, subcommandIndex, type ParseBudget, type Pipeline, type ShellDialect, type Stage } from "../shell.ts";
@@ -303,8 +303,23 @@ function stageRules(s: Stage, ctx: Context): Decision[] {
 
   // A redirected group is a `:` stand-in carrying the redirections; its reasons name the group.
   const writer = s.group === undefined ? s : { ...s, cmd: /^\s*\{/.test(s.raw) ? "{ ... }" : "( ... )" };
-  for (const target of writeTargetsOf(s)) append(out, writeRules(target, writer, ctx));
+  for (const target of writeTargetsOf(s)) {
+    onTime(ctx.deadline);
+    append(out, writeRules(target, writer, ctx));
+  }
   return out;
+}
+
+/**
+ * Past this many paths made by joining one list to another (find's starts with its names,
+ * New-Item's paths with its names), the guard asks rather than build them all: a few hundred
+ * KB of command could otherwise name billions.
+ */
+const MAX_JOINED = 100_000;
+
+function joinAll(dirs: readonly string[], names: readonly string[], out: string[]): void {
+  if (dirs.length * names.length > MAX_JOINED) throw new TimeLimit(`it names more than ${MAX_JOINED} paths`);
+  for (const n of names) for (const d of dirs) out.push(`${d.replace(/[\\/]+$/, "")}/${n}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -603,7 +618,8 @@ function narrowingFilters(argv: readonly string[], value: readonly boolean[], de
         if (!negated(j)) branch = true;
       } else if (is(j, FIND_FILTERS)) {
         if (!negated(j) && !FIND_MATCH_ALL.test(argv[j + 1] ?? "")) branch = true;
-        j++;
+        // Step over its value, never over a `(` that a filter find would refuse left valueless.
+        if (value[j + 1]) j++;
       }
     }
     groupNarrows.set(o, narrows && !negated(o));
@@ -692,15 +708,18 @@ function findRules(s: Stage, ctx: Context): Decision[] {
     // that names a protected file outright, still deletes it. A filter on the other side of `-o`
     // (`-path ./.git -prune -o ...`) keeps what it names.
     const named: string[] = [];
+    const names = new Set<string>();
     for (let i = 0; i < argv.length; i++) {
       if ((i & 4095) === 0) onTime(ctx.deadline);
       if (!narrowing.some((n) => n[i])) continue;
       const v = argv[i + 1] ?? "";
-      if (/^-i?name$/.test(argv[i]) && !/[*?[]/.test(v)) append(named, starts.map((st) => `${st.replace(/[\\/]+$/, "")}/${v}`));
+      if (/^-i?name$/.test(argv[i]) && !/[*?[]/.test(v)) names.add(v);
       if (/^-i?(path|wholename)$/.test(argv[i]) && !/[*?[]/.test(v)) named.push(v);
     }
+    const distinct = [...new Set(starts)];
+    joinAll(distinct, [...names], named);
     const guarded = new Set(["git-internals", "harness", "hook-config", "home-config", "lint-config", "test-config"]);
-    return [...starts, ...named].filter((t) => guarded.has(classifyWhole(t, ctx).category)).map((t) => judgeRemoveTarget(t, false, false, stage, ctx)).filter((d) => d.verdict !== "allow");
+    return [...new Set([...distinct, ...named])].filter((t) => guarded.has(classifyWhole(t, ctx).category)).map((t) => judgeRemoveTarget(t, false, false, stage, ctx)).filter((d) => d.verdict !== "allow");
   }
   return starts.map((t) => judgeRemoveTarget(t, true, true, stage, ctx));
 }
@@ -1579,49 +1598,54 @@ const CMDLET_SWITCHES = ["force", "nonewline", "append", "noclobber", "passthru"
 
 /**
  * The files New-Item, Set-Content, Add-Content and Out-File write. Named parameters bind first
- * and may be cut to any prefix PowerShell can tell apart; the words left over bind in order to
- * the path and then the value (Out-File: the encoding). A value, such as a here-string's body,
+ * and may be cut to any prefix PowerShell can tell apart; the arguments left over bind in order
+ * to the path and then the value (Out-File: the encoding). A value, such as a here-string's body,
  * is not a file. A prefix that could be a switch or a parameter it does not know leaves the next
- * word to bind as a path, so a guess goes the cautious way, and `a,b` writes both.
+ * argument to bind as a path, so a guess goes the cautious way. `a,b` and `a, b` are one array
+ * and write both; since a quoted `'a,'` would make the next word an argument of its own, a word
+ * that continues a value's array is judged as a path too.
  */
 function cmdletPaths(cmd: string, args: readonly string[]): string[] {
+  const units: string[][] = [];
+  for (const a of args) {
+    const last = units[units.length - 1];
+    if (last !== undefined && (last[last.length - 1].endsWith(",") || a.startsWith(","))) last.push(a);
+    else units.push([a]);
+  }
   const paths: string[] = [];
   const names: string[] = [];
-  const left: string[] = [];
+  const left: string[][] = [];
   let pathBound = false;
-  for (let j = 0; j < args.length; j++) {
-    const m = /^-([A-Za-z]+)(?::(.*))?$/s.exec(args[j]);
+  for (let j = 0; j < units.length; j++) {
+    const m = /^-([A-Za-z]+)(?::(.*))?$/s.exec(units[j][0]);
     if (m === null) {
-      left.push(args[j]);
+      left.push(units[j]);
       continue;
     }
     const key = m[1].toLowerCase();
     const valued = Object.keys(CMDLET_VALUED).filter((n) => n.startsWith(key));
     const exact = Object.hasOwn(CMDLET_VALUED, key);
     const takes = exact || (valued.length > 0 && !CMDLET_SWITCHES.some((n) => n.startsWith(key)));
+    const inline = m[2] !== undefined && m[2] !== "";
+    if (!takes || inline) append(paths, units[j].slice(1));
     if (!takes) continue;
-    const isPath = exact ? CMDLET_VALUED[key] : valued.some((n) => CMDLET_VALUED[n]);
-    const v = m[2] !== undefined && m[2] !== "" ? m[2] : args[++j];
-    if (v === undefined || !isPath) continue;
-    if (exact ? key === "name" : valued.every((n) => n === "name")) names.push(v);
+    const words = inline ? [m[2] as string, ...units[j].slice(1)] : units[++j] ?? [];
+    if (!(exact ? CMDLET_VALUED[key] : valued.some((n) => CMDLET_VALUED[n]))) append(paths, words.slice(1));
+    else if (exact ? key === "name" : valued.every((n) => n === "name")) append(names, words);
     else {
-      paths.push(v);
+      append(paths, words);
       pathBound = true;
     }
   }
   const order = (cmd === "out-file" ? ["path", "encoding"] : cmd === "new-item" || cmd === "ni" ? ["path"] : ["path", "value"]).filter((p) => p !== "path" || !pathBound);
-  left.forEach((w, k) => {
-    if (order[k] === undefined || order[k] === "path") paths.push(w);
-  });
-  const out: string[] = [];
+  left.forEach((unit, k) => append(paths, order[k] === undefined || order[k] === "path" ? unit : unit.slice(1)));
+  const dirs = new Set<string>();
   for (const p of paths) {
-    out.push(p);
-    if (p.includes(",")) append(out, p.split(",").filter((q) => q !== ""));
+    dirs.add(p);
+    for (const q of p.split(",")) if (q !== "") dirs.add(q);
   }
-  for (const n of names) {
-    out.push(n);
-    for (const p of paths) out.push(`${p.replace(/[\\/]+$/, "")}/${n}`);
-  }
+  const out = [...dirs, ...names];
+  joinAll([...dirs], [...new Set(names)], out);
   return out;
 }
 

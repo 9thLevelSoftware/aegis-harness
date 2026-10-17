@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf of .claude spelled with a negated bracket of a class bash does not know is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf .claud[![:x:]]"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

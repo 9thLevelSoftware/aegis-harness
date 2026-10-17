@@ -1,0 +1,13 @@
+{
+  "name": "Set-Content to an array written with a comma and a space that holds .ruff.toml is denied (Codex, Windows PowerShell)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "Set-Content -Path notes.txt, .ruff.toml -Value x"
+    }
+  },
+  "rule": "shell.write-lint-config",
+  "source": "BUG-2026-019"
+}

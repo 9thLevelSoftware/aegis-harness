@@ -187,7 +187,12 @@ impact: >-
   review's fixes only, found bracket scans that never close repeated for each `[` (48 KB of
   `[[:x:]` took 4 s and passed), find's narrowing worked out afresh for each of up to 16 actions
   with no time check, a class named `[[:__proto__:]]` throwing, and a here-string given to
-  `Add-Content -Value` judged as the file written.
+  `Add-Content -Value` judged as the file written. An eleventh review, of those fixes only, found
+  `Set-Content -Path a.txt, .ruff.toml` (an array with a space after the comma) passing, a negated
+  bracket of an unknown class (`.claud[![:x:]]`) passing because the class was taken to match
+  every character and the negation then matched none, runs of `[:` still quadratic, and find's
+  starts joined to its names (and New-Item's paths to its names) building millions of paths
+  between two time checks.
 countermeasure:
   kind: test
   ref:
@@ -283,7 +288,10 @@ countermeasure:
     closes marks the positions it passed, so no later scan repeats them; find's groups are
     judged once per command; class names are looked up without the object prototype; brace
     expansion checks the time limit; and Set-Content, Add-Content, Out-File and New-Item bind
-    their parameters as PowerShell does, so a value is not a path and `-Path:x` is.
+    their parameters as PowerShell does, so a value is not a path and `-Path:x` is. After the
+    eleventh review: a word that ends or begins with a comma continues the array before it; a
+    bracket holding a class bash may not know matches every character, negated or not; where
+    each `:]` closes is worked out once per segment; and joining more than 100,000 paths asks.
     A
     protected basename (`lefthook.yml`) inside a directory being removed is not seen,
     since the guard reads no filesystem. Still beyond any
