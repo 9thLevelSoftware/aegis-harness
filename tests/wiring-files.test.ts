@@ -3,9 +3,9 @@
  * user content outside the markers survives byte for byte, line endings and a
  * byte-order mark are kept, a malformed block is refused, JSON that cannot be
  * read back exactly is refused, symlinks are written through and never deleted.
- * Where the block goes (a CLAUDE.md above the project counts), what --remove
- * leaves for an agent that stays wired, and .git/info/exclude coming back as
- * it was.
+ * Where the block goes (a CLAUDE.md above the project counts, an @-import is
+ * read relative to the file that holds it), what --remove leaves for an agent
+ * that stays wired, and .git/info/exclude coming back as it was.
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -180,7 +180,7 @@ test("a CLAUDE.md above the project puts the block in a new CLAUDE.md at the roo
     const home = join(d, "home");
     mkdirSync(root, { recursive: true });
     mkdirSync(join(home, ".claude"), { recursive: true });
-    assert.deepEqual(claudeMdState(root, home), { present: [], target: null, reason: "no CLAUDE.md, so Claude Code reads AGENTS.md itself (2.1.277 or later)", suppressing: [] });
+    assert.deepEqual(claudeMdState(root, home), { present: [], target: null, reason: "no CLAUDE.md, so Claude Code reads AGENTS.md itself (2.1.277 or later)", suppressing: [], textLinks: [] });
 
     writeFileSync(join(mono, "CLAUDE.md"), "# Monorepo\n");
     const above = claudeMdState(root, home);
@@ -241,13 +241,46 @@ test("--remove leaves the blocks an agent that stays wired reads, and touches on
 });
 
 test("an @AGENTS.md import counts only outside fenced code, by CommonMark's fence rules", () => {
-  assert.equal(importsAgentsMd("# Notes\n\n@AGENTS.md\n"), true);
-  assert.equal(importsAgentsMd("See @./AGENTS.md\r\n"), true);
-  assert.equal(importsAgentsMd("```\nx\n```\n@AGENTS.md\n"), true);
-  assert.equal(importsAgentsMd("```\n@AGENTS.md\n```\n"), false);
-  assert.equal(importsAgentsMd("````\n```\n@AGENTS.md\n````\n"), false, "a shorter fence does not close a longer one");
-  assert.equal(importsAgentsMd("```md\n~~~\n@AGENTS.md\n```\n"), false, "a tilde fence does not close a backtick one");
-  assert.equal(importsAgentsMd("```sh\n@AGENTS.md\n"), false, "a fence that never closes runs to the end");
+  const imports = (text: string) => importsAgentsMd(text, "/home/dev/proj/CLAUDE.md", "/home/dev/proj/AGENTS.md", "/home/dev");
+  assert.equal(imports("# Notes\n\n@AGENTS.md\n"), true);
+  assert.equal(imports("See @./AGENTS.md\r\n"), true);
+  assert.equal(imports("```\nx\n```\n@AGENTS.md\n"), true);
+  assert.equal(imports("```\n@AGENTS.md\n```\n"), false);
+  assert.equal(imports("````\n```\n@AGENTS.md\n````\n"), false, "a shorter fence does not close a longer one");
+  assert.equal(imports("```md\n~~~\n@AGENTS.md\n```\n"), false, "a tilde fence does not close a backtick one");
+  assert.equal(imports("```sh\n@AGENTS.md\n"), false, "a fence that never closes runs to the end");
+});
+
+test("an import names the file relative to the CLAUDE.md that holds it, so .claude/CLAUDE.md imports the root's as @../AGENTS.md", () => {
+  const agents = "/home/dev/proj/AGENTS.md";
+  const imports = (file: string, text: string) => importsAgentsMd(text, `/home/dev/proj/${file}`, agents, "/home/dev");
+  for (const file of ["CLAUDE.md", "CLAUDE.local.md"]) {
+    for (const line of ["@AGENTS.md", "@./AGENTS.md", "See @AGENTS.md for more", `@${agents}`, "@~/proj/AGENTS.md", "@../proj/AGENTS.md"]) assert.equal(imports(file, `${line}\n`), true, `${file}: ${line}`);
+    for (const line of ["@../AGENTS.md", "@~/AGENTS.md", "@.\\AGENTS.md", "@AGENTS.md.bak", "me@AGENTS.md", "`@AGENTS.md`"]) assert.equal(imports(file, `${line}\n`), false, `${file}: ${line}`);
+  }
+  for (const line of ["@../AGENTS.md", "@./../AGENTS.md", `@${agents}`]) assert.equal(imports(".claude/CLAUDE.md", `${line}\n`), true, line);
+  for (const line of ["@AGENTS.md", "@./AGENTS.md", "@../../AGENTS.md"]) assert.equal(imports(".claude/CLAUDE.md", `${line}\n`), false, `${line} is not the root's AGENTS.md`);
+});
+
+test("@AGENTS.md in .claude/CLAUDE.md is .claude/AGENTS.md, so the block goes into .claude/CLAUDE.md; @../AGENTS.md leaves it alone", () => {
+  const d = scratch();
+  try {
+    const home = join(d, "home");
+    const root = join(d, "proj");
+    const file = join(root, ".claude", "CLAUDE.md");
+    mkdirSync(join(root, ".claude"), { recursive: true });
+    writeFileSync(file, "# Notes\n\n@AGENTS.md\n");
+    const wrong = claudeMdState(root, home);
+    assert.equal(wrong.target, file);
+    assert.equal(wrong.reason, `${join(".claude", "CLAUDE.md")} exists, so Claude Code does not read AGENTS.md; the block goes there too`);
+    writeFileSync(file, "# Notes\n\n@../AGENTS.md\n");
+    const right = claudeMdState(root, home);
+    assert.equal(right.target, null);
+    assert.equal(right.reason, `${join(".claude", "CLAUDE.md")} imports AGENTS.md`);
+    assert.deepEqual(planInstructions(root, ["claude"], false).map((e) => relative(root, e.path)), ["AGENTS.md"]);
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
 });
 
 test("unexcludeLocally takes out exactly what excludeLocally put in, final newline or not", () => {

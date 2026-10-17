@@ -1,14 +1,15 @@
 /**
  * Facts about the project `ah init` wires and the machine it runs on: where
- * the git repository starts, whether git would commit a file, and keeping a
- * machine-local file out of commits. The hook entries `ah init` writes hold
- * absolute paths for this machine (BUG-2026-014), so a committed copy is
- * wrong on every other machine and leaks a home directory (BUG-2026-006).
+ * the git repository starts, whether git would commit a file or has it as a
+ * symlink, and keeping a machine-local file out of commits. The hook entries
+ * `ah init` writes hold absolute paths for this machine (BUG-2026-014), so a
+ * committed copy is wrong on every other machine and leaks a home directory
+ * (BUG-2026-006).
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from "node:path";
 import { readText, writeAtomic } from "./files.ts";
 
 export type Os = "linux" | "darwin" | "win32";
@@ -40,10 +41,21 @@ function git(cwd: string, args: string[]): { ok: boolean; out: string } {
   return { ok: r.status === 0, out: (r.stdout ?? "").trim() };
 }
 
+/**
+ * An absolute path git printed, spelled for `os`. Git for Windows prints
+ * C:/..., but an MSYS2 or Cygwin git first on PATH prints /c/... or
+ * /cygdrive/c/..., which path.resolve on Windows takes for C:\c\...
+ */
+export function fromGitPath(os: Os, p: string): string {
+  if (os !== "win32") return posix.resolve(p);
+  const drive = /^\/(?:cygdrive\/)?([A-Za-z])(\/.*)?$/.exec(p);
+  return win32.resolve(drive ? `${drive[1].toUpperCase()}:${drive[2] ?? "/"}` : p);
+}
+
 /** The repository's top level, or null outside a repository (or without git). */
 export function gitTopLevel(dir: string): string | null {
   const r = git(dir, ["rev-parse", "--show-toplevel"]);
-  return r.ok && r.out !== "" ? resolve(r.out) : null;
+  return r.ok && r.out !== "" ? fromGitPath(currentOs(), r.out) : null;
 }
 
 /**
@@ -55,7 +67,7 @@ export function mainCheckoutRoot(dir: string): string | null {
   if (top === null) return null;
   const common = git(dir, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   if (!common.ok || common.out === "") return top;
-  const commonDir = resolve(common.out);
+  const commonDir = fromGitPath(currentOs(), common.out);
   return commonDir.endsWith(`${sep}.git`) || commonDir.endsWith("/.git") ? dirname(commonDir) : top;
 }
 
@@ -68,6 +80,25 @@ export function gitStatusOf(file: string): GitStatus {
   const rel = relative(dir, file);
   if (git(dir, ["ls-files", "--error-unmatch", "--", rel]).ok) return "tracked";
   return git(dir, ["check-ignore", "-q", "--no-index", "--", rel]).ok ? "ignored" : "untracked";
+}
+
+/**
+ * What `file` links to when git has it as a symlink but the checkout wrote a
+ * plain file holding the link's target instead (core.symlinks=false, Git for
+ * Windows' default), else null. Git takes an edit to that file for a new
+ * link target.
+ */
+export function symlinkCheckedOutAsText(file: string): string | null {
+  try {
+    if (!lstatSync(file).isFile()) return null;
+  } catch {
+    return null;
+  }
+  const staged = git(dirname(file), ["ls-files", "-s", "--", basename(file)]);
+  const link = /^120000 ([0-9a-f]+) /.exec(staged.out);
+  if (!staged.ok || link === null) return null;
+  const target = git(dirname(file), ["cat-file", "blob", link[1]]);
+  return target.ok ? target.out : null;
 }
 
 function existingDir(d: string): string | null {
@@ -106,7 +137,7 @@ function inRepo(file: string): InRepo | null {
   if (top === null || !prefix.ok) return null;
   const fromDir = relative(dir, file);
   const info = git(dir, ["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"]);
-  const excludePath = info.ok && info.out !== "" ? resolve(info.out) : join(top, ".git", "info", "exclude");
+  const excludePath = info.ok && info.out !== "" ? fromGitPath(currentOs(), info.out) : join(top, ".git", "info", "exclude");
   return { dir, fromDir, fromTop: prefix.out + fromDir.split(sep).join("/"), excludePath };
 }
 

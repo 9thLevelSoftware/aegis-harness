@@ -7,14 +7,18 @@
  * (~/.claude/CLAUDE.md aside). When one of those exists, the same block goes
  * into the root's file, or into a new CLAUDE.md at the root when the only ones
  * are further up, unless the root's file is AGENTS.md itself or imports it
- * (`@AGENTS.md`). Importing AGENTS.md wholesale would change what Claude Code
- * reads beyond ah's few lines, so ah never adds the import itself.
+ * (`@AGENTS.md` beside it, `@../AGENTS.md` in .claude/CLAUDE.md). Importing
+ * AGENTS.md wholesale would change what Claude Code reads beyond ah's few
+ * lines, so ah never adds the import itself. A root file that git has as a
+ * symlink but checked out as a plain file holding the link's target (Git for
+ * Windows' default) is never written into: see claudeMdState.
  */
 import { realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { agentsBlockLines, AGENTS_BLOCK_BODY } from "./agents-md.ts";
 import { readText } from "./files.ts";
+import { symlinkCheckedOutAsText } from "./project.ts";
 import { blockEndByte, fencedLines, readBlock, removeBlock, upsertBlock, type BlockEdit } from "./text-block.ts";
 
 export interface InstructionEdit {
@@ -42,11 +46,24 @@ function isFile(p: string): boolean {
   }
 }
 
-/** A line that imports AGENTS.md (`@AGENTS.md`, `@./AGENTS.md`), outside fenced code. */
-export function importsAgentsMd(text: string): boolean {
+/** An @-import. A backslash ends the path, so only `/` paths count, which Claude Code follows on every OS. */
+const IMPORT = /(?:^|\s)@([^\s\\]+)/g;
+
+/**
+ * A line of `text`, the content of `file`, that imports `agents`, outside
+ * fenced code. Claude Code resolves an import against the directory of the
+ * file it is in (a leading ~ is the home directory), so `@AGENTS.md` in
+ * .claude/CLAUDE.md is .claude/AGENTS.md; the root's is `@../AGENTS.md` there.
+ */
+export function importsAgentsMd(text: string, file: string, agents: string, home: string = homedir()): boolean {
   const lines = text.split(/\r?\n/);
   const code = fencedLines(lines, true);
-  return lines.some((l, i) => !code[i] && /(^|\s)@(\.\/)?AGENTS\.md(\s|$)/.test(l));
+  const want = resolve(agents);
+  const names = (spec: string): boolean => {
+    const p = spec === "~" || spec.startsWith("~/") ? resolve(home, spec.slice(2)) : resolve(dirname(file), spec);
+    return p === want || same(p, want);
+  };
+  return lines.some((l, i) => !code[i] && [...l.matchAll(IMPORT)].some((m) => names(m[1])));
 }
 
 export interface ClaudeMdFile {
@@ -54,10 +71,19 @@ export interface ClaudeMdFile {
   path: string;
 }
 
+export interface TextLink {
+  path: string;
+  /** What git says it links to: all the checkout wrote into the file. */
+  target: string;
+}
+
 export interface ClaudeMdState {
   /** CLAUDE.md-style files that exist at the root. */
   present: string[];
-  /** The file the block must go in, or null when Claude Code already reads AGENTS.md. */
+  /**
+   * The file the block must go in, or null when Claude Code already reads
+   * AGENTS.md, or when every file it could go in is one of `textLinks`.
+   */
   target: string | null;
   reason: string;
   /**
@@ -65,6 +91,13 @@ export interface ClaudeMdState {
    * one of them stops Claude Code reading AGENTS.md by itself.
    */
   suppressing: ClaudeMdFile[];
+  /**
+   * Files in `present` that git has as symlinks but that are checked out as
+   * plain files holding the link's target (core.symlinks=false, Git for
+   * Windows' default). Claude Code reads that one line, not the file it
+   * names, so a CLAUDE.md linked to AGENTS.md still keeps AGENTS.md out.
+   */
+  textLinks: TextLink[];
 }
 
 /** `home` is the user's home directory, whose .claude/CLAUDE.md is user memory and does not count. */
@@ -80,16 +113,31 @@ export function claudeMdState(root: string, home: string = homedir()): ClaudeMdS
     if (dirname(dir) === dir) break;
   }
   const present = CLAUDE_MD_CANDIDATES.map((p) => join(root, p)).filter((p) => suppressing.some((f) => f.path === resolve(p)));
-  if (suppressing.length === 0) return { present, target: null, reason: "no CLAUDE.md, so Claude Code reads AGENTS.md itself (2.1.277 or later)", suppressing };
+  const textLinks = present.flatMap((path) => {
+    const target = symlinkCheckedOutAsText(path);
+    return target === null ? [] : [{ path, target }];
+  });
+  const isLink = (p: string): boolean => textLinks.some((l) => l.path === p);
+  if (suppressing.length === 0) return { present, target: null, reason: "no CLAUDE.md, so Claude Code reads AGENTS.md itself (2.1.277 or later)", suppressing, textLinks };
   if (present.length === 0) {
     const target = join(root, "CLAUDE.md");
-    return { present, target, reason: `${suppressing[0].path} is above the project, so Claude Code does not read AGENTS.md; the block goes in a new CLAUDE.md`, suppressing };
+    return { present, target, reason: `${suppressing[0].path} is above the project, so Claude Code does not read AGENTS.md; the block goes in a new CLAUDE.md`, suppressing, textLinks };
   }
-  for (const p of present) {
-    if (same(p, agents)) return { present, target: null, reason: `${rel(root, p)} is AGENTS.md`, suppressing };
-    if (importsAgentsMd(readText(p).text ?? "")) return { present, target: null, reason: `${rel(root, p)} imports @AGENTS.md`, suppressing };
+  for (const p of present.filter((p) => !isLink(p))) {
+    if (same(p, agents)) return { present, target: null, reason: `${rel(root, p)} is AGENTS.md`, suppressing, textLinks };
+    if (importsAgentsMd(readText(p).text ?? "", p, agents, home)) return { present, target: null, reason: `${rel(root, p)} imports AGENTS.md`, suppressing, textLinks };
   }
-  return { present, target: present[0], reason: `${rel(root, present[0])} exists, so Claude Code does not read AGENTS.md; the block goes there too`, suppressing };
+  if (textLinks.length > 0) {
+    // Git takes any edit to a text link for a new link target, so the block
+    // goes beside it, in CLAUDE.local.md if it can: Claude Code reads that
+    // alongside CLAUDE.md, and it is meant to stay out of git, like the broken
+    // checkout it makes up for. A block in a committed file would also reach
+    // checkouts whose link works, where Claude Code reads AGENTS.md already.
+    const safe = [join(root, "CLAUDE.local.md"), join(root, ".claude", "CLAUDE.md"), join(root, "CLAUDE.md")].find((p) => !isLink(p)) ?? null;
+    const why = `${textLinks.map((l) => rel(root, l.path)).join(" and ")} ${textLinks.length === 1 ? "is a symlink" : "are symlinks"} checked out as plain text, which ah does not write into`;
+    return { present, target: safe, reason: safe === null ? why : `${why}; the block goes in ${rel(root, safe)}, which Claude Code reads too`, suppressing, textLinks };
+  }
+  return { present, target: present[0], reason: `${rel(root, present[0])} exists, so Claude Code does not read AGENTS.md; the block goes there too`, suppressing, textLinks };
 }
 
 function rel(root: string, p: string): string {
@@ -132,6 +180,12 @@ export function planInstructions(root: string, agents: readonly string[], remove
     if (s.target !== null) {
       const t = readText(s.target).text;
       out.push({ path: s.target, original: t, edit: upsertBlock(t, AGENTS_BLOCK_BODY, s.target), why: s.reason });
+    }
+    // An older ah put its block in a text link; taking it out gives git its link back.
+    for (const l of s.textLinks) {
+      const t = readText(l.path).text;
+      const edit = removeBlock(t, l.path);
+      if (edit.action === "removed") out.push({ path: l.path, original: t, edit, why: "a symlink checked out as plain text: ah's block comes out, so it holds just the link's target again" });
     }
   }
   return out;
