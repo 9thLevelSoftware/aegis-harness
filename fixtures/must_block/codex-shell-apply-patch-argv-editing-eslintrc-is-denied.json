@@ -1,0 +1,12 @@
+{
+  "name": "Codex apply_patch through the shell tool (argv) editing .eslintrc.json is denied",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "shell",
+    "tool_input": {
+      "command": ["apply_patch", "*** Begin Patch\n*** Update File: .eslintrc.json\n@@\n-  \"rules\": {}\n+  \"rules\": { \"no-console\": \"off\" }\n*** End Patch"]
+    }
+  },
+  "rule": "edit.lint-config",
+  "source": "BUG-2026-018"
+}

@@ -70,3 +70,64 @@ test("never throws on garbage", () => {
     assert.doesNotThrow(() => parseShell(g));
   }
 });
+
+test("a backslash-newline is a line continuation, not an argument (BUG-2026-017)", () => {
+  assert.deepEqual(allStages(parseShell("rm -rf \\\n  dist \\\n  build"))[0].argv, ["rm", "-rf", "dist", "build"]);
+  assert.deepEqual(allStages(parseShell("rm -rf dist \\\n"))[0].argv, ["rm", "-rf", "dist"]);
+  assert.deepEqual(allStages(parseShell("rm -rf \\\r\n  dist"))[0].argv, ["rm", "-rf", "dist"]);
+  assert.deepEqual(allStages(parseShell('echo "a \\\n b"'))[0].argv, ["echo", "a  b"]);
+  const [s] = allStages(parseShell("echo x > \\\n .harness/x"));
+  assert.deepEqual(s.argv, ["echo", "x"]);
+  assert.deepEqual(s.writes, [".harness/x"]);
+  // Inside single quotes the pair is literal.
+  assert.deepEqual(allStages(parseShell("printf '%s' 'a \\\n b'"))[0].argv, ["printf", "%s", "a \\\n b"]);
+});
+
+test("a backtick-newline is a line continuation in PowerShell", () => {
+  const [s] = allStages(parseShell("Remove-Item -Recurse `\n  -Force .\\dist", { dialect: "powershell" }));
+  assert.deepEqual(s.argv, ["Remove-Item", "-Recurse", "-Force", ".\\dist"]);
+});
+
+test("a whitespace-only redirect target names no file", () => {
+  assert.deepEqual(allStages(parseShell('echo x > ""'))[0].writes, []);
+  assert.deepEqual(allStages(parseShell("echo x > out.txt"))[0].writes, ["out.txt"]);
+});
+
+test("sh -c is found behind -o options and long flags (BUG-2026-016)", () => {
+  assert.ok(cmds("bash -euo pipefail -c 'git push --force origin main'").includes("git"));
+  for (const c of ["bash -c -- 'rm -rf /'", "sh -c -- 'rm -rf /'", "bash -lc -- 'rm -rf /'"]) assert.ok(cmds(c).includes("rm"), c);
+  assert.ok(cmds("bash -e -o pipefail -c 'rm -rf /'").includes("rm"));
+  assert.ok(cmds("bash --noprofile --norc -c 'rm -rf /'").includes("rm"));
+  assert.ok(cmds("bash -l -c 'rm -rf /'").includes("rm"));
+  assert.ok(cmds("sh +e -c 'rm -rf /'").includes("rm"));
+  // A script path is a positional: what follows it is the script's argv, not inline code.
+  assert.ok(!cmds("bash script.sh -c 'rm -rf /'").includes("rm"));
+});
+
+test("nested command substitutions are parsed once per level", () => {
+  const cmd = "echo " + "$(".repeat(40) + "x" + ")".repeat(40);
+  const t = performance.now();
+  assert.doesNotThrow(() => parseShell(cmd));
+  assert.ok(performance.now() - t < 200, "40 nested $( took too long");
+  // Inner substitutions are still seen.
+  assert.ok(cmds("echo $(echo $(cat ~/.aws/credentials))").includes("cat"));
+});
+
+test("& after a digit backgrounds the command unless it is a redirection (BUG-2026-016)", () => {
+  assert.deepEqual(allStages(parseShell("sleep 1& rm -rf /")).map((s) => s.argv), [["sleep", "1"], ["rm", "-rf", "/"]]);
+  assert.deepEqual(allStages(parseShell("npm start 3000& rm -rf /")).map((s) => s.cmd), ["npm", "rm"]);
+  const one = allStages(parseShell("cmd 2>&1"));
+  assert.equal(one.length, 1);
+  assert.deepEqual(one[0].argv, ["cmd"]);
+  assert.deepEqual(allStages(parseShell("echo >&2 x")).map((s) => s.argv), [["echo", "x"]]);
+  assert.deepEqual(allStages(parseShell("cat <&0")).map((s) => s.argv), [["cat"]]);
+  assert.deepEqual(allStages(parseShell("cmd &> log")).map((s) => s.writes), [["log"]]);
+});
+
+test("a quoted ) inside $( ) does not close the substitution (BUG-2026-016)", () => {
+  assert.deepEqual(cmds("echo $(echo ')') && rm -rf /"), ["echo", "rm", "echo"]);
+  assert.deepEqual(cmds('echo $(echo ")") && rm -rf /'), ["echo", "rm", "echo"]);
+  assert.deepEqual(cmds("echo \"$(echo 'x')\" && rm -rf /"), ["echo", "rm", "echo"]);
+  assert.ok(cmds("echo \"$(echo \"it's\")\" && rm -rf /").includes("rm"));
+  assert.deepEqual(allStages(parseShell("echo $(echo ')')"))[0].argv, ["echo", "$(echo ')')"]);
+});

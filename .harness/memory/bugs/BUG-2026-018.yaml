@@ -1,0 +1,39 @@
+incident_id: BUG-2026-018
+date_recorded: 2026-10-16
+status: mitigated
+title: Claude Code on Windows routes shell commands through the PowerShell tool, which the hook never saw
+observed_on: process (aegis-harness, hook-contract review against the Claude Code and Codex hook references)
+source:
+  - kind: doc
+    path: https://code.claude.com/docs/en/hooks
+    note: >-
+      "Match Bash|PowerShell in hooks that inspect shell commands ... On Windows without Git
+      Bash, the tool is enabled automatically and Claude Code doesn't register the Bash tool at
+      all. A hook that matches only Bash never fires there." Also: for ask, permissionDecisionReason
+      is shown to the user, not to the model; additionalContext reaches the model.
+  - kind: doc
+    path: https://developers.openai.com/codex/hooks
+    note: >-
+      Codex records hook trust against the hook definition's hash; a changed entry is skipped
+      until re-trusted. apply_patch may arrive through the shell tool.
+root_cause: >-
+  The adapter and the README matcher were written from memory of the agents' tool lists and
+  never checked against the documents. Three contract facts were missed: the PowerShell tool is
+  the default shell on Windows; an ask reason on Claude Code reaches only the human, so the
+  remediation written for the agent was never read; and a Codex patch can arrive as a shell call.
+impact: >-
+  On the author's own primary platform every destructive shell command bypassed the guard; on
+  every platform the false-positive recording loop was broken for ask verdicts; a Codex patch
+  through the shell tool bypassed every edit rule.
+countermeasure:
+  kind: test
+  ref: tests/normalize.test.ts
+  change: >-
+    `PowerShell` is a shell call with the PowerShell dialect whatever the platform; a shell call
+    whose command is `apply_patch` with a patch body is parsed as a patch; an ask on Claude Code
+    carries the agent-facing text in additionalContext and a short sentence for the human in
+    permissionDecisionReason; the README matcher lists PowerShell. Hook-contract claims in the
+    README are re-read against the agents' documents whenever an agent ships a new tool list.
+must_block_fixture: fixtures/must_block/powershell-tool-remove-item-git-is-denied-claude-code-windows-powershell.json
+must_allow_fixture: fixtures/must_allow/powershell-tool-remove-item-dist-is-allowed-claude-code-windows-powershell.json
+expiry_policy: "re-evaluate when Claude Code or Codex changes its hook schema"

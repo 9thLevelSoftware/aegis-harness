@@ -1,0 +1,11 @@
+{
+  "name": "git config --global --list is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git config --global --list"
+    }
+  },
+  "near": "shell.git-global-config",
+  "source": "BUG-2026-017"
+}

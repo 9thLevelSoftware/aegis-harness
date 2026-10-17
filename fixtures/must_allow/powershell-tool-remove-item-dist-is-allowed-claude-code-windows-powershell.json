@@ -1,0 +1,13 @@
+{
+  "name": "PowerShell tool: Remove-Item -Recurse -Force .\\dist is allowed (Claude Code, Windows)",
+  "agent": "claude",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Remove-Item -Recurse -Force .\\dist"
+    }
+  },
+  "near": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-018"
+}

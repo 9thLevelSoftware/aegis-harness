@@ -1,0 +1,11 @@
+{
+  "name": "Read of ~/.ssh/known_hosts is allowed",
+  "payload": {
+    "tool_name": "Read",
+    "tool_input": {
+      "file_path": "/home/dev/.ssh/known_hosts"
+    }
+  },
+  "near": "tool.read-private-key",
+  "source": "BUG-2026-017"
+}

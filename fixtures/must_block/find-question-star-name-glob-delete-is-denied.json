@@ -1,0 +1,11 @@
+{
+  "name": "find . -name '?*' -delete is denied (every non-empty name, dotfiles included)",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . -name '?*' -delete"
+    }
+  },
+  "rule": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-016"
+}

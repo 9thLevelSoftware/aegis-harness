@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { classifyPath } from "../src/guard/classify.ts";
-import { globToRegExp, normalize, relativeTo, resolvePath } from "../src/guard/paths.ts";
+import { driveForm, globToRegExp, isTempPath, normalize, relativeTo, resolvePath } from "../src/guard/paths.ts";
 import { POSIX, WINDOWS_CODEX } from "./helpers.ts";
 
 test("lexical normalisation", () => {
@@ -67,4 +67,58 @@ test("a project rooted at the home directory still protects home config", () => 
 
 test("a project .npmrc is a normal file", () => {
   assert.equal(classifyPath(".npmrc", POSIX).category, "normal");
+});
+
+const WINDOWS_CLAUDE = { ...WINDOWS_CODEX, shellDialect: "posix" as const };
+
+test("Git Bash drive paths resolve against the Windows root and home (BUG-2026-017)", () => {
+  assert.equal(driveForm("/c/Users/dev/project/dist", "windows"), "C:/Users/dev/project/dist");
+  assert.equal(driveForm("/cygdrive/e/work", "windows"), "E:/work");
+  assert.equal(driveForm("/c", "windows"), "C:");
+  assert.equal(driveForm("/c/Users/dev", "posix"), "/c/Users/dev");
+  assert.equal(driveForm("/mnt/c/Users/dev", "windows"), "/mnt/c/Users/dev");
+  assert.equal(driveForm("/tmp/x", "windows"), "/tmp/x");
+  assert.equal(resolvePath("/c/Users/dev/project/dist", "C:\\Users\\dev\\project", "C:\\Users\\dev", "windows"), "C:/Users/dev/project/dist");
+  assert.equal(relativeTo("C:\\Users\\dev\\project", "/c/Users/dev/project/src/a.ts", "windows"), "src/a.ts");
+  assert.equal(relativeTo("/home/dev/project", "/c/Users/dev/project/src/a.ts", "posix"), null);
+
+  const c = (p: string) => classifyPath(p, WINDOWS_CLAUDE);
+  assert.equal(c("/c/Users/dev/project/dist").category, "normal");
+  assert.equal(c("/c/Users/dev/project/dist").rel, "dist");
+  assert.equal(c("/c/Users/dev/project/.harness/x").category, "harness");
+  assert.equal(c("/c/Users/dev/project").category, "project-root");
+  assert.equal(c("/c/Users/dev").category, "home-root");
+  assert.equal(c("/cygdrive/c/Users/dev").category, "home-root");
+  assert.equal(c("/c/Users/dev/.ssh/id_rsa").category, "home-config");
+  assert.equal(c("/c/").category, "filesystem-root");
+  assert.equal(c("/c").category, "filesystem-root");
+  assert.equal(c("/c/Users/dev/AppData/Local/Temp/x").category, "temp");
+  assert.equal(c("/c/Windows/System32/drivers/etc/hosts").category, "system");
+  assert.equal(c("/c/Users/dev/other/x").category, "outside-project");
+  // WSL paths are real on POSIX and are not drive paths on Windows either.
+  assert.equal(c("/mnt/c/Users/dev/project/dist").category, "outside-project");
+  assert.equal(classifyPath("/c/Users/dev/project/dist", POSIX).category, "outside-project");
+});
+
+test("temp variables with defaults and PowerShell $env: forms are temp (BUG-2026-017)", () => {
+  for (const p of ["${TMPDIR:-/tmp}/ah-test", "${TMPDIR:=/tmp}/x", "${TMP:-/tmp}/x", "${TEMP:?unset}/x", "${TMPDIR:-/tmp}", "$TMPDIR/x", "$env:TEMP\\build", "$env:TMP/x", "$env:RUNNER_TEMP", "$env:temp\\x", "%TEMP%\\x"]) {
+    assert.ok(isTempPath(p), `${p} should be temp`);
+  }
+  for (const p of ["${DIR:-/tmp}/x", "$env:TEMPLATE\\x", "$TMPDIRS/x", "$env:HOME\\x", "${TMPDIR:+/tmp}/x"]) {
+    assert.ok(!isTempPath(p), `${p} should not be temp`);
+  }
+  assert.equal(classifyPath("${TMPDIR:-/tmp}/ah-test", POSIX).category, "temp");
+  assert.equal(classifyPath("$env:TEMP\\build", WINDOWS_CODEX).category, "temp");
+  assert.equal(classifyPath("~\\AppData\\Local\\Temp\\ah-test", WINDOWS_CODEX).category, "temp");
+  assert.equal(classifyPath("C:\\Users\\dev\\AppData\\Local\\Temp\\ah-test", WINDOWS_CODEX).category, "temp");
+});
+
+test("globs are compiled once and classifyPath stays cheap", () => {
+  assert.equal(globToRegExp("*.{yml,yaml}", "posix"), globToRegExp("*.{yml,yaml}", "posix"));
+  assert.notEqual(globToRegExp("*.{yml,yaml}", "posix"), globToRegExp("*.{yml,yaml}", "windows"));
+  classifyPath("src/warm-up.ts", POSIX);
+  const t = performance.now();
+  for (let i = 0; i < 1000; i++) classifyPath(`src/file${i}.ts`, POSIX);
+  const ms = performance.now() - t;
+  assert.ok(ms < 150, `1000 classifyPath calls took ${ms.toFixed(0)} ms`);
 });

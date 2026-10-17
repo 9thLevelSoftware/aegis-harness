@@ -1,0 +1,11 @@
+{
+  "name": "perl -e rmtree(...) asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "perl -e 'use File::Path; rmtree(\"build\")'"
+    }
+  },
+  "rule": "shell.interpreter-destructive",
+  "source": "BUG-2026-016"
+}

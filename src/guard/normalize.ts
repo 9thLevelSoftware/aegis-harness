@@ -3,8 +3,9 @@
  *
  * Claude Code and Codex both send `{ hook_event_name, tool_name, tool_input, cwd, ... }`
  * on stdin. They differ in tool names and in how edits arrive: Claude Code has
- * Write/Edit/MultiEdit with explicit fields; Codex sends `apply_patch` with a
- * patch text in `tool_input.command`.
+ * Write/Edit/NotebookEdit with explicit fields (and the legacy MultiEdit);
+ * Codex sends `apply_patch` with a patch text in `tool_input.command`, or runs
+ * `apply_patch` through its shell tool with the patch as an argument or heredoc.
  */
 import type { ToolCall } from "./model.ts";
 
@@ -64,12 +65,13 @@ function claudeCalls(toolName: string, input: unknown): ToolCall[] {
   const i = dict(input);
   switch (toolName) {
     case "Bash":
+    case "PowerShell": // same fields as Bash; main.ts picks the PowerShell dialect from the tool name
       return [{ kind: "shell", command: str(i.command) ?? "" }];
     case "Write":
       return [{ kind: "write", path: str(i.file_path) ?? "", content: str(i.content) ?? "" }];
     case "Edit":
       return [{ kind: "edit", path: str(i.file_path) ?? "", oldText: str(i.old_string) ?? "", newText: str(i.new_string) ?? "" }];
-    case "MultiEdit": {
+    case "MultiEdit": { // legacy: no longer a Claude Code tool, kept for older installs
       const path = str(i.file_path) ?? "";
       const edits = Array.isArray(i.edits) ? i.edits : [];
       const calls: ToolCall[] = edits.map((e) => {
@@ -92,7 +94,15 @@ function codexCalls(toolName: string, input: unknown): ToolCall[] {
   const i = dict(input);
   const lower = toolName.toLowerCase();
   if (lower === "bash" || lower === "shell" || lower === "exec_command" || lower === "local_shell" || lower === "container.exec") {
-    return [{ kind: "shell", command: commandText(i.command ?? i.cmd ?? i.argv) }];
+    const command = i.command ?? i.cmd ?? i.argv;
+    const found = applyPatchViaShell(command);
+    if (found !== undefined) {
+      // The edit rules judge the patch; the shell rules still see the rest of the command line
+      // (`cd x && apply_patch <<'EOF' ... EOF && rm -rf /`) with the patch body cut out.
+      const calls = parseApplyPatch(found.patch);
+      return found.rest === undefined ? calls : [...calls, { kind: "shell", command: found.rest }];
+    }
+    return [{ kind: "shell", command: commandText(command) }];
   }
   if (lower === "apply_patch" || lower === "edit" || lower === "write") {
     const patch = str(i.command) ?? str(i.patch) ?? str(i.input) ?? "";
@@ -111,11 +121,72 @@ export function commandText(command: unknown): string {
   if (typeof command === "string") return command;
   if (Array.isArray(command)) {
     const parts = command.map((p) => (typeof p === "string" ? p : JSON.stringify(p)));
-    if (parts.length === 3 && /^(bash|sh|zsh|dash)$/.test(parts[0].replace(/^.*[\\/]/, "")) && /^-[a-z]*c[a-z]*$/.test(parts[1])) return parts[2];
+    const script = shellScriptArg(parts);
+    if (script !== undefined) return script;
     if (parts.length >= 3 && /^(pwsh|powershell)(\.exe)?$/i.test(parts[0].replace(/^.*[\\/]/, "")) && /^-(c|command)$/i.test(parts[1])) return parts.slice(2).join(" ");
     return parts.map(shellQuote).join(" ");
   }
   return "";
+}
+
+const SHELL_C_WRAPPER = /^\s*(?:\S*[\\/])?(?:bash|sh|zsh|dash)\s+-[a-z]*c[a-z]*\s+(?:--\s+)?(["'])([\s\S]*)\1\s*$/;
+/** `apply_patch` in command position anywhere before the patch: first word, after `cd x &&`, after `FOO=1`, or a shim path. */
+const APPLY_PATCH_CMD = /(?:^|[\s;&|(])(?:\S*[\\/])?apply_patch(?=\s|$)/;
+const BEGIN = "*** Begin Patch";
+const END = "*** End Patch";
+
+export interface ShellPatch {
+  /** The patch envelope, `*** Begin Patch` to `*** End Patch`. */
+  patch: string;
+  /** The command line with the patch body removed, when the patch came through a shell; absent for the bare argv form. */
+  rest?: string;
+}
+
+/**
+ * Codex models often run `apply_patch` through the shell tool instead of the
+ * dedicated tool: as argv `["apply_patch", "<patch>"]` (arg0 may be a shim such
+ * as `.../codex-arg0-xxxx/apply_patch`), as `apply_patch <<'EOF' ... EOF`, or
+ * either of those wrapped in `bash -lc "..."`. Returns the patch text for those
+ * shapes so the edit rules see the edit instead of an opaque shell command, and
+ * the remainder of the command line so the shell rules still see everything else.
+ */
+export function applyPatchViaShell(command: unknown): ShellPatch | undefined {
+  let text: string;
+  if (Array.isArray(command)) {
+    const parts = command.map((p) => (typeof p === "string" ? p : JSON.stringify(p)));
+    const script = shellScriptArg(parts);
+    if (script !== undefined) {
+      text = script;
+    } else {
+      // `env FOO=1 apply_patch <patch>`: env execs apply_patch with the same argv tail.
+      let k = 0;
+      if (/^(?:\S*[\\/])?env$/.test(parts[0] ?? "")) {
+        k = 1;
+        while (k < parts.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(parts[k]) || parts[k] === "-i" || parts[k] === "-")) k++;
+      }
+      if (parts.length < k + 2 || !/^(?:\S*[\\/])?apply_patch$/.test(parts[k])) return undefined;
+      const body = parts.slice(k + 1).join("\n");
+      return body.includes(BEGIN) ? { patch: body } : undefined;
+    }
+  } else if (typeof command === "string") {
+    text = command;
+  } else {
+    return undefined;
+  }
+  const wrapped = SHELL_C_WRAPPER.exec(text);
+  if (wrapped) text = wrapped[2];
+  const start = text.indexOf(BEGIN);
+  if (start < 0 || !APPLY_PATCH_CMD.test(text.slice(0, start))) return undefined;
+  const endAt = text.indexOf(END, start);
+  const end = endAt < 0 ? text.length : endAt + END.length;
+  return { patch: text.slice(start, end), rest: text.slice(0, start) + text.slice(end) };
+}
+
+/** The script carried by argv `["bash", "-lc", script]` or `["bash", "-c", "--", script]`; undefined for any other shape. */
+function shellScriptArg(parts: readonly string[]): string | undefined {
+  if (!/^(bash|sh|zsh|dash)$/.test((parts[0] ?? "").replace(/^.*[\\/]/, "")) || !/^-[a-z]*c[a-z]*$/.test(parts[1] ?? "")) return undefined;
+  const dd = parts[2] === "--" ? 1 : 0;
+  return parts.length === 3 + dd ? parts[2 + dd] : undefined;
 }
 
 function shellQuote(s: string): string {

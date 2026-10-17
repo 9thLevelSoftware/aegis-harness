@@ -5,6 +5,10 @@
  * output at all, so the agent's own permission rules still apply; the guard
  * vetoes, it never approves.
  *
+ * Claude Code shows an `ask` reason only to the user in the permission prompt,
+ * so on ask the agent-facing explanation travels in `additionalContext`, which
+ * reaches the agent alongside the tool result whatever the user answers.
+ *
  * Codex: `permissionDecision` deny is honoured; `ask` is not (Codex marks the
  * hook failed and continues), so `ask` falls back to deny with an explanation,
  * or to a warning when the caller chooses `warn`.
@@ -22,8 +26,13 @@ export interface Rendered {
 export function explain(d: Decision, verb: string): string {
   const head = `[ah guard] ${verb} by ${d.rule ?? "policy"}: ${d.reason ?? ""}`.trim();
   const tail = d.remediation ? `\nDo instead: ${d.remediation}` : "";
-  const record = d.rule ? `\n(If this is a false positive, tell the user and record it: ah bug add --rule ${d.rule})` : "";
+  const record = d.rule ? `\n(If this is a false positive, tell the user and record it: ah bug add --rule ${d.rule} --title "<what you were doing>")` : "";
   return `${head}${tail}${record}`;
+}
+
+/** One short sentence for the human in Claude Code's permission prompt. */
+export function userSentence(d: Decision): string {
+  return `[ah guard] ${d.rule ?? "policy"}: ${d.reason ?? ""}`.trim();
 }
 
 export function render(d: Decision, agent: Agent, askFallback: AskFallback = "deny"): Rendered {
@@ -39,5 +48,5 @@ export function render(d: Decision, agent: Agent, askFallback: AskFallback = "de
     }
     return { stdout: JSON.stringify({ hookSpecificOutput: { hookEventName, permissionDecision: "deny", permissionDecisionReason: `${explain(d, "held for a human")}\nCodex cannot pause for approval here. Ask the user to run this step themselves.` } }), exitCode: 0 };
   }
-  return { stdout: JSON.stringify({ hookSpecificOutput: { hookEventName, permissionDecision: "ask", permissionDecisionReason: explain(d, "held for a human") } }), exitCode: 0 };
+  return { stdout: JSON.stringify({ hookSpecificOutput: { hookEventName, permissionDecision: "ask", permissionDecisionReason: userSentence(d), additionalContext: explain(d, "held for a human") } }), exitCode: 0 };
 }

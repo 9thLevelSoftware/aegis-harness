@@ -1,0 +1,13 @@
+{
+  "name": "rm -rf /c/ is denied (Claude Code, Windows Git Bash)",
+  "agent": "claude",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf /c/"
+    }
+  },
+  "rule": "shell.rm-recursive-root",
+  "source": "BUG-2026-016"
+}

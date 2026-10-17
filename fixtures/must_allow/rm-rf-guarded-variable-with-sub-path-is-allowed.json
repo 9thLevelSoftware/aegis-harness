@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf \"${BUILD_DIR:?unset}/dist\" is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf \"${BUILD_DIR:?unset}/dist\""
+    }
+  },
+  "near": "shell.rm-unresolved-variable",
+  "source": "BUG-2026-017"
+}

@@ -1,0 +1,14 @@
+{
+  "name": "Edit of package.json adding a jest devDependency is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "package.json",
+      "old_string": "\"devDependencies\": {",
+      "new_string": "\"devDependencies\": {\n    \"jest\": \"^29.7.0\",",
+      "replace_all": false
+    }
+  },
+  "near": "edit.manifest-lint-section",
+  "source": "BUG-2026-017"
+}

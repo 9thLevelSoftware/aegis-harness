@@ -1,0 +1,13 @@
+{
+  "name": "Set-Content -Path src/x.ts is allowed (Codex, Windows)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "Set-Content -Path src/x.ts -Value y"
+    }
+  },
+  "near": "shell.write-home-config",
+  "source": "BUG-2026-016"
+}

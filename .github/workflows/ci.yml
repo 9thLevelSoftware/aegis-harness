@@ -29,11 +29,12 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run check:hygiene
-      - name: Fixture corpus end to end, with the per-call latency budget
-        run: node dist/ah.mjs test-hooks --budget-ms 150
+      - name: Fixture corpus end to end, with the per-call latency budget (150 ms)
+        run: npm run test:hooks
       - name: Installed package smoke test
         run: |
           npm pack --silent > pack.txt
+          tar tzf "$(cat pack.txt)" | grep -q '^package/dist/guard.mjs$'
           mkdir -p /tmp/ah-install && cd /tmp/ah-install
           npm init -y > /dev/null
           npm install --silent "$GITHUB_WORKSPACE/$(cat $GITHUB_WORKSPACE/pack.txt)"
@@ -59,5 +60,5 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run check:hygiene
-      - name: Fixture corpus end to end, with a slower-runner latency budget
-        run: node dist/ah.mjs test-hooks --budget-ms 400
+      - name: Fixture corpus end to end, with the slower-runner latency budget (AH_LATENCY_BUDGET_MS)
+        run: npm run test:hooks

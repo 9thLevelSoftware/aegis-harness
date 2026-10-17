@@ -1,0 +1,11 @@
+{
+  "name": "docker builder prune -f is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "docker builder prune -f"
+    }
+  },
+  "near": "shell.docker-destroy",
+  "source": "BUG-2026-017"
+}

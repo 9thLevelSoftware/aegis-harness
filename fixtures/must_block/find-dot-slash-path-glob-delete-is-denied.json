@@ -1,0 +1,11 @@
+{
+  "name": "find . -path './*' -delete is denied (the path glob matches the whole tree)",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . -path './*' -delete"
+    }
+  },
+  "rule": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-016"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "cat ~/.ssh/config is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.ssh/config"
+    }
+  },
+  "near": "shell.credential-read",
+  "source": "BUG-2026-017"
+}

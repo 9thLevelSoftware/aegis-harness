@@ -4,7 +4,7 @@
     "tool_name": "Write",
     "tool_input": {
       "file_path": "src/keys.ts",
-      "content": "export const KEY = `-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----`;\n"
+      "content": "export const KEY = `-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAx7vKk3xHd2x0bbr5fUi1G8ZPxu2pV1qFm1aSKj3sBqiz9Sj1\n-----END RSA PRIVATE KEY-----`;\n"
     }
   },
   "rule": "edit.secret-literal"

@@ -106,11 +106,14 @@ export function runSubprocess(fx: Fixture, guardPath: string): FixtureResult {
   const text = r.stdout.trim();
   if (text !== "") {
     try {
-      const parsed = JSON.parse(text) as { hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string } };
+      const parsed = JSON.parse(text) as { hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string; additionalContext?: string } };
       const d = parsed.hookSpecificOutput?.permissionDecision;
       if (d === "deny" || d === "ask") verdict = d;
       reason = parsed.hookSpecificOutput?.permissionDecisionReason;
-      rule = reason ? /by ([a-z]+\.[a-z0-9-]+):/.exec(reason)?.[1] : undefined;
+      // deny: "[ah guard] denied by <rule>: ..." in the reason; ask (Claude Code output):
+      // "[ah guard] <rule>: ..." in the reason and the full explanation in additionalContext.
+      const explained = [reason, parsed.hookSpecificOutput?.additionalContext].filter(Boolean).join("\n");
+      rule = /(?:\bby|\[ah guard\]) ([a-z]+\.[a-z0-9-]+):/.exec(explained)?.[1];
     } catch {
       return { fixture: fx, mode: "subprocess", verdict: "allow", ok: false, ms, error: `guard printed non-JSON: ${text.slice(0, 200)}` };
     }

@@ -1,0 +1,11 @@
+{
+  "name": "node --eval require(\"child_process\").execSync(\"rm -rf ...\") asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "node --eval 'require(\"child_process\").execSync(\"rm -rf dist\")'"
+    }
+  },
+  "rule": "shell.interpreter-destructive",
+  "source": "BUG-2026-016"
+}

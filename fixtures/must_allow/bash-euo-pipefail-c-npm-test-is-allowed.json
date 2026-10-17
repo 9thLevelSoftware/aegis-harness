@@ -1,0 +1,13 @@
+{
+  "name": "bash -euo pipefail -c npm test is allowed",
+  "agent": "claude",
+  "platform": "posix",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash -euo pipefail -c 'npm test'"
+    }
+  },
+  "near": "shell.git-force-push",
+  "source": "BUG-2026-016"
+}

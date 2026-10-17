@@ -1,6 +1,6 @@
 import { classifyPath, isBlockDevice, type PathInfo } from "../classify.ts";
 import { ALLOW, ask, deny, strictest, type Context, type Decision, type ShellCall } from "../model.ts";
-import { globToRegExp, hasVariable, isTempPath } from "../paths.ts";
+import { globToRegExp, hasVariable, isTempPath, normalize } from "../paths.ts";
 import { findSecrets, redact } from "../secrets.ts";
 import { allStages, flagsOf, parseShell, type Pipeline, type Stage } from "../shell.ts";
 
@@ -10,20 +10,39 @@ const DOWNLOADERS = new Set(["curl", "wget", "fetch", "iwr", "invoke-webrequest"
 const DECODERS = new Set(["base64", "xxd", "openssl"]);
 const INTERPRETERS = new Set(["sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "fish", "python", "python2", "python3", "py", "node", "nodejs", "deno", "bun", "perl", "ruby", "php", "pwsh", "powershell", "iex", "invoke-expression", "source", "."]);
 const NETWORK_SINKS = new Set(["curl", "wget", "nc", "ncat", "netcat", "socat", "ssh", "telnet", "openssl", "iwr", "invoke-webrequest", "irm", "invoke-restmethod", "http", "https", "mail", "mailx", "sendmail", "scp", "sftp", "ftp", "rsync"]);
-const ENV_DUMPERS = new Set(["env", "printenv", "set", "export", "declare", "gci", "get-childitem", "dir", "ls"]);
+const ENV_DUMPERS = new Set(["env", "printenv", "set", "export", "declare"]);
+/** Directory listers that dump the environment only when pointed at the `env:` drive (PowerShell). */
+const ENV_LISTERS = new Set(["gci", "get-childitem", "dir", "ls"]);
 const FILE_READERS = new Set(["cat", "less", "more", "head", "tail", "type", "get-content", "gc", "bat", "strings", "xxd", "hexdump", "od", "base64", "tac", "nl", "view"]);
 const REMOVERS = new Set(["rm", "rmdir", "rd", "del", "erase", "remove-item", "ri", "unlink", "shred"]);
+const MOVERS = new Set(["mv", "move", "move-item", "mi"]);
+const COPIERS = new Set(["cp", "copy", "copy-item", "cpi", "install"]);
 const POWER = new Set(["shutdown", "reboot", "halt", "poweroff", "telinit", "stop-computer", "restart-computer"]);
 const GIT_HOOKED = new Set(["commit", "push", "merge", "rebase", "cherry-pick", "revert", "am", "apply", "checkout", "switch"]);
 
 const CRED_FILE = /(^|[\\/])(\.env(\.(?!example$|sample$|template$|dist$|defaults$)[^\\/]*)?|\.netrc|\.npmrc|\.pypirc|\.git-credentials|credentials|id_rsa|id_ed25519|id_ecdsa|id_dsa|secrets?\.(json|ya?ml|toml|env)|[^\\/]+\.(pem|key|p12|pfx|jks|keystore))$/i;
 const PRIVATE_FILE = /(^|[\\/])(id_rsa|id_ed25519|id_ecdsa|id_dsa)$|\.(pem|key|p12|pfx)$|(^|[\\/])\.(netrc|git-credentials|pypirc)$|(^|[\\/])\.aws[\\/]credentials$|(^|[\\/])\.docker[\\/]config\.json$|(^|[\\/])\.kube[\\/]config$/i;
-const SSH_PRIVATE = /(^|[\\/])\.ssh[\\/](?!.*\.pub$)[^\\/]+$/i;
+/** Files under ~/.ssh that hold private material: everything except public keys, config, known_hosts, authorized_keys, environment and rc. */
+const SSH_PRIVATE = /(^|[\\/])\.ssh[\\/](?!.*\.pub$)(?!(?:config|known_hosts(?:\.old)?|authorized_keys2?|environment|rc)$)[^\\/]+$/i;
 
 const HOOK_ENV = /^(HUSKY|HUSKY_SKIP_HOOKS|LEFTHOOK|SKIP|PRE_COMMIT_ALLOW_NO_CONFIG|SKIP_SIMPLE_GIT_HOOKS|GIT_HOOKS_SKIP)$/;
+/** git config keys that redirect or disable hooks. `hooks.allownonascii` and friends are read by hooks, not bypasses. */
+const HOOK_CONFIG_KEY = /^(core\.hookspath|hooks?\.(enabled|disabled|skip)[\w.-]*)(=|$)/i;
 const HOOK_PATH_HINT = /\.harness[\\/]|\.claude[\\/]settings|\.claude[\\/]hooks|\.git[\\/]hooks|\.husky|\.codex[\\/]|\.pre-commit-config|lefthook/;
 const WRITE_HINT = /\bopen\([^)]*['"][wa]\+?['"]|write(File|FileSync|_text|_bytes|Text|Lines)?\s*\(|\bunlink\b|\bremove\b|\brmtree\b|\brm(Sync)?\s*\(|Set-Content|Out-File|Add-Content|\bos\.system\b|subprocess/;
-const DESTRUCTIVE_CODE = /shutil\.rmtree\s*\(|\bfs\.(rm|rmdir|rmSync|rmdirSync)\s*\([^)]*recursive|rimraf|\bos\.system\s*\(\s*['"]rm\s+-rf|Remove-Item[^;|]*-Recurse|\bFileUtils\.rm_rf|\bRemove-Item\b[^;|]*-Force/i;
+/** Direct tree-delete calls in inline code: Python, Node (fs already bound), Deno, Perl, Ruby, PowerShell. */
+const DESTRUCTIVE_CODE = /shutil\.rmtree\s*\(|\b(?:fs|fsp|promises)\.(?:rm|rmdir|rmSync|rmdirSync)\s*\([^)]*recursive|\brimraf\b|\bDeno\.remove(?:Sync)?\s*\([^)]*recursive|\b(?:rmtree|remove_tree)\b|\bFileUtils\.(?:rm_rf|rm_r|rmtree|remove_dir|remove_entry_secure)\b|Remove-Item[^;|]*-Recurse|\bRemove-Item\b[^;|]*-Force/i;
+/** `require("fs")`, `require("node:fs/promises")`, `from "fs"`, `import("fs")`: the module is loaded inline rather than bound to `fs`. */
+const NODE_FS_IMPORT = /require\s*\(\s*['"](?:node:)?fs(?:\/promises)?['"]\s*\)|\bfrom\s+['"](?:node:)?fs(?:\/promises)?['"]|\bimport\s*\(\s*['"](?:node:)?fs(?:\/promises)?['"]\s*\)|getBuiltinModule\s*\(\s*['"](?:node:)?fs/i;
+const FS_DELETE_CALL = /\.\s*(?:rm|rmdir|rmSync|rmdirSync|unlink|unlinkSync)\s*\(/;
+/** Something in the code hands a string to a shell. */
+const EXEC_HINT = /\b(?:child_process|execSync|execFileSync|spawnSync|exec|execFile|spawn|system|subprocess|popen|Popen|run|%x|Invoke-Expression|iex|Start-Process)\b|`[^`]*\brm\b/i;
+/** A recursive delete spelled as a shell command inside a string or an argv list. */
+const DESTRUCTIVE_SHELL = /\brm\s+(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)\b|['"]rm['"]\s*,\s*['"]-[a-zA-Z]*[rR]|\b(?:rd|rmdir)\s+\/s\b|\bdel\s+\/[sq]\b|Remove-Item\b[^;|'"`]*-Recurse/i;
+/** Perl deletes a tree when `unlink` is fed by a glob or a directory walk. */
+const PERL_WALK = /\bglob\b|<\*|File::Find|\bfind(?:depth)?\s*\(|\breaddir\b|\bopendir\b/;
+/** The PowerShell profile variable: `$PROFILE`, `$profile.CurrentUserAllHosts`. A shell rc file, like ~/.bashrc. */
+const PWSH_PROFILE = /^\$\{?profile\}?(?:\.[A-Za-z]+)?$/i;
 
 export function shellRules(call: ShellCall, ctx: Context): Decision {
   const raw = call.command;
@@ -56,11 +75,13 @@ function pipelineRules(p: Pipeline, ctx: Context): Decision[] {
     const isDownloader = DOWNLOADERS.has(src.cmd);
     const isDecoder = DECODERS.has(src.cmd) && src.argv.some((a) => /^(-d|--decode|-D|-r|enc)$/.test(a));
     const readsCredential = credentialSourceOf(src, ctx) !== null;
-    const dumpsEnv = ENV_DUMPERS.has(src.cmd) && (src.argv.length === 1 || src.argv.slice(1).every((a) => /^-|^env:?$/i.test(a)));
+    const dumpsEnv = ENV_LISTERS.has(src.cmd)
+      ? src.argv.slice(1).some((a) => /^env:/i.test(a))
+      : ENV_DUMPERS.has(src.cmd) && (src.argv.length <= 1 || src.argv.slice(1).every((a) => a.startsWith("-")));
     for (let j = i + 1; j < stages.length; j++) {
       const sink = stages[j];
-      if ((isDownloader || isDecoder) && INTERPRETERS.has(sink.cmd)) {
-        out.push(deny("shell.pipe-to-shell", `${src.cmd} output is piped into ${sink.cmd}`, "Download to a file, read it, then run it: `curl -fsSL URL -o install.sh && cat install.sh` first. Piping remote content into an interpreter runs code nobody reviewed."));
+      if ((isDownloader || isDecoder) && INTERPRETERS.has(sink.cmd) && readsStdinAsCode(sink)) {
+        out.push(deny("shell.pipe-to-shell", `${src.cmd} output is piped into ${sink.cmd}, which runs it as code`, "Download to a file, read it, then run it: `curl -fsSL URL -o install.sh && cat install.sh` first. Piping remote content into an interpreter runs code nobody reviewed."));
       }
       if ((readsCredential || dumpsEnv) && NETWORK_SINKS.has(sink.cmd)) {
         out.push(deny("shell.credential-exfil", `${describe(src)} is piped into ${sink.cmd}`, "Credentials and the environment never leave the machine through an agent session. If a service needs a value, the user configures it."));
@@ -70,8 +91,78 @@ function pipelineRules(p: Pipeline, ctx: Context): Decision[] {
   return out;
 }
 
+/** The command as the reason text names it. A peeled wrapper such as `env` leaves argv empty, so fall back to the command name. */
 function describe(s: Stage): string {
-  return s.argv.slice(0, 2).join(" ");
+  return s.argv.length > 0 ? s.argv.slice(0, 2).join(" ") : s.cmd;
+}
+
+const SH_SINKS = new Set(["sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "fish"]);
+const ALWAYS_CODE_SINKS = new Set(["iex", "invoke-expression", "source", "."]);
+/** Flags after which the interpreter runs the given code or module instead of stdin. */
+const INLINE_CODE_FLAGS: Record<string, string[]> = {
+  python: ["-c", "-m"], python2: ["-c", "-m"], python3: ["-c", "-m"], py: ["-c", "-m"],
+  node: ["-e", "--eval", "-p", "--print"], nodejs: ["-e", "--eval", "-p", "--print"], bun: ["-e", "--eval"],
+  perl: ["-e", "-E"], ruby: ["-e"], php: ["-r"],
+};
+/** Flags that take a value which is not the script. */
+const INTERPRETER_VALUED_FLAGS = new Set(["-r", "--require", "--import", "--loader", "--experimental-loader", "--env-file", "-W", "-X"]);
+
+/**
+ * True when the sink will execute what arrives on stdin: a shell with no script,
+ * `python -`, bare `node`, `pwsh -Command -`, `iex`. A sink that runs a named
+ * script, module or `-c`/`-e` string merely reads the download as data.
+ */
+function readsStdinAsCode(sink: Stage): boolean {
+  const cmd = sink.cmd;
+  const args = sink.argv.slice(1);
+  if (ALWAYS_CODE_SINKS.has(cmd)) return true;
+  if (SH_SINKS.has(cmd)) {
+    // Hand-rolled: `-o pipefail` and `+o` take a value, and `-c` means the command string follows.
+    let readsStdin = false;
+    const positionals: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (a === "--") { positionals.push(...args.slice(i + 1)); break; }
+      if (a === "--rcfile" || a === "--init-file") { i++; continue; }
+      if (/^[-+][A-Za-z]+$/.test(a)) {
+        if (a.includes("c")) return false;
+        if (a.includes("s")) readsStdin = true;
+        if (/[oO]$/.test(a)) i++;
+        continue;
+      }
+      if (a.startsWith("--")) continue;
+      positionals.push(a);
+    }
+    return readsStdin || positionals.length === 0 || positionals[0] === "-";
+  }
+  if (cmd === "pwsh" || cmd === "powershell") {
+    const lower = args.map((a) => a.toLowerCase());
+    if (lower.includes("-file") || lower.includes("-f")) return false;
+    const ci = lower.findIndex((a) => a === "-command" || a === "-c");
+    if (ci >= 0) return args[ci + 1] === undefined || args[ci + 1] === "-";
+    return !args.some((a) => !a.startsWith("-"));
+  }
+  if (cmd === "deno" || cmd === "bun") {
+    const p = args.filter((a) => !a.startsWith("-") || a === "-");
+    if (cmd === "bun" && args.some((a) => a === "-e" || a === "--eval")) return false;
+    if (p.length === 0 || p[0] === "-") return true;
+    if (p[0] === "run") return p.length === 1 || p[1] === "-";
+    return false;
+  }
+  const codeFlags = INLINE_CODE_FLAGS[cmd];
+  if (!codeFlags) return true;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "-") return true;
+    if (a === "--") return args[i + 1] === undefined || args[i + 1] === "-";
+    if (codeFlags.some((flag) => a === flag || (flag.length === 2 && a.startsWith(flag) && a.length > 2))) return false;
+    if (a.startsWith("-")) {
+      if (INTERPRETER_VALUED_FLAGS.has(a)) i++;
+      continue;
+    }
+    return false;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +193,8 @@ function stageRules(s: Stage, ctx: Context): Decision[] {
   out.push(...publishRules(s));
   out.push(...baselineRefreshRules(s));
   out.push(...interpreterRules(s));
+  out.push(...moveSourceRules(s, ctx));
+  out.push(...copySourceRules(s, ctx));
 
   for (const target of writeTargetsOf(s)) out.push(...writeRules(target, s, ctx));
   return out;
@@ -156,17 +249,61 @@ function removeRules(s: Stage, ctx: Context): Decision[] {
 }
 
 const ROOT_LITERAL = /^(\/|\/\*|\\|\\\*|[A-Za-z]:\\?\*?|[A-Za-z]:\/\*?)$/;
-const HOME_LITERAL = /^(~|~\/\*?|~\\\*?|\$\{?HOME\}?(\/\*?)?|%USERPROFILE%(\\\*?)?)$/i;
-const CWD_WIPE_LITERAL = /^(\.|\.\/|\.\\|\.\/\*|\.\\\*|\*|\*\.\*|\.\*|\*\*|\.\.|\.\.\/|\.\.\\|\.\.\/\*|:\/)$/;
+const HOME_LITERAL = /^(~|~\/\*?|~\\\*?|\$HOME([\\/]\*?)?|\$\{HOME(:[?-][^}]*)?\}([\\/]\*?)?|%USERPROFILE%([\\/]\*?)?|\$\{?env:(USERPROFILE|HOME|HOMEPATH)\}?([\\/]\*?)?|\$\{?env:HOMEDRIVE\}?\$\{?env:HOMEPATH\}?([\\/]\*?)?|%HOMEDRIVE%%HOMEPATH%([\\/]\*?)?)$/i;
+/** The working directory and its "everything inside" globs, the hidden-file idioms (`.[!.]*`, `.[!.]?*`, `.??*`, `.?*`, `.???*`) included. */
+const CWD_WIPE_LITERAL = /^(\.|\.\/|\.\\|\.\/\*|\.\\\*|\*|\*\.\*|\.\*|\*\*|\.\.|\.\.\/|\.\.\\|\.\.\/\*|:\/|(?:\.[\\/])?\.(?:\[[!^]\.\]|\?)[?*]*\*[\\/]*)$/;
+/** A leading expansion that names the home directory. Rewritten to `~` so the rest of the path is classified. */
+const HOME_PREFIX = /^(?:\$\{HOME(?::[?-][^}]*)?\}|\$HOME|\$\{?env:USERPROFILE\}?|%USERPROFILE%)(?=[\\/])/i;
+/** A leading expansion that names the working directory. Rewritten to `.` so the rest of the path is classified. */
+const CWD_PREFIX = /^(?:\$\{PWD(?::[?-][^}]*)?\}|\$PWD|\$\(\s*pwd\s*\)|`\s*pwd\s*`)(?=[\\/])/;
+/** A guarded expansion (`VAR:?unset` in braces) or a command substitution: unverifiable, but safe once a literal sub-path follows. */
+const GUARDED_PREFIX = /^(?:\$\{[A-Za-z_][A-Za-z0-9_]*:\?[^}]*\}|\$\([^()]*(?:\([^()]*\)[^()]*)*\)|`[^`]*`)(?=[\\/])/;
+const SUBSTITUTION = /\$\(|`/;
+/** "Everything inside" suffixes: `dir/*`, `dir/.*`, `dir/**`, `dir/*.*`, `dir/.`, `dir\*`, and the hidden-file globs (`dir/.[!.]*`, `dir/.[!.]?*`, `dir/.??*`, `dir/.?*`). */
+const WIPE_SUFFIX = /[\\/]+(?:\*|\.\*|\*\*|\*\.\*|\.|\.(?:\[[!^]\.\]|\?)[?*]*\*)[\\/]*$/;
+
+const UNRESOLVED_REMEDIATION = "An empty or wrong variable turns this into `rm -rf /`. Use a literal path (`rm -rf dist`), anchor it to the working directory (`rm -rf \"$PWD/dist\"`), or brace the variable with a `:?unset` guard and append a sub-path, so an empty value aborts instead of deleting the parent.";
+const SUBSTITUTION_REMEDIATION = "A command substitution cannot be checked before it runs. Use a literal path (`rm -rf dist`), or append a sub-path to the substitution (`rm -rf \"$(pwd)/dist\"`) so an empty result cannot delete the parent.";
+
+/** Braced expansions shown as `$NAME` so reason text never carries `${`. */
+function shownTarget(t: string): string {
+  return t.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)[^}]*\}/g, "$$$1");
+}
+
+/** The part of a target after a known prefix: non-empty, literal, inside that prefix, and not a wipe glob. */
+function safeSubPath(rest: string): boolean {
+  const sub = rest.replace(/^[\\/]+/, "");
+  if (sub === "" || hasVariable(sub) || SUBSTITUTION.test(sub)) return false;
+  const n = normalize(sub);
+  return n !== "." && n !== ".." && !n.startsWith("../") && !CWD_WIPE_LITERAL.test(n);
+}
+
+/** Strip trailing `/*`, `/.*`, `/**`, `/.` (and the Windows forms), repeatedly, so `dir/./*` becomes `dir`. */
+function stripWipeSuffix(t: string): string {
+  let base = t;
+  for (;;) {
+    const next = base.replace(WIPE_SUFFIX, "");
+    if (next === base) return base;
+    if (next === "") return /^[\\/]/.test(base) ? "/" : base; // `//*` is the root's contents
+    base = next;
+  }
+}
 
 function judgeRemoveTarget(target: string, destructive: boolean, recursive: boolean, s: Stage, ctx: Context): Decision {
-  const t = target.replace(/^["']+|["']+$/g, "");
+  let t = target.replace(/^["']+|["']+$/g, "");
   if (t === "" || t === "--") return ALLOW;
+
+  // `$HOME/x`, `$env:USERPROFILE\x`, `$PWD/x`, `$(pwd)/x`: the prefix is known, so classify the rest like `~/x` or `./x`.
+  const home = HOME_PREFIX.exec(t);
+  const cwd = home ? null : CWD_PREFIX.exec(t);
+  if (home) t = `~${t.slice(home[0].length)}`;
+  else if (cwd) t = `.${t.slice(cwd[0].length)}`;
+
   if (ROOT_LITERAL.test(t)) {
     return deny("shell.rm-recursive-root", `${s.cmd} targets the filesystem root (${t})`, "Nothing in a project needs the filesystem root deleted. Name the specific directory.");
   }
   if (HOME_LITERAL.test(t)) {
-    return deny("shell.rm-recursive-home", `${s.cmd} targets the home directory (${t})`, "Deleting the home directory destroys the user's machine state. Name the specific directory inside the project.");
+    return deny("shell.rm-recursive-home", `${s.cmd} targets the home directory (${shownTarget(t)})`, "Deleting the home directory destroys the user's machine state. Name the specific directory inside the project.");
   }
   if (CWD_WIPE_LITERAL.test(t)) {
     if (recursive || /\*/.test(t) || s.cmd === "del" || s.cmd === "erase") {
@@ -174,13 +311,35 @@ function judgeRemoveTarget(target: string, destructive: boolean, recursive: bool
     }
     return ALLOW;
   }
-  if (hasVariable(t)) {
+  // `"${VAR:?unset}/sub"` or `"$(git rev-parse --show-toplevel)/sub"`: an empty value aborts, so the
+  // sub-path is what gets deleted. Classify it as if it were under the working directory, so
+  // `.../dist` passes and `.../.git` is still a repository delete.
+  const guarded = GUARDED_PREFIX.exec(t);
+  if (guarded && safeSubPath(t.slice(guarded[0].length))) t = `./${t.slice(guarded[0].length).replace(/^[\\/]+/, "")}`;
+  if (hasVariable(t) || SUBSTITUTION.test(t)) {
     if (isTempPath(t)) return ALLOW;
     if (recursive) {
-      return ask("shell.rm-unresolved-variable", `${s.cmd} -r on ${t}, whose value cannot be verified`, "An empty or wrong variable turns this into `rm -rf /`. Use a literal path, or guard it: `rm -rf \"${VAR:?unset}/sub\"`.");
+      const substitution = SUBSTITUTION.test(t) && !hasVariable(t);
+      return ask("shell.rm-unresolved-variable", `${s.cmd} -r on ${shownTarget(t)}, whose value cannot be verified`, substitution ? SUBSTITUTION_REMEDIATION : UNRESOLVED_REMEDIATION);
     }
     return ALLOW;
   }
+
+  // `rm -rf <dir>/*` is the same act as `rm -rf <dir>` when <dir> is the project, the home or the root.
+  const base = stripWipeSuffix(t);
+  if (base !== t) {
+    const parent = classifyPath(base, ctx);
+    if (parent.category === "filesystem-root") {
+      return deny("shell.rm-recursive-root", `${s.cmd} ${t} empties the filesystem root`, "Nothing in a project needs the filesystem root emptied. Name the specific directory.");
+    }
+    if (parent.category === "home-root") {
+      return deny("shell.rm-recursive-home", `${s.cmd} ${t} empties the home directory`, "Emptying the home directory destroys the user's machine state. Name the specific directory inside the project.");
+    }
+    if (parent.category === "project-root" && (destructive || /\*/.test(t))) {
+      return deny("shell.rm-recursive-cwd", `${s.cmd} ${t} empties the project root`, "Delete specific paths (for example `rm -rf dist node_modules`). If the whole tree must go, the user does that.");
+    }
+  }
+
   const info = classifyPath(t, ctx);
   switch (info.category) {
     case "filesystem-root":
@@ -189,8 +348,14 @@ function judgeRemoveTarget(target: string, destructive: boolean, recursive: bool
       return deny("shell.rm-recursive-home", `${s.cmd} targets the home directory (${t})`, "Deleting the home directory destroys the user's machine state.");
     case "project-root":
       return destructive ? deny("shell.rm-recursive-cwd", `${s.cmd} ${t} wipes the project`, "Delete specific paths instead.") : ALLOW;
-    case "git-internals":
-      return deny("shell.rm-git-dir", `${s.cmd} ${t} destroys repository history`, "Use git commands (git stash, git checkout, git reset --keep) to change state; never delete .git.");
+    case "git-internals": {
+      const rel = info.rel ?? "";
+      // A stale lock file (`index.lock`, `HEAD.lock`, `refs/heads/x.lock`) is the one thing under .git/ git itself tells the user to remove.
+      if (rel !== ".git" && /\.lock$/i.test(rel)) return ALLOW;
+      return rel === ".git"
+        ? deny("shell.rm-git-dir", `${s.cmd} ${t} removes the .git directory and with it the repository's history`, "Use git commands (git stash, git checkout, git reset --keep) to change state; never delete .git.")
+        : deny("shell.rm-git-dir", `${s.cmd} ${t} removes repository state inside .git/`, "Use git commands (git stash, git checkout, git reset --keep) to change repository state; never delete files under .git/. A stale `*.lock` file is the one exception and is allowed.");
+    }
     case "harness":
       return deny("shell.write-harness", `${s.cmd} ${t} removes harness state`, "`.harness/` is owned by ah. Record incidents with `ah bug add`; rules change in reviewed commits.");
     case "hook-config":
@@ -225,13 +390,39 @@ function judgeRemoveTarget(target: string, destructive: boolean, recursive: bool
   }
 }
 
-const FIND_FILTERS = /^-(i?name|i?path|i?regex|i?wholename|i?lname|newer\w*|[acm](time|min|newer)|size|empty|user|group|perm|samefile|links|type|used|fstype|uid|gid|nouser|nogroup|readable|writable|executable)$/;
+/** Tests that narrow a `find -delete` to a subset of the tree. `-type f` does not: it deletes every file. */
+const FIND_FILTERS = /^-(i?name|i?path|i?regex|i?wholename|i?lname|newer\w*|[acm](time|min|newer)|size|empty|user|group|perm|samefile)$/;
+/**
+ * A filter value that matches everything, so the filter narrows nothing: a glob made only of
+ * wildcards with at least one `*` (`*`, `?*`, `**`, `*\/*`, with or without a leading `./`), or
+ * the regexes `.*` and `.+`. `?`, `*.pyc` and `*\/*.o` still narrow.
+ */
+const FIND_MATCH_ALL = /^(?:(?:\.\/)?(?:[*?]*\*[*?]*|\*\/\*)|\^?\.[*+]\$?)$/;
+
+/**
+ * True when a filter at `i` actually narrows the delete: it precedes the action (`-delete`
+ * placed first runs on every entry), is not negated (`! -name x` matches everything else),
+ * is not a catch-all (`-name '*'`), and has no `-o` between it and the action at its own paren
+ * depth (`-name x -o -delete` and `-name x -prune -o -delete` act on the other branch).
+ */
+function narrows(argv: readonly string[], i: number, actionAt: number): boolean {
+  if (i >= actionAt || !FIND_FILTERS.test(argv[i])) return false;
+  if (/^(!|-not)$/.test(argv[i - 1] ?? "")) return false;
+  if (FIND_MATCH_ALL.test(argv[i + 1] ?? "")) return false;
+  let depth = 0;
+  for (let j = i + 1; j < actionAt; j++) {
+    if (argv[j] === "(") depth++;
+    else if (argv[j] === ")") depth--;
+    else if (depth <= 0 && /^-or?$/.test(argv[j])) return false;
+  }
+  return true;
+}
 
 function findRules(s: Stage, ctx: Context): Decision[] {
   const argv = s.argv.slice(1);
-  const deletes = argv.includes("-delete") || argv.some((a, i) => /^-exec(dir)?$/.test(a) && REMOVERS.has((argv[i + 1] ?? "").replace(/^\\/, "")));
-  if (!deletes) return [];
-  if (argv.some((a) => FIND_FILTERS.test(a))) return [];
+  const actionAt = argv.findIndex((a, i) => a === "-delete" || (/^-exec(dir)?$/.test(a) && REMOVERS.has((argv[i + 1] ?? "").replace(/^\\/, ""))));
+  if (actionAt < 0) return [];
+  if (argv.some((_, i) => narrows(argv, i, actionAt))) return [];
   const starts: string[] = [];
   for (const a of argv) {
     if (a.startsWith("-") || a === "(" || a === "!") break;
@@ -252,7 +443,13 @@ function branchProtected(name: string, ctx: Context): boolean {
 function hookBypassEnv(env: Record<string, string>): string | null {
   for (const [k, v] of Object.entries(env)) {
     if (!HOOK_ENV.test(k)) continue;
-    if (k === "SKIP" && v.trim() === "") continue;
+    const value = v.trim();
+    // husky and lefthook disable themselves only on 0; 1 and 2 enable or add debug output.
+    if (k === "HUSKY" || k === "LEFTHOOK") {
+      if (value !== "0") continue;
+    } else if (value === "" || value === "0" || /^false$/i.test(value)) {
+      continue;
+    }
     return `${k}=${v}`;
   }
   return null;
@@ -264,7 +461,7 @@ function gitRules(s: Stage, ctx: Context): Decision[] {
   let i = 1;
   while (i < argv.length && argv[i].startsWith("-")) {
     const a = argv[i];
-    if (a === "-c" && /^(core\.hookspath|hooks?\.)/i.test(argv[i + 1] ?? "")) {
+    if (a === "-c" && HOOK_CONFIG_KEY.test(argv[i + 1] ?? "")) {
       out.push(deny("shell.hook-bypass", `git -c ${argv[i + 1]} disables hooks for this command`, HOOK_BYPASS_REMEDIATION));
     }
     if (["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"].includes(a)) i += 2;
@@ -299,13 +496,18 @@ function gitRules(s: Stage, ctx: Context): Decision[] {
     case "clean": {
       const f = flagsOf(rest, 0, ["-e", "--exclude"]);
       const dry = f.short.has("n") || f.long.has("dry-run") || f.short.has("i") || f.long.has("interactive");
-      if (!dry && (f.short.has("f") || f.long.has("force"))) {
-        out.push(deny("shell.git-clean", "git clean -f removes untracked files", "Run `git clean -n` to list what would go, then delete named paths. Untracked files may be the user's uncommitted work."));
+      const ignoredOnly = f.short.has("X") && !f.short.has("x");
+      const scoped = f.positionals.length > 0 && !f.positionals.some((p) => WIPE_PATHSPEC.test(p));
+      if (!dry && !ignoredOnly && !scoped && (f.short.has("f") || f.long.has("force"))) {
+        out.push(deny("shell.git-clean", `git clean ${rest.join(" ")} removes every untracked file in the tree`, "Run `git clean -n` to list what would go, then clean named paths (`git clean -f -- dist/`) or only ignored files (`git clean -fdX`). Untracked files may be the user's uncommitted work."));
       }
       break;
     }
     case "checkout":
       out.push(...checkoutRules(rest));
+      break;
+    case "switch":
+      out.push(...switchRules(rest));
       break;
     case "restore":
       out.push(...restoreRules(rest));
@@ -325,9 +527,16 @@ function gitRules(s: Stage, ctx: Context): Decision[] {
     }
     case "filter-branch":
     case "filter-repo":
-    case "replace":
       out.push(deny("shell.git-rewrite-history", `git ${sub} rewrites history`, "History rewrites are a human decision made with a backup in hand."));
       break;
+    case "replace": {
+      const f = flagsOf(rest, 0, ["--format"]);
+      if (f.short.has("l") || f.long.has("list")) break;
+      if (f.short.has("d") || f.long.has("delete") || f.long.has("edit") || f.long.has("graft") || f.long.has("convert-graft-file") || f.positionals.length >= 2) {
+        out.push(deny("shell.git-rewrite-history", `git replace ${rest.slice(0, 3).join(" ")} changes which objects history is read through`, "Replacement refs rewrite how history is read. That is a human decision made with a backup in hand; `git replace --list` is fine."));
+      }
+      break;
+    }
     case "reflog":
       if (rest.includes("expire") && rest.some((a) => /^--expire(-unreachable)?=(now|all)$/.test(a))) {
         out.push(deny("shell.git-rewrite-history", "git reflog expire --expire=now destroys recovery points", "The reflog is the safety net for every other mistake. Leave it."));
@@ -345,8 +554,10 @@ function gitRules(s: Stage, ctx: Context): Decision[] {
       break;
     case "config": {
       const f = flagsOf(rest, 0, ["-f", "--file", "--blob", "--type", "--default", "--get-color"]);
+      const readOnly = ["get", "get-all", "get-regexp", "get-urlmatch", "list", "show-origin", "show-scope"].some((flag) => f.long.has(flag)) || f.short.has("l");
+      if (readOnly) break;
       const key = f.positionals[0] ?? "";
-      if (/^(core\.hookspath|hooks?\.)/i.test(key)) {
+      if (HOOK_CONFIG_KEY.test(key)) {
         out.push(deny("shell.hook-bypass", `git config ${key} redirects or disables hooks`, HOOK_BYPASS_REMEDIATION));
       } else if (f.long.has("global") || f.long.has("system")) {
         out.push(ask("shell.git-global-config", `git config ${f.long.has("system") ? "--system" : "--global"} ${key} changes the user's git setup`, "Project needs go in the repository's own config (`git config --local`). Ask the user before touching their global configuration."));
@@ -409,7 +620,7 @@ function pushRules(rest: string[], ctx: Context): Decision[] {
         if (branchProtected(r.dst, ctx)) {
           out.push(deny("shell.git-force-push", `force push to protected branch ${r.dst}`, "Protected branches are never force-pushed from a session. Rebase your branch onto the remote and push normally, or ask the user."));
         } else {
-          out.push(ask("shell.git-force-push-review", `force push to ${r.dst} without --force-with-lease`, "Use `git push --force-with-lease origin ${r.dst}` so the push fails if someone else pushed first."));
+          out.push(ask("shell.git-force-push-review", `force push to ${r.dst} without --force-with-lease`, `Use \`git push --force-with-lease origin ${r.dst}\` so the push fails if someone else pushed first.`));
         }
       }
     }
@@ -429,7 +640,8 @@ function pushRules(rest: string[], ctx: Context): Decision[] {
   return out;
 }
 
-const WIPE_PATHSPEC = /^(\.|\.\/|\*|:\/|:\/\.|\.\/\*|\.\*)$/;
+const WIPE_PATHSPEC = /^(\.|\.\/|\*|\*\*|:\/|:\/\.|\.\/\*|\.\*)$/;
+const FORCE_SWITCH_REMEDIATION = "Commit or `git stash push -u` the local changes first and switch without --force, or confirm with the user that the uncommitted work can go.";
 
 function checkoutRules(rest: string[]): Decision[] {
   const f = flagsOf(rest, 0, ["-b", "-B", "--orphan", "-t", "--track", "--conflict", "--pathspec-from-file", "--recurse-submodules"]);
@@ -439,8 +651,20 @@ function checkoutRules(rest: string[]): Decision[] {
   if (paths.some((p) => WIPE_PATHSPEC.test(p))) {
     return [deny("shell.git-discard-changes", `git checkout ${paths.join(" ")} discards every uncommitted change`, "Read `git diff` first. Revert named files one at a time, or `git stash push -u` so the work can be recovered.")];
   }
+  if (f.short.has("f") || f.long.has("force")) {
+    return [ask("shell.git-discard-file", `git checkout ${rest.join(" ")} throws away uncommitted changes in the working tree`, FORCE_SWITCH_REMEDIATION)];
+  }
   if (paths.length > 0) {
     return [ask("shell.git-discard-file", `git checkout -- ${paths.join(" ")} discards uncommitted changes to those files`, "Confirm the user does not need the current contents, or stash first.")];
+  }
+  return [];
+}
+
+/** `git switch -f`, `--force`, `--discard-changes`: a branch switch that drops local modifications, like `checkout -f`. */
+function switchRules(rest: string[]): Decision[] {
+  const f = flagsOf(rest, 0, ["-c", "-C", "--create", "--force-create", "--orphan", "-t", "--track", "--conflict"]);
+  if (f.short.has("f") || f.long.has("force") || f.long.has("discard-changes")) {
+    return [ask("shell.git-discard-file", `git switch ${rest.join(" ")} throws away uncommitted changes in the working tree`, FORCE_SWITCH_REMEDIATION)];
   }
   return [];
 }
@@ -466,6 +690,15 @@ function restoreRules(rest: string[]): Decision[] {
 
 const CHMOD_SYMBOLIC = /^[ugoa]*[-+=][rwxXstugo]*(,[ugoa]*[-+=][rwxXstugo]*)*$/;
 const CHMOD_OCTAL = /^[0-7]{3,4}$/;
+
+/** True for modes that give write to others or everyone: octal ending in 2, 3, 6 or 7, or a symbolic clause granting `w` to `o`, `a` or no named class. */
+function grantsWorldWrite(mode: string): boolean {
+  if (CHMOD_OCTAL.test(mode)) return /[2367]$/.test(mode);
+  return mode.split(",").some((clause) => {
+    const m = /^([ugoa]*)([-+=])([rwxXstugo]*)$/.exec(clause);
+    return m !== null && m[2] !== "-" && m[3].includes("w") && (m[1] === "" || /[oa]/.test(m[1]));
+  });
+}
 
 /** chmod's mode may start with "-" (`chmod -x hook`), so it cannot be parsed as a flag. */
 function parsePermissionArgs(s: Stage): { recursive: boolean; mode: string; targets: string[] } {
@@ -517,8 +750,8 @@ function permissionRules(s: Stage, ctx: Context): Decision[] {
     if (!recursive) continue;
     if (["filesystem-root", "home-root", "system"].includes(info.category)) {
       out.push(deny("shell.permissions-sweep", `${s.cmd} -R on ${t}`, "Recursive permission changes outside the project break the machine. Change the one path that needs it."));
-    } else if (s.cmd === "chmod" && /777|a\+rwx|o\+w|\+w$/.test(mode)) {
-      out.push(ask("shell.permissions-world-writable", `chmod -R ${mode} ${t}`, "World-writable trees are a security hole. Use the narrowest mode that works (755 for directories, 644 for files)."));
+    } else if (s.cmd === "chmod" && grantsWorldWrite(mode)) {
+      out.push(ask("shell.permissions-world-writable", `chmod -R ${mode} ${t} makes the tree writable by every user`, "World-writable trees are a security hole. Grant write to the owner only (`chmod -R u+w`), or use the narrowest mode that works (755 for directories, 644 for files)."));
     }
   }
   return out;
@@ -538,7 +771,8 @@ function diskRules(s: Stage): Decision[] {
 function powerRules(s: Stage): Decision[] {
   const argv = s.argv.slice(1);
   if (POWER.has(s.cmd)) {
-    if (s.cmd === "shutdown" && argv.includes("-c")) return [];
+    // `shutdown -c`, `shutdown /a`, `shutdown --abort` cancel a pending shutdown.
+    if (s.cmd === "shutdown" && argv.some((a) => /^(-c|\/a|--abort)$/i.test(a))) return [];
     return [deny("shell.system-power", `${s.cmd} stops the machine`, "Power state is the user's. Say what needs restarting and why.")];
   }
   if (s.cmd === "init" && /^[06]$/.test(argv[0] ?? "")) return [deny("shell.system-power", `init ${argv[0]} stops the machine`, "Power state is the user's.")];
@@ -571,16 +805,93 @@ function credentialSourceOf(s: Stage, ctx: Context): string | null {
   return null;
 }
 
+/** The label of a private key or credential store at `a`, or null for anything else (public keys, ssh config, test fixtures). */
+function privateCredential(a: string, ctx: Context): string | null {
+  const info = classifyPath(homeSpelling(a), ctx);
+  if (info.isTestFile) return null;
+  const rel = info.homeRel ?? info.rel ?? info.abs;
+  const isPrivate = PRIVATE_FILE.test(a) || (info.homeRel !== null && (SSH_PRIVATE.test(`/${info.homeRel}`) || PRIVATE_FILE.test(`/${info.homeRel}`) || /^\.(npmrc|aws\/credentials)$/.test(info.homeRel)));
+  return isPrivate ? rel : null;
+}
+
+/** `$HOME/x`, `${HOME:?}/x`, `$env:USERPROFILE\x`, `%USERPROFILE%\x` as `~/x`, so the home-relative classification sees them. */
+function homeSpelling(a: string): string {
+  const t = a.replace(/^["']+|["']+$/g, "");
+  const home = HOME_PREFIX.exec(t);
+  return home ? `~${t.slice(home[0].length)}` : t;
+}
+
+/** `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube` as a whole, or the GnuPG secret-key directory: copying it copies every key in it. */
+function credentialStoreDir(a: string, ctx: Context): string | null {
+  const info = classifyPath(homeSpelling(a), ctx);
+  if (info.homeRel === null) return null;
+  const rel = info.homeRel.replace(/[\\/]+\.?$/, "");
+  return /^\.(ssh|aws|gnupg|kube)$|^\.gnupg[\\/]private-keys-v1\.d$/i.test(rel) ? rel : null;
+}
+
 function credentialReadRules(s: Stage, ctx: Context): Decision[] {
   const out: Decision[] = [];
   for (const a of s.argv.slice(1)) {
     if (a.startsWith("-")) continue;
-    const info = classifyPath(a, ctx);
-    if (info.isTestFile) continue;
-    const rel = info.homeRel ?? info.rel ?? info.abs;
-    const isPrivate = PRIVATE_FILE.test(a) || (info.homeRel !== null && (SSH_PRIVATE.test(`/${info.homeRel}`) || PRIVATE_FILE.test(`/${info.homeRel}`) || /^\.(npmrc|aws\/credentials)$/.test(info.homeRel)));
-    if (isPrivate) {
+    const rel = privateCredential(a, ctx);
+    if (rel !== null) {
       out.push(deny("shell.credential-read", `${s.cmd} ${a} prints a private key or credential store (${rel})`, "Private keys stay out of the transcript. Refer to the file by path; if a value is needed, the user supplies it through an environment variable."));
+    }
+  }
+  return out;
+}
+
+/** Sources and destination of cp/mv and their Windows forms: `-t DIR`, `--target-directory=DIR`, `-Path`/`-Destination`, or positionals with the last as destination. */
+function copyOperands(s: Stage): { sources: string[]; dest: string | undefined } {
+  const argv = s.argv.slice(1);
+  const pwsh = s.cmd === "copy-item" || s.cmd === "move-item" || s.cmd === "cpi" || s.cmd === "mi";
+  const sources: string[] = [];
+  const positionals: string[] = [];
+  let dest: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (/^-(path|literalpath|lp|p)$/i.test(a)) {
+      for (const v of (argv[++i] ?? "").split(",")) if (v !== "") sources.push(v);
+    } else if (pwsh && /^-(destination|d)$/i.test(a)) {
+      dest = argv[++i];
+    } else if (a === "-t" || a === "--target-directory") {
+      dest = argv[++i];
+    } else if (a.startsWith("--target-directory=")) {
+      dest = a.slice("--target-directory=".length);
+    } else if (a === "--") {
+      positionals.push(...argv.slice(i + 1));
+      break;
+    } else if (!a.startsWith("-") || a === "-") {
+      positionals.push(a);
+    }
+  }
+  if (sources.length === 0 && dest === undefined) {
+    if (positionals.length < 2) return { sources: [], dest: undefined };
+    dest = positionals[positionals.length - 1];
+    sources.push(...positionals.slice(0, -1));
+  } else if (sources.length === 0) {
+    sources.push(...positionals);
+  } else if (dest === undefined && positionals.length > 0) {
+    dest = positionals[positionals.length - 1];
+  }
+  return { sources, dest };
+}
+
+/** Moving a protected path away is the same act as deleting it, so a mv source is judged like an rm target. */
+function moveSourceRules(s: Stage, ctx: Context): Decision[] {
+  if (!MOVERS.has(s.cmd)) return [];
+  const { sources } = copyOperands(s);
+  return sources.map((src) => judgeRemoveTarget(src, true, false, s, ctx)).filter((d) => d.verdict !== "allow");
+}
+
+/** Copying a private key or credential store is reading it: the copy lands where it can be committed or printed. */
+function copySourceRules(s: Stage, ctx: Context): Decision[] {
+  if (!COPIERS.has(s.cmd)) return [];
+  const out: Decision[] = [];
+  for (const src of copyOperands(s).sources) {
+    const rel = privateCredential(src, ctx) ?? credentialStoreDir(src, ctx);
+    if (rel !== null) {
+      out.push(deny("shell.credential-read", `${s.cmd} ${src} copies a private key or credential store (${rel})`, "Private keys and credential stores stay where the user put them. Refer to the file by path (for example `ssh -i ~/.ssh/id_ed25519`); if a value is needed, the user supplies it through an environment variable."));
     }
   }
   return out;
@@ -624,19 +935,25 @@ function uploadRules(s: Stage, ctx: Context): Decision[] {
 // ---------------------------------------------------------------------------
 // containers, databases, deploys
 
+/**
+ * Wholesale container, image or volume removal. `docker image|builder|container|network prune`
+ * cannot touch data volumes and `docker volume rm <name>` is the named removal the remediation
+ * asks for, so both pass.
+ */
 function dockerRules(s: Stage): Decision[] {
   const a = s.argv.slice(1).filter((x) => !x.startsWith("-"));
   const joined = s.argv.join(" ");
-  const hit =
-    (a[0] === "system" && a[1] === "prune") ||
-    (a[0] === "volume" && (a[1] === "prune" || a[1] === "rm")) ||
-    ((a[0] === "image" || a[0] === "builder" || a[0] === "container" || a[0] === "network") && a[1] === "prune") ||
-    (a[0] === "compose" && a[1] === "down" && /\s(-v|--volumes)\b/.test(joined)) ||
-    (s.cmd === "docker-compose" && a[0] === "down" && /\s(-v|--volumes)\b/.test(joined)) ||
-    (a[0] === "rm" && /\$\(\s*docker ps -aq?\s*\)/.test(joined)) ||
-    (a[0] === "rmi" && /\$\(\s*docker images -q\s*\)/.test(joined));
-  if (!hit) return [];
-  return [ask("shell.docker-destroy", `${s.argv.slice(0, 4).join(" ")} removes containers, images or volumes wholesale`, "Volumes may hold local databases. Remove the named container or volume the task needs.")];
+  const volumes = /\s(-v|--volumes)\b/.test(joined);
+  const head = [s.cmd, ...a.slice(0, 2)].join(" ");
+  let what: string | null = null;
+  if (a[0] === "system" && a[1] === "prune") what = `${head} removes every stopped container, unused network, dangling image and the build cache${volumes ? ", and every unused volume" : ""}`;
+  else if (a[0] === "volume" && a[1] === "prune") what = `${head} removes every unused volume`;
+  else if (a[0] === "volume" && a[1] === "rm" && /\$\(/.test(joined)) what = `${head} removes every volume the substitution lists`;
+  else if ((a[0] === "compose" && a[1] === "down" && volumes) || (s.cmd === "docker-compose" && a[0] === "down" && volumes)) what = `${head} -v removes the stack's volumes`;
+  else if (a[0] === "rm" && /\$\(\s*docker (ps|container ls)\b/.test(joined)) what = `${s.cmd} rm $(docker ps ...) removes every container`;
+  else if (a[0] === "rmi" && /\$\(\s*docker (images|image ls)\b/.test(joined)) what = `${s.cmd} rmi $(docker images ...) removes every image`;
+  if (what === null) return [];
+  return [ask("shell.docker-destroy", what, "Volumes may hold local databases and stopped containers may hold unsaved state. Remove the named container, image or volume the task needs (`docker volume rm <name>`, `docker rm <name>`), or confirm with the user.")];
 }
 
 const SQL_DESTROY = /\b(DROP\s+(DATABASE|SCHEMA|TABLE)|TRUNCATE(\s+TABLE)?\s+\w|FLUSHALL|FLUSHDB|dropDatabase\(\))/i;
@@ -656,11 +973,18 @@ function databaseRules(s: Stage): Decision[] {
   return [ask("shell.database-destroy", `${s.argv.slice(0, 4).join(" ")} drops or resets data`, "Confirm with the user which database this hits. Local disposable databases are fine; say so when asking.")];
 }
 
+const DRY_RUN = /^(--dry-?run(=(client|server|true|1|yes|on))?|--what-if|-whatif)$/i;
+
 function publishRules(s: Stage): Decision[] {
   const argv = s.argv;
   const tail = argv.slice(1).filter((x) => !x.startsWith("-"));
   const joined = argv.join(" ");
-  const askIt = (what: string, why: string): Decision[] => [ask("shell.deploy-or-publish", `${what} reaches a shared destination`, why)];
+  // A dry run or what-if changes nothing remote; it is the check an agent should make before asking.
+  // Only a bare flag or a value that means "dry" counts: `--dry-run=none` and `--dry-run=false` are the
+  // real thing. A dry run excuses an ask; a destroy is excused only where the tool implements one
+  // (`kubectl delete --dry-run=client|server`, `aws s3 rm --dryrun`).
+  const dryRun = argv.some((a) => DRY_RUN.test(a));
+  const askIt = (what: string, why: string): Decision[] => (dryRun ? [] : [ask("shell.deploy-or-publish", `${what} reaches a shared destination`, why)]);
   const denyIt = (what: string, why: string): Decision[] => [deny("shell.remote-destroy", `${what} destroys shared infrastructure`, why)];
   const human = "Publishing and deploying are not undone by a revert. Tell the user it is ready and let them pull the trigger.";
   const never = "Shared infrastructure is never destroyed from a session.";
@@ -698,12 +1022,15 @@ function publishRules(s: Stage): Decision[] {
       if (tail[0] === "release" && tail[1] === "delete") return denyIt("gh release delete", never);
       if (tail[0] === "release" && ["create", "upload", "edit"].includes(tail[1] ?? "")) return askIt(`gh release ${tail[1]}`, human);
       if (tail[0] === "pr" && tail[1] === "merge") return askIt("gh pr merge", "Merging is the user's decision.");
-      if (tail[0] === "secret" || tail[0] === "variable") return askIt(`gh ${tail[0]} ${tail[1] ?? ""}`, "Repository secrets are set by the user.");
+      if (tail[0] === "secret" || tail[0] === "variable") {
+        if (["list", "get", "view"].includes(tail[1] ?? "")) return [];
+        return askIt(`gh ${tail[0]} ${tail[1] ?? ""}`, "Repository secrets are set by the user.");
+      }
       if (tail[0] === "api" && /\s-X\s+(DELETE|PUT|PATCH)\b/i.test(joined)) return askIt("gh api with a mutating method", human);
       return [];
     case "wrangler":
       if (tail[0] === "delete" || (tail[0] === "pages" && tail[1] === "project" && tail[2] === "delete")) return denyIt(`wrangler ${tail.slice(0, 3).join(" ")}`, never);
-      if (["deploy", "publish", "versions", "rollback"].includes(tail[0] ?? "") || (tail[0] === "pages" && tail[1] === "deploy") || (tail[0] === "secret" && tail[1] === "put") || (tail[0] === "d1" && tail[1] === "execute" && /--remote/.test(joined)) || /^kv:key$/.test(tail[0] ?? "") && tail[1] === "delete") return askIt(`wrangler ${tail.slice(0, 2).join(" ")}`, human);
+      if (["deploy", "publish", "rollback"].includes(tail[0] ?? "") || (tail[0] === "versions" && !["list", "view"].includes(tail[1] ?? "")) || (tail[0] === "pages" && tail[1] === "deploy") || (tail[0] === "secret" && tail[1] === "put") || (tail[0] === "d1" && tail[1] === "execute" && /--remote/.test(joined)) || /^kv:key$/.test(tail[0] ?? "") && tail[1] === "delete") return askIt(`wrangler ${tail.slice(0, 2).join(" ")}`, human);
       return [];
     case "vercel":
       if (tail[0] === "rm" || tail[0] === "remove") return denyIt("vercel rm", never);
@@ -716,24 +1043,35 @@ function publishRules(s: Stage): Decision[] {
     case "fly":
     case "flyctl":
       if (tail[0] === "apps" && tail[1] === "destroy") return denyIt("fly apps destroy", never);
-      if (tail[0] === "deploy" || tail[0] === "scale" || tail[0] === "secrets") return askIt(`fly ${tail[0]}`, human);
+      if (tail[0] === "deploy" || tail[0] === "scale" || (tail[0] === "secrets" && tail[1] !== "list")) return askIt(`fly ${tail[0]}`, human);
       return [];
     case "firebase":
       if (/^projects:delete$/.test(tail[0] ?? "")) return denyIt("firebase projects:delete", never);
       if (tail[0] === "deploy") return askIt("firebase deploy", human);
       return [];
-    case "gcloud":
-      if (tail.includes("delete")) return denyIt(`gcloud ${tail.slice(0, 3).join(" ")}`, never);
-      if (tail.includes("deploy")) return askIt(`gcloud ${tail.slice(0, 3).join(" ")}`, human);
+    case "gcloud": {
+      const g = tail.join(" ");
+      if (GCLOUD_DESTROY.test(g) || (tail[0] === "storage" && tail[1] === "rm" && RECURSIVE_FLAG.test(joined))) return denyIt(`gcloud ${tail.slice(0, 3).join(" ")}`, never);
+      if (tail[1] === "deploy" || (tail[0] === "deploy" && tail.length > 2 && !/^(list|describe|get)/.test(tail[2]))) return askIt(`gcloud ${tail.slice(0, 3).join(" ")}`, human);
       return [];
-    case "aws":
-      if (/\b(s3 rb|terminate-instances|delete-db-instance|delete-stack|delete-function|delete-table|delete-bucket|delete-user|delete-role|delete-cluster)\b/.test(joined) || (/\bs3 rm\b/.test(joined) && /--recursive/.test(joined))) return denyIt(`aws ${tail.slice(0, 2).join(" ")}`, never);
-      if (/\b(deploy|update-function-code|update-service|put-bucket-policy|s3 sync)\b/.test(joined)) return askIt(`aws ${tail.slice(0, 2).join(" ")}`, human);
+    }
+    case "gsutil":
+      if (tail[0] === "rb" || (tail[0] === "rm" && RECURSIVE_FLAG.test(joined))) return denyIt(`gsutil ${tail.slice(0, 2).join(" ")}`, never);
       return [];
-    case "az":
-      if (tail.includes("delete")) return denyIt(`az ${tail.slice(0, 3).join(" ")}`, never);
-      if (tail.includes("deploy") || tail.includes("create")) return askIt(`az ${tail.slice(0, 3).join(" ")}`, human);
+    case "aws": {
+      const svc = tail[0] ?? "";
+      const op = tail[1] ?? "";
+      if ((svc === "s3" && op === "rb") || (svc === "s3" && op === "rm" && /--recursive\b/.test(joined) && !dryRun) || AWS_DESTROY.test(op)) return denyIt(`aws ${svc} ${op}`, never);
+      if ((svc === "s3" && op === "sync") || AWS_DEPLOY.test(op) || (svc === "deploy" && op !== "" && !/^(list|get|batch-get|describe)-/.test(op))) return askIt(`aws ${svc} ${op}`, human);
       return [];
+    }
+    case "az": {
+      if (/^(repos|boards|pipelines|devops|artifacts)$/.test(tail[0] ?? "")) return [];
+      const a = tail.join(" ");
+      if (AZ_DESTROY.test(a)) return denyIt(`az ${tail.slice(0, 3).join(" ")}`, never);
+      if (AZ_DEPLOY.test(a)) return askIt(`az ${tail.slice(0, 3).join(" ")}`, human);
+      return [];
+    }
     case "terraform":
     case "tofu":
       if (tail[0] === "destroy" || (tail[0] === "apply" && /-destroy\b/.test(joined))) return denyIt(`${s.cmd} destroy`, never);
@@ -744,8 +1082,8 @@ function publishRules(s: Stage): Decision[] {
       if (tail[0] === "up") return askIt("pulumi up", human);
       return [];
     case "kubectl":
-      if (tail[0] === "delete" && (tail.includes("namespace") || tail.includes("ns") || /\s(--all|-A|--all-namespaces)\b/.test(joined))) return denyIt("kubectl delete across a namespace", never);
-      if (tail[0] === "delete" || tail[0] === "apply" || tail[0] === "drain" || (tail[0] === "rollout" && tail[1] !== "status")) return askIt(`kubectl ${tail.slice(0, 2).join(" ")}`, human);
+      if (tail[0] === "delete" && !dryRun && (tail.includes("namespace") || tail.includes("ns") || /\s(--all|-A|--all-namespaces)\b/.test(joined))) return denyIt("kubectl delete across a namespace", never);
+      if (tail[0] === "delete" || tail[0] === "apply" || tail[0] === "drain" || (tail[0] === "rollout" && !["status", "history"].includes(tail[1] ?? ""))) return askIt(`kubectl ${tail.slice(0, 2).join(" ")}`, human);
       return [];
     case "helm":
       if (["install", "upgrade", "uninstall", "delete", "rollback"].includes(tail[0] ?? "")) return askIt(`helm ${tail[0]}`, human);
@@ -768,6 +1106,15 @@ function publishRules(s: Stage): Decision[] {
       return [];
   }
 }
+
+const RECURSIVE_FLAG = /(^|\s)(-r|-R|--recursive)(\s|$)/;
+/** Operations that remove a whole account, project, cluster, database, bucket or app. Anything narrower (one blob, one image tag, one lock) passes. */
+const AWS_DESTROY = /^(terminate-instances|delete-db-instance|delete-db-cluster|delete-stack|delete-function|delete-table|delete-bucket|delete-user|delete-role|delete-cluster)$/;
+const AWS_DEPLOY = /^(deploy|update-function-code|update-service|put-bucket-policy|create-deployment)$/;
+const GCLOUD_DESTROY = /^(projects delete|sql instances delete|firestore databases delete|storage buckets delete|container clusters delete|compute (?:instances|disks) delete|run services delete|functions delete|iam service-accounts delete|spanner instances delete|bigtable instances delete|redis instances delete|filestore instances delete|artifacts repositories delete|app services delete)(\s|$)/;
+const AZ_DESTROY = /^(group delete|aks delete|sql (?:server|db|mi) delete|storage account delete|vm delete|vmss delete|webapp delete|functionapp delete|keyvault (?:delete|purge)|cosmosdb delete|postgres (?:server|flexible-server) delete|mysql (?:server|flexible-server) delete|acr delete|containerapp delete|appservice plan delete|staticwebapp delete)(\s|$)/;
+/** Deploy-shaped creates only: `az deployment ... create`, `az webapp up`, `az containerapp up`. Creating a tag, a work item or an app registration is not a deploy. */
+const AZ_DEPLOY = /^(deployment(?: \S+)* create|webapp (?:up|deploy|deployment)|containerapp (?:up|create)|functionapp (?:deploy|deployment))(\s|$)/;
 
 /** Snapshot and baseline refresh commands: `vitest -u`, `npm run typecheck:baseline`, `cargo insta accept`. */
 function baselineRefreshRules(s: Stage): Decision[] {
@@ -798,10 +1145,20 @@ function interpreterRules(s: Stage): Decision[] {
         : deny("shell.hook-tamper", `${s.cmd} inline code touches hook configuration`, "Hook wiring stays as it is. Tell the user if a hook blocks legitimate work."),
     );
   }
-  if (DESTRUCTIVE_CODE.test(code)) {
-    out.push(ask("shell.interpreter-destructive", `${s.cmd} inline code deletes directory trees`, "Inline code cannot be checked the way a shell command can. Run the deletion as a plain command (`rm -rf <path>`) so the target is visible, or ask the user."));
+  const what = destructiveCodeKind(code, s.cmd);
+  if (what !== null) {
+    out.push(ask("shell.interpreter-destructive", `${s.cmd} inline code ${what}`, "Inline code cannot be checked the way a shell command can. Run the deletion as a plain command (`rm -rf <path>`) so the target is visible, or ask the user."));
   }
   return out;
+}
+
+/** What the inline code deletes, or null when it deletes nothing the guard recognises. */
+function destructiveCodeKind(code: string, cmd: string): string | null {
+  if (DESTRUCTIVE_CODE.test(code)) return "deletes a directory tree";
+  if (NODE_FS_IMPORT.test(code) && FS_DELETE_CALL.test(code) && /\brecursive\b/.test(code)) return "deletes a directory tree";
+  if (EXEC_HINT.test(code) && DESTRUCTIVE_SHELL.test(code)) return "runs a recursive delete through a shell";
+  if (cmd === "perl" && /\bunlink\b/.test(code) && PERL_WALK.test(code)) return "unlinks every file a glob or directory walk finds";
+  return null;
 }
 
 function writeTargetsOf(s: Stage): string[] {
@@ -822,8 +1179,12 @@ function writeTargetsOf(s: Stage): string[] {
     case "move":
     case "copy-item":
     case "move-item":
-      if (positionals.length >= 2) targets.push(positionals[positionals.length - 1]);
+    case "cpi":
+    case "mi": {
+      const { dest } = copyOperands(s);
+      if (dest !== undefined) targets.push(dest);
       break;
+    }
     case "truncate":
     case "touch":
     case "mkdir":
@@ -844,6 +1205,9 @@ function writeTargetsOf(s: Stage): string[] {
 function writeRules(target: string, s: Stage, ctx: Context): Decision[] {
   if (isBlockDevice(target)) {
     return [deny("shell.disk-destroy", `${s.cmd} writes to ${target}`, "Raw devices are never written from a coding task.")];
+  }
+  if (PWSH_PROFILE.test(target)) {
+    return [deny("shell.write-home-config", `${s.cmd} writes the PowerShell profile (${target}), a shell rc file in the home directory`, "The shell profile is the user's configuration, like ~/.bashrc. Agent sessions do not change it; ask the user.")];
   }
   const info: PathInfo = classifyPath(target, ctx);
   const shown = info.rel ?? info.abs;

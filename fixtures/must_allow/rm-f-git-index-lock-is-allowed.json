@@ -1,0 +1,11 @@
+{
+  "name": "rm -f .git/index.lock is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -f .git/index.lock"
+    }
+  },
+  "near": "shell.rm-git-dir",
+  "source": "BUG-2026-017"
+}

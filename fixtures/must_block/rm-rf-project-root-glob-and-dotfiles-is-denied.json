@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf /home/dev/project/* /home/dev/project/.* is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf /home/dev/project/* /home/dev/project/.*"
+    }
+  },
+  "rule": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-016"
+}

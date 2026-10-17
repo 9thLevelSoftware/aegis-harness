@@ -1,0 +1,14 @@
+{
+  "name": "Edit of a workflow adding if: always() to an upload step asks",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": ".github/workflows/ci.yml",
+      "old_string": "      - run: npm test",
+      "new_string": "      - run: npm test\n      - uses: actions/upload-artifact@v4\n        if: always()\n        with:\n          name: test-results\n          path: test-results/",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.ci-config",
+  "source": "BUG-2026-017"
+}

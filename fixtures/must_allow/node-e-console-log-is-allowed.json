@@ -1,0 +1,11 @@
+{
+  "name": "node -e console.log(1) is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "node -e 'console.log(1)'"
+    }
+  },
+  "near": "shell.interpreter-destructive",
+  "source": "BUG-2026-016"
+}

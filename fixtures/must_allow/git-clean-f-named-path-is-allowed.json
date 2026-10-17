@@ -1,0 +1,11 @@
+{
+  "name": "git clean -f -- dist/ is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git clean -f -- dist/"
+    }
+  },
+  "near": "shell.git-clean",
+  "source": "BUG-2026-017"
+}

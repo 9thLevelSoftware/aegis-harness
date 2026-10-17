@@ -1,0 +1,12 @@
+{
+  "name": "Write of a package.json with a jest section is denied",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "package.json",
+      "content": "{\n  \"name\": \"app\",\n  \"scripts\": { \"test\": \"jest\" },\n  \"jest\": {}\n}\n"
+    }
+  },
+  "rule": "edit.manifest-lint-section",
+  "source": "BUG-2026-017"
+}

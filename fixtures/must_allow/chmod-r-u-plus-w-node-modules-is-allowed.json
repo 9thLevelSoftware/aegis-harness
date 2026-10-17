@@ -1,0 +1,11 @@
+{
+  "name": "chmod -R u+w node_modules is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "chmod -R u+w node_modules"
+    }
+  },
+  "near": "shell.permissions-world-writable",
+  "source": "BUG-2026-017"
+}

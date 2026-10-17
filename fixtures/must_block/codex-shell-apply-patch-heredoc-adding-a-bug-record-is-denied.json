@@ -1,0 +1,12 @@
+{
+  "name": "Codex apply_patch through the shell tool (heredoc) adding a file under .harness/memory/bugs is denied",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "shell",
+    "tool_input": {
+      "command": ["bash", "-lc", "apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: .harness/memory/bugs/BUG-2026-099.yaml\n+incident_id: BUG-2026-099\n+status: open\n*** End Patch\nEOF"]
+    }
+  },
+  "rule": "edit.harness-dir",
+  "source": "BUG-2026-018"
+}

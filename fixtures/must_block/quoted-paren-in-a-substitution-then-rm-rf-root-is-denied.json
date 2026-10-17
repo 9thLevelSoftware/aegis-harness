@@ -1,0 +1,13 @@
+{
+  "name": "rm -rf / after a quoted ) inside $( ) is denied",
+  "agent": "claude",
+  "platform": "posix",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo $(echo ')') && rm -rf /"
+    }
+  },
+  "rule": "shell.rm-recursive-root",
+  "source": "BUG-2026-016"
+}

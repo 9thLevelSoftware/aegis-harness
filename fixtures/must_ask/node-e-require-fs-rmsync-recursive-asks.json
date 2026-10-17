@@ -1,0 +1,11 @@
+{
+  "name": "node -e require(\"fs\").rmSync(..., {recursive: true}) asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "node -e 'require(\"fs\").rmSync(\"dist\",{recursive:true,force:true})'"
+    }
+  },
+  "rule": "shell.interpreter-destructive",
+  "source": "BUG-2026-016"
+}

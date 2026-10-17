@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf \"${BUILD_DIR:?}\" asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf \"${BUILD_DIR:?}\""
+    }
+  },
+  "rule": "shell.rm-unresolved-variable",
+  "source": "BUG-2026-017"
+}

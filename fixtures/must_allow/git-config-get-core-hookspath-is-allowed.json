@@ -1,0 +1,11 @@
+{
+  "name": "git config --get core.hooksPath is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git config --get core.hooksPath"
+    }
+  },
+  "near": "shell.hook-bypass",
+  "source": "BUG-2026-017"
+}

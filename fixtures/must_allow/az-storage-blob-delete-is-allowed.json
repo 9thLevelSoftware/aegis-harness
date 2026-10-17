@@ -1,0 +1,11 @@
+{
+  "name": "az storage blob delete of one blob is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "az storage blob delete -c c -n x --account-name st"
+    }
+  },
+  "near": "shell.remote-destroy",
+  "source": "BUG-2026-017"
+}

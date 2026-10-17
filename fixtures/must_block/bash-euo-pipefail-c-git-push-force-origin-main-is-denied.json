@@ -1,0 +1,13 @@
+{
+  "name": "bash -euo pipefail -c git push --force origin main is denied",
+  "agent": "claude",
+  "platform": "posix",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash -euo pipefail -c 'git push --force origin main'"
+    }
+  },
+  "rule": "shell.git-force-push",
+  "source": "BUG-2026-016"
+}

@@ -1,0 +1,12 @@
+{
+  "name": "Codex apply_patch through the shell tool after cd && is still parsed, and a file under .harness is denied",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "shell",
+    "tool_input": {
+      "command": "cd /home/dev/project && apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: .harness/metrics.jsonl\n+{}\n*** End Patch\nEOF"
+    }
+  },
+  "rule": "edit.harness-dir",
+  "source": "BUG-2026-018"
+}

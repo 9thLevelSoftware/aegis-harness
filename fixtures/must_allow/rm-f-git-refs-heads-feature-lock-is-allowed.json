@@ -1,0 +1,11 @@
+{
+  "name": "rm -f .git/refs/heads/feature.lock is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -f .git/refs/heads/feature.lock"
+    }
+  },
+  "near": "shell.rm-git-dir",
+  "source": "BUG-2026-017"
+}

@@ -21,13 +21,32 @@ export interface SecretHit {
   severity: SecretSeverity;
 }
 
+/**
+ * A PEM private key is a header followed by a body: either a line of 40 or
+ * more base64 characters right after the header (a real or an escaped line
+ * break), or a non-empty body of base64, whitespace and PEM header fields
+ * closed by the matching END marker. A bare header, or a header and footer
+ * with code between them, is a string a PEM parser, a secret scanner or a
+ * grep needs, not key material.
+ */
+const PEM_TYPE = "(?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?";
+// A real or an escaped (`\n` inside a string literal) line break.
+const LINE_BREAK = "(?:\\r?\\n|(?:\\\\r)?\\\\n)";
+// Base64, whitespace, the `Proc-Type:` / `DEK-Info:` fields of an encrypted key, escaped line breaks.
+// A dash may not start a `-----` marker, so the body never runs across another header.
+const PEM_BODY_CHAR = "(?:[A-Za-z0-9+/=:,\\s]|-(?!----)|\\\\[rn])";
+const PRIVATE_KEY_BLOCK = new RegExp(
+  `-----BEGIN (${PEM_TYPE})-----(?:[ \\t]*${LINE_BREAK}[ \\t]*[A-Za-z0-9+/=]{40,}|\\s*[A-Za-z0-9+/=:,-]${PEM_BODY_CHAR}*?-----END \\1-----)`,
+  "g",
+);
+
 export const SECRET_PATTERNS: readonly SecretPattern[] = [
   { name: "aws-access-key", re: /\b(?:AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA)[0-9A-Z]{16}\b/g, severity: "deny" },
   { name: "openai-project-key", re: /\bsk-proj-[A-Za-z0-9_-]{20,}/g, severity: "deny" },
   { name: "anthropic-key", re: /\bsk-ant-[A-Za-z0-9_-]{20,}/g, severity: "deny" },
   { name: "sk-prefixed-key", re: /\bsk-[A-Za-z0-9]{20,}\b/g, severity: "deny" },
   { name: "xai-key", re: /\bxai-[A-Za-z0-9]{20,}\b/g, severity: "deny" },
-  { name: "private-key-block", re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g, severity: "deny" },
+  { name: "private-key-block", re: PRIVATE_KEY_BLOCK, severity: "deny" },
   { name: "github-token", re: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/g, severity: "deny" },
   { name: "github-fine-grained-token", re: /\bgithub_pat_[A-Za-z0-9_]{22,}\b/g, severity: "deny" },
   { name: "aws-secret-key", re: /\baws_secret_access_key\b\s*[=:]\s*["']?[A-Za-z0-9/+=]{40}\b/gi, severity: "deny" },

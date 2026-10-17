@@ -43,7 +43,11 @@ export function hasVariable(p: string): boolean {
   return /\$\{?[A-Za-z_]/.test(p) || /%[A-Za-z_][A-Za-z0-9_]*%/.test(p);
 }
 
-const TEMP_VARS = /^(\$\{?(TMPDIR|TMP|TEMP|RUNNER_TEMP)\}?|%(TMP|TEMP|RUNNER_TEMP)%)(\/|$)/i;
+/**
+ * `$TMPDIR`, `${TMPDIR:-/tmp}` (default, assign or guard expansions), PowerShell
+ * `$env:TEMP` and cmd `%TEMP%`, alone or followed by a separator.
+ */
+const TEMP_VARS = /^(\$\{?(TMPDIR|TMP|TEMP|RUNNER_TEMP)(:[-=?][^}]*)?\}?|\$env:(TMP|TEMP|RUNNER_TEMP)|%(TMP|TEMP|RUNNER_TEMP)%)(\/|$)/i;
 const TEMP_DIRS = /^(\/tmp|\/var\/tmp|\/private\/tmp|\/private\/var\/tmp|\/dev\/shm|[A-Za-z]:\/Users\/[^/]+\/AppData\/Local\/Temp|[A-Za-z]:\/Windows\/Temp|[A-Za-z]:\/Temp)(\/|$)/i;
 
 /** A location that is understood to be scratch space on any OS. */
@@ -53,11 +57,26 @@ export function isTempPath(p: string): boolean {
 }
 
 /**
+ * On Windows, Git Bash and Cygwin spell drive paths `/c/Users/dev` and
+ * `/cygdrive/c/Users/dev`. Rewrite them to `C:/Users/dev` so they compare with
+ * the project root and home directory. Not applied on POSIX, where `/c` is an
+ * ordinary directory; `/mnt/c` (WSL) is a real path on a POSIX platform and is
+ * left alone.
+ */
+export function driveForm(p: string, platform: Platform): string {
+  if (platform !== "windows") return p;
+  const s = toPosix(p);
+  const m = /^\/(?:cygdrive\/)?([A-Za-z])(?=\/|$)/.exec(s);
+  if (!m) return s;
+  return `${m[1].toUpperCase()}:${s.slice(m[0].length)}`;
+}
+
+/**
  * Expand `~`, `$HOME`, `%USERPROFILE%` to the home directory when known, or to
  * the marker `~` when not, then make the path absolute against `base`.
  */
-export function resolvePath(p: string, base: string, home?: string): string {
-  let s = toPosix(p);
+export function resolvePath(p: string, base: string, home?: string, platform: Platform = "posix"): string {
+  let s = driveForm(toPosix(p), platform);
   s = s.replace(/^(~|\$\{?HOME\}?|%USERPROFILE%)(?=\/|$)/i, home ? toPosix(home) : "~");
   if (!isAbsolute(s) && !s.startsWith("~")) {
     s = `${toPosix(base)}/${s}`;
@@ -71,8 +90,8 @@ function fold(s: string, platform: Platform): string {
 
 /** Project-relative path, or `null` when `abs` is not inside `root`. */
 export function relativeTo(root: string, abs: string, platform: Platform): string | null {
-  const r = normalize(root);
-  const a = normalize(abs);
+  const r = normalize(driveForm(root, platform));
+  const a = normalize(driveForm(abs, platform));
   if (fold(a, platform) === fold(r, platform)) return ".";
   const prefix = r.endsWith("/") ? r : `${r}/`;
   if (fold(a, platform).startsWith(fold(prefix, platform))) return a.slice(prefix.length);
@@ -81,7 +100,7 @@ export function relativeTo(root: string, abs: string, platform: Platform): strin
 
 /** True when `abs` sits under the home directory (or the unexpanded `~`). */
 export function relativeToHome(abs: string, home: string | undefined, platform: Platform): string | null {
-  const a = normalize(abs);
+  const a = normalize(driveForm(abs, platform));
   if (a === "~") return ".";
   if (a.startsWith("~/")) return a.slice(2);
   if (!home) return null;
@@ -104,6 +123,19 @@ export function isFilesystemRoot(abs: string): boolean {
  * within one segment, `{a,b}` alternates. Matching is case-insensitive on Windows.
  */
 export function globToRegExp(glob: string, platform: Platform): RegExp {
+  const key = `${platform}\0${glob}`;
+  let re = GLOB_CACHE.get(key);
+  if (re === undefined) {
+    re = compileGlob(glob, platform);
+    GLOB_CACHE.set(key, re);
+  }
+  return re;
+}
+
+/** Compiled globs, keyed by platform and pattern. The policy lists are small and static. */
+const GLOB_CACHE = new Map<string, RegExp>();
+
+function compileGlob(glob: string, platform: Platform): RegExp {
   // `dir/**` protects the directory itself as well as everything under it:
   // `rm -rf .harness` is the same act as `rm -rf .harness/*`.
   if (glob.endsWith("/**")) {

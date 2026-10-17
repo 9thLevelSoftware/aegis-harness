@@ -1,0 +1,11 @@
+{
+  "name": "kubectl apply --dry-run=client is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "kubectl apply --dry-run=client -f k8s/"
+    }
+  },
+  "near": "shell.deploy-or-publish",
+  "source": "BUG-2026-017"
+}

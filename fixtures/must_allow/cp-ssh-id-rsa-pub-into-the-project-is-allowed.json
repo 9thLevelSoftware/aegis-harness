@@ -1,0 +1,11 @@
+{
+  "name": "cp ~/.ssh/id_rsa.pub . is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp ~/.ssh/id_rsa.pub ."
+    }
+  },
+  "near": "shell.credential-read",
+  "source": "BUG-2026-016"
+}

@@ -1,0 +1,34 @@
+incident_id: BUG-2026-017
+date_recorded: 2026-10-16
+status: mitigated
+title: Nineteen rules fired on ordinary work before the guard had run in a real repository
+observed_on: process (aegis-harness, review of commit 96a851c before the first npm publish)
+source:
+  - kind: session
+    note: >-
+      a false-positive lens ran about 2,700 everyday tool calls (JS, Python, Rust, Go, Gradle,
+      git, docker, cloud CLIs, Windows PowerShell) through dist/guard.mjs; 430 toolchain calls
+      passed clean, nineteen rule shapes produced wrong denies or asks
+root_cause: >-
+  Patterns were written as substrings or bare word boundaries and the remediation text was never
+  executed. `\bfit(` matched `model.fit(X, y)`; `"jest":` matched a devDependency; any
+  downloader piped into python or node was "remote code execution", including
+  `python3 -m json.tool`; every path under `.git/` "destroyed history", including a stale
+  `index.lock`; `tail.includes("delete")` made one Azure blob a shared-infrastructure wipe;
+  `\+w$` made `chmod -R u+w` world-writable; a conditional `t.Skip` was a deleted test; and the
+  rule's own suggested spelling, `rm -rf "${VAR:?unset}/sub"`, was itself asked. The must_allow
+  neighbours were the nearest imagined call, not the nearest common one.
+impact: >-
+  On Codex every ask is a deny, so a Go, data-science or Azure project would have hit a hard
+  deny on a routine edit within its first session. BUG-2026-015 records what follows: the hook
+  is disabled.
+countermeasure:
+  kind: process
+  ref: CONTRIBUTING.md#before-a-release
+  change: >-
+    Each misfire got the must_allow fixture that would have caught it and a narrower rule. The
+    must_allow neighbour of a rule is the most common legitimate call in that rule's family, and
+    the pre-release probe pass replays the everyday-call corpus against each release candidate.
+must_block_fixture: fixtures/must_block/curl-python3-stdin-dash-is-denied.json
+must_allow_fixture: fixtures/must_allow/curl-piped-into-python-json-tool-is-allowed.json
+expiry_policy: "re-evaluate on the next major model upgrade"

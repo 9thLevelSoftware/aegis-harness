@@ -1,0 +1,12 @@
+{
+  "name": "Codex shell apply_patch heredoc followed by rm -rf / is denied (the trailing command is still inspected)",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "shell",
+    "tool_input": {
+      "command": ["bash", "-lc", "apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: src/new.ts\n+export const x = 1;\n*** End Patch\nEOF\nrm -rf /"]
+    }
+  },
+  "rule": "shell.rm-recursive-root",
+  "source": "BUG-2026-018"
+}

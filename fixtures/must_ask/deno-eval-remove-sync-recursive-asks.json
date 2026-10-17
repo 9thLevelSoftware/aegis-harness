@@ -1,0 +1,11 @@
+{
+  "name": "deno eval Deno.removeSync(..., {recursive: true}) asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "deno eval 'Deno.removeSync(\".git\",{recursive:true})'"
+    }
+  },
+  "rule": "shell.interpreter-destructive",
+  "source": "BUG-2026-016"
+}

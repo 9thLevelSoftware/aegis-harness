@@ -1,0 +1,13 @@
+{
+  "name": "echo with a line continuation before out.txt is allowed",
+  "agent": "claude",
+  "platform": "posix",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo x > \\\n  out.txt"
+    }
+  },
+  "near": "shell.write-harness",
+  "source": "BUG-2026-016"
+}

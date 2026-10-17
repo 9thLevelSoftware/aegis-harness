@@ -87,9 +87,9 @@ export interface Decision {
   verdict: Verdict;
   /** Stable rule id such as `shell.rm-recursive-root`. Absent when nothing matched. */
   rule?: string;
-  /** One line saying what matched. Shown to the agent and to the user. */
+  /** One line saying what matched. Shown to the agent on deny; on ask it is the user's prompt text and also reaches the agent via additionalContext. */
   reason?: string;
-  /** What to do instead. Injected into the agent's context on deny or ask. */
+  /** What to do instead. Reaches the agent in the deny reason, and on ask (Claude Code) through `additionalContext`. */
   remediation?: string;
 }
 

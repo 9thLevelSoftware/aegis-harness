@@ -1,0 +1,6 @@
+{
+  "name": "kubectl delete namespace prod --dry-run=none is denied (dry-run=none is not a dry run)",
+  "payload": { "tool_name": "Bash", "tool_input": { "command": "kubectl delete namespace prod --dry-run=none" } },
+  "rule": "shell.remote-destroy",
+  "source": "BUG-2026-016"
+}

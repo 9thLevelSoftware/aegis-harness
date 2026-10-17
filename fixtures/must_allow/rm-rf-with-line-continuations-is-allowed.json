@@ -1,0 +1,13 @@
+{
+  "name": "rm -rf with line continuations is allowed",
+  "agent": "claude",
+  "platform": "posix",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf \\\n  dist \\\n  build"
+    }
+  },
+  "near": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-017"
+}

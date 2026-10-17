@@ -1,0 +1,11 @@
+{
+  "name": "git clean -fdX (ignored files only) is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git clean -fdX"
+    }
+  },
+  "near": "shell.git-clean",
+  "source": "BUG-2026-017"
+}

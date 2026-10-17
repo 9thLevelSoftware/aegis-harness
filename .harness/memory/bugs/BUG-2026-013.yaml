@@ -30,7 +30,8 @@ countermeasure:
     - shell.write-home-config
   change: >-
     Paths are classified lexically against the project root and the home directory on every write
-    and delete. Outside the project asks; home credentials and agent configuration deny.
+    and delete. Edits outside the project ask; recursive deletes outside the project deny;
+    home credentials and agent configuration deny.
 must_block_fixture: fixtures/must_block/rm-rf-sibling-project-is-denied.json
 must_allow_fixture: fixtures/must_allow/write-under-tmp-scratch-is-allowed.json
 expiry_policy: "re-evaluate on the next major model upgrade"

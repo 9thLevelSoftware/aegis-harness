@@ -1,0 +1,14 @@
+{
+  "name": "Edit adding a pytest.skip guarded by shutil.which is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "tests/test_foo.py",
+      "old_string": "def test_container():",
+      "new_string": "def test_container():\n    if shutil.which('docker') is None:\n        pytest.skip('docker not installed')",
+      "replace_all": false
+    }
+  },
+  "near": "edit.test-skip",
+  "source": "BUG-2026-017"
+}

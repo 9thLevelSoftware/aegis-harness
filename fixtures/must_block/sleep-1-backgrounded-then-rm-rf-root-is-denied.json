@@ -1,0 +1,13 @@
+{
+  "name": "sleep 1& rm -rf / (backgrounded without a space) is denied",
+  "agent": "claude",
+  "platform": "posix",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sleep 1& rm -rf /"
+    }
+  },
+  "rule": "shell.rm-recursive-root",
+  "source": "BUG-2026-016"
+}

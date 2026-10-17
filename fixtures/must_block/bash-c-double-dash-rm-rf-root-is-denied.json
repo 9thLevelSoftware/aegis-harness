@@ -1,0 +1,11 @@
+{
+  "name": "bash -c -- 'rm -rf /' is denied (the -- after -c does not hide the command)",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash -c -- 'rm -rf /'"
+    }
+  },
+  "rule": "shell.rm-recursive-root",
+  "source": "BUG-2026-016"
+}

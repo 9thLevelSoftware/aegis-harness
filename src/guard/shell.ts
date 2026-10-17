@@ -152,7 +152,10 @@ function splitTop(s: string, dialect: ShellDialect): Split {
   let inSingle = false;
   let inDouble = false;
   let backtickStart = -1;
-  const subStarts: number[] = [];
+  // Open `$(` substitutions (start >= 0) and plain parentheses inside them (start -1).
+  // `outerDouble` remembers whether the enclosing text was double-quoted, because
+  // quoting starts afresh inside `$( )` and resumes when it closes.
+  const subs: { start: number; outerDouble: boolean }[] = [];
   let parenDepth = 0;
   let braceDepth = 0;
 
@@ -177,6 +180,12 @@ function splitTop(s: string, dialect: ShellDialect): Split {
       continue;
     }
     if (c === escapeChar) {
+      const skip = continuationLength(s, i);
+      if (skip > 0) {
+        // Line continuation: the escape and the newline produce nothing.
+        i += skip - 1;
+        continue;
+      }
       cur += c + (next ?? "");
       i++;
       continue;
@@ -189,17 +198,27 @@ function splitTop(s: string, dialect: ShellDialect): Split {
       }
       continue;
     }
-    if (subStarts.length > 0) {
+    if (subs.length > 0) {
       cur += c;
-      if (c === "(") subStarts.push(-1);
+      if (inDouble) {
+        if (c === '"') inDouble = false;
+        continue;
+      }
+      if (c === '"') inDouble = true;
+      else if (c === "'") inSingle = true;
+      else if (c === "(") subs.push({ start: -1, outerDouble: false });
       else if (c === ")") {
-        const start = subStarts.pop();
-        if (start !== undefined && start >= 0) substitutions.push(s.slice(start, i));
+        const sub = subs.pop();
+        if (sub !== undefined && sub.start >= 0) {
+          inDouble = sub.outerDouble;
+          // Only the outermost substitution is recorded; parsing it finds the inner ones once.
+          if (subs.length === 0) substitutions.push(s.slice(sub.start, i));
+        }
       } else if (c === "$" && next === "(") {
-        subStarts.push(i + 2);
+        subs.push({ start: i + 2, outerDouble: false });
         cur += next;
         i++;
-      } else if (c === '"') inDouble = !inDouble;
+      }
       continue;
     }
     if (c === '"') {
@@ -208,7 +227,8 @@ function splitTop(s: string, dialect: ShellDialect): Split {
       continue;
     }
     if (c === "$" && next === "(") {
-      subStarts.push(i + 2);
+      subs.push({ start: i + 2, outerDouble: inDouble });
+      inDouble = false;
       cur += c + next;
       i++;
       continue;
@@ -267,7 +287,8 @@ function splitTop(s: string, dialect: ShellDialect): Split {
       continue;
     }
     if (c === "&") {
-      if (next === ">" || prev === ">" || /\d/.test(prev)) {
+      // `&>file`, `>&2`, `2>&1`, `<&0` are redirections; `sleep 1& rm x` backgrounds `sleep 1`.
+      if (next === ">" || /[<>]\d*$/.test(cur)) {
         cur += c;
         continue;
       }
@@ -285,6 +306,17 @@ function splitTop(s: string, dialect: ShellDialect): Split {
     commands: commands.map((st) => st.filter((x) => x.trim() !== "")).filter((st) => st.length > 0),
     substitutions,
   };
+}
+
+/**
+ * Length of a line continuation starting at the escape character at `i`
+ * (`\` + newline in sh, backtick + newline in PowerShell, `^` + newline in cmd),
+ * with or without a carriage return; 0 when it is not one.
+ */
+function continuationLength(s: string, i: number): number {
+  if (s[i + 1] === "\n") return 2;
+  if (s[i + 1] === "\r" && s[i + 2] === "\n") return 3;
+  return 0;
 }
 
 interface Token {
@@ -316,7 +348,15 @@ function tokenize(stage: string, dialect: ShellDialect): Token[] {
       else cur += c;
       continue;
     }
-    if (c === escapeChar && next !== undefined && !(inDouble && dialect === "posix" && !'"$`\\\n'.includes(next))) {
+    if (c === escapeChar) {
+      const skip = continuationLength(stage, i);
+      if (skip > 0) {
+        // Line continuation, inside double quotes too: it yields no character and no token.
+        i += skip - 1;
+        continue;
+      }
+    }
+    if (c === escapeChar && next !== undefined && !(inDouble && dialect === "posix" && !'"$`\\'.includes(next))) {
       cur += next;
       has = true;
       i++;
@@ -329,7 +369,13 @@ function tokenize(stage: string, dialect: ShellDialect): Token[] {
     }
     if (depth > 0) {
       cur += c;
-      if (c === "(") depth++;
+      if (c === "'" || c === '"') {
+        // A quoted `)` inside `$( )` does not close it; copy the quoted text through.
+        const close = stage.indexOf(c, i + 1);
+        if (close === -1) { cur += stage.slice(i + 1); break; }
+        cur += stage.slice(i + 1, close + 1);
+        i = close;
+      } else if (c === "(") depth++;
       else if (c === ")") depth--;
       continue;
     }
@@ -380,11 +426,13 @@ function buildStage(text: string, dialect: ShellDialect): Stage {
       const isOutput = t.op.includes(">") && !t.op.endsWith("&") && !t.op.startsWith("<");
       const isInput = t.op === "<";
       if (target && target.op === undefined) {
+        i++;
+        // A whitespace-only target (`> ""`) names no file.
+        if (target.text.trim() === "") continue;
         if (isOutput && !target.text.startsWith("&") && target.text !== "/dev/null" && target.text.toLowerCase() !== "nul") {
           writes.push(target.text);
         }
         if (isInput) reads.push(target.text);
-        i++;
       }
       continue;
     }
@@ -526,8 +574,16 @@ function inlineCommandOf(stage: Stage, dialect: ShellDialect): Inline | null {
     for (let i = start; i < argv.length; i++) {
       const a = argv[i];
       if (a === "--") break;
-      if (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(a)) return argv[i + 1] === undefined ? null : { command: argv[i + 1], dialect: "posix" };
-      if (!a.startsWith("-")) break;
+      // `bash -c -- 'cmd'`: the `--` after -c ends option parsing and the next token is still the command.
+      if (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(a)) {
+        const j = argv[i + 1] === "--" ? i + 2 : i + 1;
+        return argv[j] === undefined ? null : { command: argv[j], dialect: "posix" };
+      }
+      // `-o pipefail`, `-euo pipefail`, `+O shopt`, `--rcfile file`: the next token is a value, not the script.
+      if (/^[-+][a-zA-Z]*[oO]$/.test(a) || /^--(rcfile|init-file)$/.test(a)) { i++; continue; }
+      // Any other flag (`-l`, `-x`, `--noprofile`, `--norc`, `+e`) is skipped; the first positional is a script.
+      if (a.startsWith("-") || (a.startsWith("+") && a.length > 1)) continue;
+      break;
     }
     return null;
   }

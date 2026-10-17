@@ -1,0 +1,11 @@
+{
+  "name": "mv .git /tmp/x is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mv .git /tmp/x"
+    }
+  },
+  "rule": "shell.rm-git-dir",
+  "source": "BUG-2026-016"
+}

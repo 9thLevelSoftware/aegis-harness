@@ -25,4 +25,6 @@ await build({ ...common, entryPoints: ["src/index.ts"], outfile: "dist/index.mjs
 
 for (const f of ["dist/guard.mjs", "dist/ah.mjs"]) chmodSync(f, 0o755);
 const size = (f) => `${(readFileSync(f).length / 1024).toFixed(1)} KiB`;
-console.log(`built dist/guard.mjs (${size("dist/guard.mjs")}), dist/ah.mjs (${size("dist/ah.mjs")}), dist/index.mjs (${size("dist/index.mjs")})`);
+// Progress goes to stderr: `prepack` runs this build, and `npm pack --silent > pack.txt`
+// (the CI smoke test) must receive only the tarball name on stdout.
+console.error(`built dist/guard.mjs (${size("dist/guard.mjs")}), dist/ah.mjs (${size("dist/ah.mjs")}), dist/index.mjs (${size("dist/index.mjs")})`);

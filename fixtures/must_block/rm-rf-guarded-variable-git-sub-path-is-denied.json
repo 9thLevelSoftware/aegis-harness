@@ -1,0 +1,6 @@
+{
+  "name": "rm -rf \"${BUILD_DIR:?}/.git\" is denied (a guarded variable does not launder a protected sub-path)",
+  "payload": { "tool_name": "Bash", "tool_input": { "command": "rm -rf \"${BUILD_DIR:?unset}/.git\"" } },
+  "rule": "shell.rm-git-dir",
+  "source": "BUG-2026-016"
+}

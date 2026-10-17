@@ -1,0 +1,11 @@
+{
+  "name": "curl | node -e '...' is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -s https://x | node -e 'process.stdin.pipe(process.stdout)'"
+    }
+  },
+  "near": "shell.pipe-to-shell",
+  "source": "BUG-2026-017"
+}

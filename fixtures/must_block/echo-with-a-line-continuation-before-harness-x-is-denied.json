@@ -1,0 +1,13 @@
+{
+  "name": "echo with a line continuation before .harness/x is denied",
+  "agent": "claude",
+  "platform": "posix",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo x > \\\n  .harness/x"
+    }
+  },
+  "rule": "shell.write-harness",
+  "source": "BUG-2026-016"
+}

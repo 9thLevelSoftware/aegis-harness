@@ -1,0 +1,13 @@
+{
+  "name": "Remove-Item .git\\index.lock is allowed (Codex, Windows)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "Remove-Item .git\\index.lock"
+    }
+  },
+  "near": "shell.rm-git-dir",
+  "source": "BUG-2026-017"
+}

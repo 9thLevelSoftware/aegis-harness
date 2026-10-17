@@ -57,7 +57,7 @@ const KEY_GLOB = /\.(pem|key|p12|pfx|jks|keystore)$|^id_(rsa|ed25519|ecdsa)$/;
 export function classifyPath(input: string, ctx: Context): PathInfo {
   const { policy, platform } = ctx;
   const stripped = input.replace(/^["']+|["']+$/g, "");
-  const abs = resolvePath(stripped, ctx.projectRoot, ctx.homeDir);
+  const abs = resolvePath(stripped, ctx.projectRoot, ctx.homeDir, platform);
   const rel = relativeTo(ctx.projectRoot, abs, platform);
   const homeRel = relativeToHome(abs, ctx.homeDir, platform);
   const variable = hasVariable(stripped);

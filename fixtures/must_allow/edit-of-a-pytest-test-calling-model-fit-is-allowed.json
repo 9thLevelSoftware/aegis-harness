@@ -1,0 +1,14 @@
+{
+  "name": "Edit of a pytest test calling model.fit is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "tests/test_model.py",
+      "old_string": "    model = Model()",
+      "new_string": "    model = Model()\n    model.fit(X_train, y_train)",
+      "replace_all": false
+    }
+  },
+  "near": "edit.test-only",
+  "source": "BUG-2026-017"
+}
