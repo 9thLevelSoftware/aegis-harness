@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf $'\\x2eclaude', ANSI-C quoting, is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf $'\\x2eclaude'"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

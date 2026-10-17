@@ -220,11 +220,12 @@ const WILDCARD = /[*?[]/;
 
 /**
  * One segment of a sh glob as a RegExp. A wildcard does not match a leading
- * dot unless the pattern spells it (sh without dotglob); on Windows it does,
- * as PowerShell and cmd wildcards do, and case folds. A bracket class that is
- * no valid class (`[z-a]`) matches nothing, as it does in bash.
+ * dot unless the pattern spells it (sh without dotglob, Git Bash included);
+ * with `dots` it does, as PowerShell and cmd wildcards do. On Windows it
+ * case folds. A bracket class that is no valid class (`[z-a]`) matches
+ * nothing, as it does in bash.
  */
-function segmentPattern(seg: string, platform: Platform): RegExp {
+function segmentPattern(seg: string, platform: Platform, dots: boolean): RegExp {
   let re = "";
   for (let i = 0; i < seg.length; i++) {
     const c = seg[i];
@@ -237,7 +238,7 @@ function segmentPattern(seg: string, platform: Platform): RegExp {
       i = close;
     } else re += c.replace(/[.+^${}()|\\[\]]/g, "\\$&");
   }
-  const lead = platform !== "windows" && WILDCARD.test(seg[0] ?? "") ? "(?!\\.)" : "";
+  const lead = !dots && WILDCARD.test(seg[0] ?? "") ? "(?!\\.)" : "";
   try {
     return new RegExp(`^${lead}${re}$`, platform === "windows" ? "i" : "");
   } catch {
@@ -286,10 +287,11 @@ export function wildcardReach(input: string, ctx: Context, whole: boolean): Path
   if (!WILDCARD.test(stripped) || hasVariable(stripped)) return undefined;
   const pattern = resolvePath(stripped, ctx.projectRoot, ctx.homeDir, platform).split("/");
   const compiled = new Map<string, RegExp>();
+  const dots = (ctx.shellDialect ?? (platform === "windows" ? "powershell" : "posix")) !== "posix";
   const same = (p: string, seg: string): boolean => {
     if (!WILDCARD.test(p)) return platform === "windows" ? p.toLowerCase() === seg.toLowerCase() : p === seg;
     let re = compiled.get(p);
-    if (re === undefined) compiled.set(p, (re = segmentPattern(p, platform)));
+    if (re === undefined) compiled.set(p, (re = segmentPattern(p, platform, dots)));
     return re.test(seg);
   };
   const reached = (lit: string): PathInfo | undefined => {

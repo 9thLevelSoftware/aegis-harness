@@ -2,7 +2,7 @@ import { classifyPath, isBlockDevice, protectedInside, wildcardReach, type PathI
 import { ALLOW, ask, deny, strictest, type Context, type Decision, type ShellCall } from "../model.ts";
 import { globToRegExp, hasVariable, isTempPath, normalize } from "../paths.ts";
 import { findSecrets, redact } from "../secrets.ts";
-import { allStages, BRACE_LIMIT, flagsOf, normalizeCmd, parseShell, pwshRun, subcommandIndex, type BraceBudget, type Pipeline, type ShellDialect, type Stage } from "../shell.ts";
+import { allStages, BRACE_LIMIT, flagsOf, MAX_DEPTH, normalizeCmd, parseShell, pwshRun, subcommandIndex, tooDeep, type BraceBudget, type Pipeline, type ShellDialect, type Stage } from "../shell.ts";
 import { AH_INIT_VALUED_OPTIONS } from "../../wiring/init-options.ts";
 
 const FORK_BOMB = /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/;
@@ -116,9 +116,12 @@ function pipedCommands(pipelines: readonly Pipeline[], budget: BraceBudget, dept
       if (dialect === undefined || !readsStdinAsCode(sink)) continue;
       const text = sink.hereStrings.length > 0 ? sink.hereStrings.join("\n") : j > 0 ? literalOutput(p.stages[j - 1]) : null;
       if (text === null) continue;
+      if (depth >= MAX_DEPTH) {
+        out.push(tooDeep(text));
+        continue;
+      }
       const inner = parseShell(text, { dialect, budget });
-      out.push(...inner);
-      if (depth < 2) out.push(...pipedCommands(inner, budget, depth + 1));
+      out.push(...inner, ...pipedCommands(inner, budget, depth + 1));
     }
   }
   return out;
@@ -134,6 +137,8 @@ function literalOutput(s: Stage): string | null {
     let k = 0;
     return format.replace(/%[sb]/g, () => values[k++] ?? "").replace(/\\n/g, "\n");
   }
+  // `cat <<'EOF' | sh`: cat with no file passes its here-document through.
+  if ((s.cmd === "cat" || s.cmd === "tee") && s.hereStrings.length > 0 && args.every((a) => a.startsWith("-") || s.cmd === "tee")) return s.hereStrings.join("\n");
   if (ECHOES.has(s.cmd)) {
     while (/^-(?:[neE]+|NoEnumerate|InputObject)$/i.test(args[0] ?? "")) args.shift();
     return args.join(" ").replace(/\\n/g, "\n");
@@ -223,6 +228,10 @@ function stageRules(s: Stage, ctx: Context): Decision[] {
 
   if (s.wrappers.includes("sudo") || s.wrappers.includes("doas") || s.cmd === "runas") {
     out.push(ask("shell.privilege-escalation", `${describe(s)} runs with elevated privileges`, "Elevated commands change the machine, not the project. Ask the user to run it, or explain why the project needs it."));
+  }
+
+  if (s.tooDeep) {
+    out.push(ask("shell.nesting-limit", `part of this command sits more than ${MAX_DEPTH} levels deep in substitutions, subshells or shells it starts, too deep to check`, "Flatten the command so each part can be checked."));
   }
 
   if (s.unexpanded !== undefined) {
@@ -497,20 +506,25 @@ const FIND_MATCH_ALL = /^(?:(?:\.\/)?(?:[*?]*\*[*?]*|\*\/\*)|\^?\.[*+]\$?)$/;
 /**
  * True when a filter at `i` actually narrows the delete: it precedes the action (`-delete`
  * placed first runs on every entry), is not negated (`! -name x` matches everything else),
- * is not a catch-all (`-name '*'`), and has no `-o` between it and the action at its own paren
- * depth (`-name x -o -delete` and `-name x -prune -o -delete` act on the other branch).
+ * is not a catch-all (`-name '*'`), and has no `-o` between it and the action in the group that
+ * joins them (`-name x -o -delete` and `-name x -prune -o -delete` act on the other branch).
  */
 function narrows(argv: readonly string[], i: number, actionAt: number): boolean {
   if (i >= actionAt || !FIND_FILTERS.test(argv[i])) return false;
   if (/^(!|-not)$/.test(argv[i - 1] ?? "")) return false;
   if (FIND_MATCH_ALL.test(argv[i + 1] ?? "")) return false;
+  // Depths are relative to the filter. The shallowest depth on the way to the action is the group
+  // that joins the two; an `-o` there puts them in different branches, one deeper only widens a
+  // group the action still needs (`\( -name a -o -name b \) -delete` deletes both).
   let depth = 0;
+  let joint = 0;
+  const ors: number[] = [];
   for (let j = i + 1; j < actionAt; j++) {
     if (argv[j] === "(") depth++;
-    else if (argv[j] === ")") depth--;
-    else if (depth <= 0 && /^-or?$/.test(argv[j])) return false;
+    else if (argv[j] === ")") joint = Math.min(joint, --depth);
+    else if (/^-or?$/.test(argv[j])) ors.push(depth);
   }
-  return true;
+  return !ors.includes(joint);
 }
 
 function findRules(s: Stage, ctx: Context): Decision[] {

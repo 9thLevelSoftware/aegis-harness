@@ -1,0 +1,13 @@
+{
+  "name": "rm -rf */node_modules from Git Bash does not reach .harness and is allowed (Claude Code, Windows)",
+  "agent": "claude",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf *s/*/node_modules"
+    }
+  },
+  "near": "shell.write-harness",
+  "source": "BUG-2026-019"
+}

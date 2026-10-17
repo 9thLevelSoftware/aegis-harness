@@ -421,3 +421,56 @@ test("brace expansion is budgeted per command, piped text included, so it cannot
   assert.equal(verdictOf(sh(`rm f{1..1000}.txt; echo 'rm g{1..1000}.txt' | sh`)), "ask shell.brace-expansion-limit");
   assert.equal(verdictOf(sh("mkdir -p src/{a,b}/{c,d}; touch src/{a,b}/{c,d}/x.ts")), "allow");
 });
+
+test("here-documents are judged as the stdin they are (BUG-2026-019)", () => {
+  const users = "[" + Array.from({ length: 40 }, (_, i) => `{"id":${i},"tags":["a","b"]}`).join(",") + "]";
+  for (const c of [
+    `cat > fixtures/users.json <<'EOF'\n${users}\nEOF`,
+    `git commit -m "$(cat <<'EOF'\nfix: stop rm -rf .claude in cleanup\nEOF\n)"`,
+    "cat > reset.sh <<'EOF'\nrm -rf /\nEOF",
+    "cat <<'EOF'\n$(rm -rf .claude)\nEOF",
+  ]) assert.equal(verdictOf(sh(c)), "allow", c);
+  for (const c of [
+    "cat <<EOF\n$(rm -rf .claude)\nEOF",
+    "bash <<'EOF'\nrm -rf .claude\nEOF",
+    "cat <<'EOF' | bash\nrm -rf .claude\nEOF",
+    "echo hi # <<EOF\nrm -rf .claude\nEOF",
+    "cat <<A <<B\na\nA\nb\nB\nrm -rf .claude",
+    "bash <<< {y,'x;rm -rf .claude #'}",
+    String.raw`echo $'\' <<EOF'` + "\nrm -rf .claude\nEOF",
+  ]) assert.equal(verdictOf(sh(c)), "deny shell.hook-tamper", c);
+});
+
+test("ANSI-C quoting is decoded before paths are judged (BUG-2026-019)", () => {
+  for (const c of [String.raw`rm -rf $'\x2eclaude'`, String.raw`echo $'\''; rm -rf .claude`, String.raw`echo $$'\' ; rm -rf .claude #'`]) {
+    assert.equal(verdictOf(sh(c)), "deny shell.hook-tamper", c);
+  }
+  assert.equal(verdictOf(sh(String.raw`echo $'it\'s fine'`)), "allow");
+});
+
+test("too deep to read or too long to expand asks, and fast (BUG-2026-019)", () => {
+  assert.equal(verdictOf(sh("( ".repeat(9) + "rm -rf .claude" + " )".repeat(9))), "ask shell.nesting-limit");
+  assert.equal(verdictOf(sh("echo " + "$(echo ".repeat(10) + "x" + ")".repeat(10))), "ask shell.nesting-limit");
+  assert.equal(verdictOf(sh("( ( ( cd sub && make ) ) )")), "allow");
+  const t = performance.now();
+  assert.equal(verdictOf(sh("rm -rf {9007199254740992..9007199254740993}")), "ask shell.brace-expansion-limit");
+  assert.equal(verdictOf(sh("echo " + "{".repeat(50_000))), "allow");
+  assert.ok(performance.now() - t < 2000, "took too long");
+});
+
+test("find: an -o inside the group the action needs still deletes both sides (BUG-2026-019)", () => {
+  assert.equal(verdictOf(sh("find . \\( -name .eslintrc.json -o -name '*.bak' \\) -delete")), "deny shell.write-lint-config");
+  assert.equal(verdictOf(sh("find . \\( -name '*.bak' -o -name .eslintrc.json \\) -delete")), "deny shell.write-lint-config");
+  for (const c of ["find . \\( -name '*.pyc' -o -name '*.pyo' \\) -delete", "find . -name .eslintrc.json -o -name '*.bak' -delete", "find . \\( -name .eslintrc.json -o -name '*.bak' -delete \\)"]) {
+    assert.equal(verdictOf(sh(c)), "allow", c);
+  }
+});
+
+test("Git Bash on Windows: wildcards skip dotfiles as sh does, and case still folds (BUG-2026-019)", () => {
+  const gitBash = { ...WINDOWS_CODEX, shellDialect: "posix" as const };
+  assert.equal(verdictOf(sh("rm -rf *s/*/node_modules", gitBash)), "allow");
+  assert.equal(verdictOf(sh("rm -rf .c*", gitBash)), "deny shell.hook-tamper");
+  assert.equal(verdictOf(sh("rm -rf .C*/HOOKS", gitBash)), "deny shell.hook-tamper");
+  // PowerShell wildcards do match a leading dot.
+  assert.equal(verdictOf(win("Remove-Item -Recurse *s\\*\\x")), "deny shell.write-harness");
+});

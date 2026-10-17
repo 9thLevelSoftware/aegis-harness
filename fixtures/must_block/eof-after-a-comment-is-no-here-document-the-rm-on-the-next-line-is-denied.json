@@ -1,0 +1,11 @@
+{
+  "name": "<<EOF after a comment is no here-document; the rm on the next line is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo hi # <<EOF\nrm -rf .claude\nEOF"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

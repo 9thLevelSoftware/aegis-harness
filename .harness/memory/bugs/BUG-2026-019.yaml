@@ -70,6 +70,14 @@ source:
       `{e..e}` and `{01..3}` sequences, expands `a{b,'c'}` and `"x"{a,b}` with the quoted part kept
       literal, drops a word that expands to nothing (`{,}`), and treats a reversed range `[z-a]` as
       matching nothing.
+  - kind: session
+    date: 2026-10-17
+    note: >-
+      A sixth review checked here-documents and quoting against bash 5.2: a here-document body is
+      never brace-expanded or run, its substitutions run when the delimiter is unquoted, the last of
+      `cat <<A <<B` is stdin, and `<<` in a comment, quotes or `$(( ))` starts none. `$'...'`
+      decodes escapes (`\x2e`, `\056`, `\u0061`) and lets `\'` stay inside; `$$'x'` is the pid
+      then 'x'; `$"..."` quotes like "...".
 root_cause: >-
   The README told people to paste JSON into settings files. Whether the hook then ran depended on
   rules the README did not know: which files each agent loads and from which directory, what makes
@@ -141,7 +149,14 @@ impact: >-
   (`rm .claude/settings{.json,'x'}`, `{rm,-rf,".claude"}`), sequences (`.claud{e..e}`,
   `r{m..m}`), an empty brace word (`{,} rm -rf .claude`) and a protected word past the 64-word
   expansion cap passed. `ah init --agents codex` deleted Claude Code's stand-in, and a committed
-  stand-in was emptied in place.
+  stand-in was emptied in place. A sixth review found here-document bodies parsed as commands, so
+  JSON in `cat > users.json <<'EOF'` was brace-expanded past the limit and asked; that
+  `cat <<'EOF' | bash`, `rm -rf $'\x2eclaude'` and `echo $'\''; rm -rf .claude` passed; that
+  code nested past the parser's depth (nine subshells, nine `$(`) and a third piped shell were
+  dropped unread; that a sequence past 2^53 looped until the hook timed out, and the parse error
+  fallback then let the command through; that unclosed braces took quadratic time; that
+  `find . \( -name .eslintrc.json -o -name x \) -delete` passed; and that Git Bash wildcards
+  matched dotfiles, so `rm -rf *s/*/node_modules` was denied for reaching .harness.
 countermeasure:
   kind: test
   ref:
@@ -213,7 +228,13 @@ countermeasure:
     common-parameter values are not targets; brace expansion follows bash's quoting (only unquoted
     `{`, `,` and `}` count), expands sequences, drops empty words, and past 1024 words leaves the
     word whole and asks (shell.brace-expansion-limit); stale stand-ins are only the selected
-    agents', and a committed one is left for the user to untrack, with doctor saying so. A
+    agents', and a committed one is left for the user to untrack, with doctor saying so. After
+    the sixth review: here-documents become the here-strings they amount to before parsing, and
+    `cat` passes one to a piped shell; `$'...'` and `$"..."` quote as bash does; code nested past
+    eight levels, and piped shells past eight, ask (shell.nesting-limit); sequences past 2^53
+    count as past the limit; a parse error reaches decideAll and asks; brace groups pair in one
+    pass; find's -o separates a filter from the action only in the group that joins them; the
+    leading-dot rule follows the shell (sh, Git Bash included) and case folding the platform. A
     protected basename (`lefthook.yml`) inside a directory being removed is not seen,
     since the guard reads no filesystem. Still beyond any
     deny-list: variable indirection (`A=ah; $A init --remove`, `$(which ah) init --remove`,

@@ -657,10 +657,13 @@ export function doctor(o: DoctorOptions, env: NodeJS.ProcessEnv = process.env, d
   }
   if (!existsSync(join(m.root, ".harness"))) checks.push({ agent: "project", level: "info", title: "no .harness/ directory, so denies and asks are not logged to .harness/metrics.jsonl", fix: "`ah init` creates it" });
   const links = rootTextLinks(m.root);
+  /** What a stale stand-in does now, and where ah's block goes once it is removed. */
   const hidden = (p: string): string => {
     if (p.endsWith("AGENTS.override.md")) return "it hides AGENTS.md from Codex";
-    const without = claudeMdState(m.root, m.home, [p]).target;
-    return without === null ? "it hides AGENTS.md from Claude Code" : `Claude Code would read ${rel(m, without)} without it`;
+    const without = claudeMdState(m.root, m.home, [p]);
+    if (without.suppressing.length === 0) return "it hides AGENTS.md from Claude Code";
+    if (without.target === null) return `it only repeats ah's block, which Claude Code reads anyway (${without.reason})`;
+    return `without it, ah's block goes in ${rel(m, without.target)}${existsSync(without.target) ? "" : ", a new file"}`;
   };
   for (const p of staleStandIns(m.root, links, o.agents)) {
     checks.push({ agent: "project", level: "warn", title: `${rel(m, p)} is the stand-in ah made while a symlink was checked out as plain text; none is now, and ${hidden(p)}`, fix: "re-run `ah init`, which removes it" });

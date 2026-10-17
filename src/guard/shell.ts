@@ -31,6 +31,8 @@ export interface Stage {
   opaque: boolean;
   /** A word left unexpanded because its brace expansion would pass the command's BRACE_LIMIT words. */
   unexpanded?: string;
+  /** Set on a stand-in for code nested past MAX_DEPTH, which the parser did not read. */
+  tooDeep?: true;
   raw: string;
 }
 
@@ -41,7 +43,8 @@ export interface Pipeline {
   nested: boolean;
 }
 
-const MAX_DEPTH = 6;
+/** How deep substitutions, subshells, groups and `-c` strings are read; code below that asks rather than passes unread. */
+export const MAX_DEPTH = 8;
 
 const SH_FAMILY = new Set(["sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "fish", "busybox"]);
 const PWSH = new Set(["pwsh", "powershell"]);
@@ -104,18 +107,19 @@ export interface BraceBudget {
   words: number;
 }
 
+/** Parses a command line. It throws on input it cannot read, so that the caller asks rather than judging a guess. */
 export function parseShell(command: string, options: ParseOptions = {}): Pipeline[] {
-  try {
-    return parseInner(command, 0, false, options.dialect ?? "posix", options.budget ?? { words: BRACE_LIMIT });
-  } catch {
-    const argv = command.trim().split(/\s+/).filter(Boolean);
-    return [{ raw: command, nested: false, stages: [makeStage(argv, {}, [], [], false, command)] }];
-  }
+  return parseInner(command, 0, false, options.dialect ?? "posix", options.budget ?? { words: BRACE_LIMIT });
+}
+
+/** A stand-in for code the parser did not read because it sits past MAX_DEPTH. */
+export function tooDeep(command: string): Pipeline {
+  return { raw: command, nested: true, stages: [{ ...makeStage([], {}, [], [], false, command), tooDeep: true }] };
 }
 
 function parseInner(command: string, depth: number, nested: boolean, dialect: ShellDialect, budget: BraceBudget): Pipeline[] {
-  if (depth > MAX_DEPTH) return [];
-  const { commands, substitutions } = splitTop(command, dialect);
+  if (depth > MAX_DEPTH) return [tooDeep(command)];
+  const { commands, substitutions } = splitTop(dialect === "posix" ? hereDocsAsStrings(command) : command, dialect);
   const out: Pipeline[] = [];
   for (const stageStrings of commands) {
     const stages: Stage[] = [];
@@ -138,6 +142,225 @@ function parseInner(command: string, depth: number, nested: boolean, dialect: Sh
   }
   for (const sub of substitutions) out.push(...parseInner(sub, depth + 1, true, dialect, budget));
   return out;
+}
+
+interface HereDoc {
+  op: number;
+  opEnd: number;
+  delim: string;
+  quoted: boolean;
+  strip: boolean;
+  level: string;
+  /** The body as one quoted word, once read. */
+  body?: string;
+}
+
+/**
+ * sh here-documents rewritten as here-strings: `cat > f <<'EOF'` + body + `EOF` becomes
+ * `cat > f <<< '<body>'`, so the body is that command's stdin, as bash treats it, and not lines
+ * of commands (a fixture's JSON, a commit message). A body under an unquoted delimiter keeps its
+ * `$( )` and backticks live, since bash runs them; a quoted one is literal. Where this cannot
+ * tell what bash would do, it leaves the text as it is and the body is judged line by line:
+ * a `<<` inside quotes, a comment, `${ }` or arithmetic is no here-document, and one whose
+ * delimiter line never comes, or whose body would start inside another nesting level, stays.
+ */
+export function hereDocsAsStrings(s: string): string {
+  if (!s.includes("<<")) return s;
+  type Frame = { kind: "cmd" | "arith" | "param" | "index"; dq: boolean; parens: number };
+  const stack: Frame[] = [{ kind: "cmd", dq: false, parens: 0 }];
+  const edits: { start: number; end: number; text: string }[] = [];
+  let pending: HereDoc[] = [];
+  let sq = false;
+  let ansi = false;
+  let backtick = false;
+  let lastEscape = -1;
+  const level = () => `${stack.length}:${stack[stack.length - 1].parens}`;
+
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    const top = stack[stack.length - 1];
+    if (sq) {
+      if (ansi && c === "\\") i++;
+      else if (c === "'") sq = ansi = false;
+      continue;
+    }
+    if (c === "\\") {
+      lastEscape = ++i;
+      continue;
+    }
+    if (backtick) {
+      if (c === "`") backtick = false;
+      else if (c === "\n") pending = [];
+      continue;
+    }
+    if (c === "$" && s[i + 1] === "(" && s[i + 2] === "(") {
+      stack.push({ kind: "arith", dq: false, parens: 0 });
+      i += 2;
+      continue;
+    }
+    if (c === "$" && s[i + 1] === "(") {
+      stack.push({ kind: "cmd", dq: false, parens: 0 });
+      i++;
+      continue;
+    }
+    if (c === "$" && s[i + 1] === "{") {
+      stack.push({ kind: "param", dq: false, parens: 0 });
+      i++;
+      continue;
+    }
+    if (c === "$" && s[i + 1] === "[") {
+      stack.push({ kind: "index", dq: false, parens: 0 });
+      i++;
+      continue;
+    }
+    if (c === "`") {
+      backtick = true;
+      continue;
+    }
+    if (top.dq) {
+      if (c === '"') top.dq = false;
+      continue;
+    }
+    if (c === '"') {
+      top.dq = true;
+      continue;
+    }
+    if (c === "'") {
+      sq = true;
+      ansi = dollarQuotes(s, i, lastEscape);
+      continue;
+    }
+    if (c === "\n") {
+      if (pending.length === 0) continue;
+      if (top.kind !== "cmd" || pending.some((h) => h.level !== level())) {
+        pending = [];
+        continue;
+      }
+      const end = hereDocBodies(s, i + 1, pending);
+      if (end !== null) {
+        for (const h of pending) edits.push({ start: h.op, end: h.opEnd, text: `<<< ${h.body}` });
+        edits.push({ start: i + 1, end: Math.min(end, s.length), text: "" });
+        i = end - 1;
+      }
+      pending = [];
+      continue;
+    }
+    if (top.kind === "param") {
+      if (c === "{") top.parens++;
+      else if (c === "}" && top.parens-- === 0) stack.pop();
+      continue;
+    }
+    if (top.kind === "index") {
+      if (c === "[") top.parens++;
+      else if (c === "]" && top.parens-- === 0) stack.pop();
+      continue;
+    }
+    if (top.kind === "arith") {
+      if (c === "(") top.parens++;
+      else if (c === ")" && top.parens-- === 0) {
+        stack.pop();
+        if (s[i + 1] === ")") i++;
+      }
+      continue;
+    }
+    if (c === "(" && s[i + 1] === "(") {
+      stack.push({ kind: "arith", dq: false, parens: 0 });
+      i++;
+      continue;
+    }
+    if (c === "(") {
+      top.parens++;
+      continue;
+    }
+    if (c === ")") {
+      if (top.parens > 0) top.parens--;
+      else if (stack.length > 1) {
+        // A `$( )` that ends with here-documents still waiting has nothing bash would read them from.
+        if (pending.some((h) => h.level.startsWith(`${stack.length}:`))) pending = [];
+        stack.pop();
+      }
+      continue;
+    }
+    if (c === "#" && (i === 0 || /[\s;&|()]/.test(s[i - 1]))) {
+      const nl = s.indexOf("\n", i);
+      i = (nl < 0 ? s.length : nl) - 1;
+      continue;
+    }
+    if (c === "<" && s[i + 1] === "<") {
+      if (s[i + 2] === "<") {
+        i += 2;
+        continue;
+      }
+      const h = hereDocOperator(s, i, level());
+      if (h !== null) {
+        pending.push(h);
+        i = h.opEnd - 1;
+      } else i++;
+    }
+  }
+  if (edits.length === 0) return s;
+  let out = "";
+  let at = 0;
+  for (const e of edits.sort((a, b) => a.start - b.start)) {
+    out += s.slice(at, e.start) + e.text;
+    at = e.end;
+  }
+  return out + s.slice(at);
+}
+
+/** The `<<WORD`, `<<-WORD` or `<<'WORD'` at `i`, or null when no delimiter word follows. */
+function hereDocOperator(s: string, i: number, level: string): HereDoc | null {
+  let j = i + 2;
+  const strip = s[j] === "-";
+  if (strip) j++;
+  while (s[j] === " " || s[j] === "\t") j++;
+  let delim = "";
+  let quoted = false;
+  for (; j < s.length && !/[\s;&|<>()]/.test(s[j]); j++) {
+    const c = s[j];
+    if (c === "'" || c === '"') {
+      const close = s.indexOf(c, j + 1);
+      if (close < 0) return null;
+      delim += s.slice(j + 1, close);
+      quoted = true;
+      j = close;
+    } else if (c === "\\") {
+      delim += s[j + 1] ?? "";
+      quoted = true;
+      j++;
+    } else delim += c;
+  }
+  return delim === "" ? null : { op: i, opEnd: j, delim, quoted, strip, level };
+}
+
+/**
+ * Read the bodies of `docs` from `from` on, in order, each up to the line that is its delimiter.
+ * Each doc gets its body as a quoted word; returns where the last delimiter line ends, or null
+ * when a delimiter line never comes (bash would then read to the end, which this does not guess).
+ */
+function hereDocBodies(s: string, from: number, docs: HereDoc[]): number | null {
+  let pos = from;
+  for (const h of docs) {
+    const start = pos;
+    let found = false;
+    while (pos <= s.length) {
+      const nl = s.indexOf("\n", pos);
+      const lineEnd = nl < 0 ? s.length : nl;
+      const line = s.slice(pos, lineEnd).replace(/\r$/, "");
+      if ((h.strip ? line.replace(/^\t+/, "") : line) === h.delim) {
+        let body = s.slice(start, Math.max(start, pos - 1));
+        if (h.strip) body = body.replace(/^\t+/gm, "");
+        h.body = h.quoted ? `'${body.replace(/'/g, "'\\''")}'` : `"${body.replace(/[\\"]/g, "\\$&")}"`;
+        pos = lineEnd + 1;
+        found = true;
+        break;
+      }
+      if (nl < 0) break;
+      pos = nl + 1;
+    }
+    if (!found) return null;
+  }
+  return pos;
 }
 
 /**
@@ -194,14 +417,24 @@ function splitTop(s: string, dialect: ShellDialect): Split {
     stages = [];
   };
 
+  // `$'...'`, bash's ANSI-C quoting, in which a backslash escapes the next character, `'` included.
+  let ansi = false;
+  let lastEscape = -1;
+  const opensAnsi = (i: number) => dialect === "posix" && dollarQuotes(s, i, lastEscape);
+
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
     const next = s[i + 1];
     const prev = i > 0 ? s[i - 1] : "";
 
     if (inSingle) {
+      if (ansi && c === "\\") {
+        cur += c + (next ?? "");
+        i++;
+        continue;
+      }
       cur += c;
-      if (c === "'") inSingle = false;
+      if (c === "'") inSingle = ansi = false;
       continue;
     }
     if (c === escapeChar) {
@@ -213,6 +446,7 @@ function splitTop(s: string, dialect: ShellDialect): Split {
       }
       cur += c + (next ?? "");
       i++;
+      lastEscape = i;
       continue;
     }
     if (backtickStart >= 0) {
@@ -230,8 +464,10 @@ function splitTop(s: string, dialect: ShellDialect): Split {
         continue;
       }
       if (c === '"') inDouble = true;
-      else if (c === "'") inSingle = true;
-      else if (c === "(") subs.push({ start: -1, outerDouble: false });
+      else if (c === "'") {
+        inSingle = true;
+        ansi = opensAnsi(i);
+      } else if (c === "(") subs.push({ start: -1, outerDouble: false });
       else if (c === ")") {
         const sub = subs.pop();
         if (sub !== undefined && sub.start >= 0) {
@@ -270,6 +506,7 @@ function splitTop(s: string, dialect: ShellDialect): Split {
     }
     if (c === "'") {
       inSingle = true;
+      ansi = opensAnsi(i);
       cur += c;
       continue;
     }
@@ -367,6 +604,8 @@ interface BraceGroup {
 }
 
 const SEQ_NUMBERS = /^([-+]?\d+)\.\.([-+]?\d+)(?:\.\.([-+]?\d+))?$/;
+/** A body that `sequence` expands: numbers or single letters. */
+const SEQ_BODY = /^(?:[-+]?\d+\.\.[-+]?\d+|[A-Za-z]\.\.[A-Za-z])(?:\.\.[-+]?\d+)?$/;
 const SEQ_LETTERS = /^([A-Za-z])\.\.([A-Za-z])(?:\.\.([-+]?\d+))?$/;
 
 /**
@@ -381,7 +620,8 @@ function sequence(body: string, limit: number): string[] | "overflow" | null {
   const from = num ? Number(m[1]) : m[1].charCodeAt(0);
   const to = num ? Number(m[2]) : m[2].charCodeAt(0);
   const step = Math.abs(Number(m[3] ?? 1)) || 1;
-  if (Math.floor(Math.abs(to - from) / step) + 1 > limit) return "overflow";
+  // Past 2^53 the numbers stop being exact and `n += step` can stop moving; such a sequence is too long to check anyway.
+  if (![from, to, step].every(Number.isSafeInteger) || Math.floor(Math.abs(to - from) / step) + 1 > limit) return "overflow";
   const width = num && (/^[-+]?0\d/.test(m[1]) || /^[-+]?0\d/.test(m[2])) ? Math.max(m[1].length, m[2].length) : 0;
   const out: string[] = [];
   for (let n = from; from <= to ? n <= to : n >= to; n += from <= to ? step : -step) {
@@ -391,34 +631,45 @@ function sequence(body: string, limit: number): string[] | "overflow" | null {
   return out;
 }
 
-/** The first brace group sh expands in `word`, null when there is none, `"overflow"` when it alone yields more than `limit` words. */
+/** The longest body a `{a..b..c}` sequence can have with safe integers; longer bodies are not tried as one. */
+const SEQ_MAX_BODY = 64;
+
+/**
+ * The first brace group sh expands in `word`, null when there is none, `"overflow"` when it alone
+ * yields more than `limit` words. One pass with a stack, so that a word full of unclosed braces
+ * costs no more than its length: each `{` meets its `}` as sh pairs them, `${` included so that
+ * its commas stay its own, and the group that opens first wins.
+ */
 function firstBraceGroup(word: string, live: readonly boolean[], limit: number): BraceGroup | "overflow" | null {
-  for (let i = 0; i < word.length; i++) {
-    if (word[i] !== "{" || !live[i] || (word[i - 1] === "$" && live[i - 1])) continue;
-    const commas: number[] = [];
-    for (let j = i, depth = 0; j < word.length; j++) {
-      if (!live[j]) continue;
-      if (word[j] === "{") depth++;
-      else if (word[j] === "," && depth === 1) commas.push(j);
-      else if (word[j] === "}" && --depth === 0) {
-        if (commas.length > 0) {
-          const parts: BraceGroup["parts"] = [];
-          let from = i + 1;
-          for (const to of [...commas, j]) {
-            parts.push({ text: word.slice(from, to), live: live.slice(from, to) });
-            from = to + 1;
-          }
-          return { start: i, end: j, parts };
-        }
-        const body = word.slice(i + 1, j);
-        const seq = live.slice(i + 1, j).every(Boolean) ? sequence(body, limit) : null;
-        if (seq === "overflow") return seq;
-        if (seq !== null) return { start: i, end: j, parts: seq.map((text) => ({ text, live: Array.from(text, () => false) })) };
-        break;
+  const open: { at: number; commas: number[]; param: boolean }[] = [];
+  let best: { at: number; end: number; commas: number[] } | undefined;
+  for (let j = 0; j < word.length; j++) {
+    if (!live[j]) continue;
+    const c = word[j];
+    if (c === "{") open.push({ at: j, commas: [], param: word[j - 1] === "$" && live[j - 1] });
+    else if (c === "," && open.length > 0) open[open.length - 1].commas.push(j);
+    else if (c === "}" && open.length > 0) {
+      const f = open.pop()!;
+      if (f.param || (best !== undefined && best.at < f.at)) continue;
+      if (f.commas.length > 0 || (j - f.at - 1 <= SEQ_MAX_BODY && SEQ_BODY.test(word.slice(f.at + 1, j)) && live.slice(f.at + 1, j).every(Boolean))) {
+        best = { at: f.at, end: j, commas: f.commas };
       }
     }
   }
-  return null;
+  if (best === undefined) return null;
+  const { at, end, commas } = best;
+  if (commas.length > 0) {
+    const parts: BraceGroup["parts"] = [];
+    let from = at + 1;
+    for (const to of [...commas, end]) {
+      parts.push({ text: word.slice(from, to), live: live.slice(from, to) });
+      from = to + 1;
+    }
+    return { start: at, end, parts };
+  }
+  const seq = sequence(word.slice(at + 1, end), limit);
+  if (seq === "overflow") return seq;
+  return { start: at, end, parts: (seq ?? []).map((text) => ({ text, live: Array.from(text, () => false) })) };
 }
 
 /**
@@ -445,6 +696,31 @@ export function braceExpand(word: string, live: readonly boolean[] = Array.from(
   return expand(word, live) ? out : null;
 }
 
+/** Whether the quote at `i` follows an unescaped `$` that makes it `$'...'`: `$$` is the pid, so the run of `$` must be odd. */
+function dollarQuotes(s: string, i: number, lastEscape: number): boolean {
+  let run = 0;
+  for (let j = i - 1; j >= 0 && s[j] === "$" && j !== lastEscape; j--) run++;
+  return run % 2 === 1;
+}
+
+const ANSI_SIMPLE: Record<string, string> = { a: "\x07", b: "\b", e: "\x1b", E: "\x1b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v", "\\": "\\", "'": "'", '"': '"', "?": "?" };
+
+/** The backslash escape at `i` inside `$'...'`, decoded as bash does (`\x2e` is `.`), and how many characters it spans. */
+function ansiEscape(s: string, i: number): [string, number] {
+  const c = s[i + 1];
+  if (c === undefined) return ["\\", 1];
+  if (c in ANSI_SIMPLE) return [ANSI_SIMPLE[c], 2];
+  let m: RegExpExecArray | null;
+  if ((m = /^[0-7]{1,3}/.exec(s.slice(i + 1, i + 4)))) return [String.fromCharCode(parseInt(m[0], 8) & 0xff), 1 + m[0].length];
+  if (c === "x" && (m = /^[0-9A-Fa-f]{1,2}/.exec(s.slice(i + 2, i + 4)))) return [String.fromCharCode(parseInt(m[0], 16)), 2 + m[0].length];
+  if ((c === "u" || c === "U") && (m = (c === "u" ? /^[0-9A-Fa-f]{1,4}/ : /^[0-9A-Fa-f]{1,8}/).exec(s.slice(i + 2, i + 10)))) {
+    const code = parseInt(m[0], 16);
+    return [code <= 0x10ffff ? String.fromCodePoint(code) : "", 2 + m[0].length];
+  }
+  if (c === "c" && s[i + 2] !== undefined) return [String.fromCharCode(s[i + 2].toUpperCase().charCodeAt(0) ^ 0x40), 3];
+  return [`\\${c}`, 2];
+}
+
 function tokenize(stage: string, dialect: ShellDialect): Token[] {
   const escapeChar = dialect === "posix" ? "\\" : dialect === "powershell" ? "`" : "^";
   const tokens: Token[] = [];
@@ -458,8 +734,19 @@ function tokenize(stage: string, dialect: ShellDialect): Token[] {
     for (let k = 0; k < text.length; k++) live.push(false);
   };
   let inSingle = false;
+  let ansi = false;
   let inDouble = false;
   let depth = 0; // $( ) and ( ) nesting inside a token
+  /** A `$` just before a quote that makes it `$'...'` (ANSI-C) or `$"..."` (locale) in sh: the `$` is not part of the word. */
+  const dropQuotingDollar = (): boolean => {
+    let run = 0;
+    while (cur[cur.length - 1 - run] === "$" && live[live.length - 1 - run]) run++;
+    // `$$'x'` is the shell's pid and then 'x'; only an odd run leaves a `$` to quote with.
+    if (dialect !== "posix" || run % 2 === 0) return false;
+    cur = cur.slice(0, -1);
+    live.pop();
+    return true;
+  };
 
   const flush = () => {
     if (has) tokens.push(bare ? { text: cur, bare, live } : { text: cur, live });
@@ -473,8 +760,12 @@ function tokenize(stage: string, dialect: ShellDialect): Token[] {
     const c = stage[i];
     const next = stage[i + 1];
     if (inSingle) {
-      if (c === "'") inSingle = false;
-      else dead(c);
+      if (c === "'") inSingle = ansi = false;
+      else if (ansi && c === "\\") {
+        const [text, length] = ansiEscape(stage, i);
+        dead(text);
+        i += length - 1;
+      } else dead(c);
       continue;
     }
     if (c === escapeChar) {
@@ -509,8 +800,8 @@ function tokenize(stage: string, dialect: ShellDialect): Token[] {
       else if (c === ")") depth--;
       continue;
     }
-    if (c === "'") { inSingle = true; has = true; bare = false; continue; }
-    if (c === '"') { inDouble = true; has = true; bare = false; continue; }
+    if (c === "'") { ansi = dropQuotingDollar(); inSingle = true; has = true; bare = false; continue; }
+    if (c === '"') { dropQuotingDollar(); inDouble = true; has = true; bare = false; continue; }
     if (c === "$" && next === "(") { dead("$("); has = true; bare = false; depth = 1; i++; continue; }
     if ((c === "<" || c === ">") && next === "(") { dead(c + "("); has = true; bare = false; depth = 1; i++; continue; }
     if (c === " " || c === "\t") { flush(); continue; }
@@ -573,12 +864,15 @@ function buildStage(text: string, dialect: ShellDialect, budget: BraceBudget): S
   let tokens = tokenize(dialect === "powershell" ? text.replace(PWSH_ASSIGNMENT, "") : text, dialect);
   let unexpanded: string | undefined;
   if (dialect === "posix") {
-    tokens = tokens.flatMap((t) => {
-      if (t.op !== undefined || t.live === undefined || !t.live.some((l, k) => l && t.text[k] === "{")) return [t];
+    tokens = tokens.flatMap((t, k) => {
+      // bash brace-expands words, not redirection targets: `<<< {a,b}` feeds `{a,b}` to stdin.
+      if (t.op !== undefined || tokens[k - 1]?.op !== undefined || t.live === undefined || !t.live.some((l, n) => l && t.text[n] === "{")) return [t];
       // A word with no group to expand stays one word, whatever the budget has left.
       const words = braceExpand(t.text, t.live, Math.max(budget.words, 1));
       if (words === null) {
         unexpanded ??= t.text;
+        // The command already asks; later words need not each be expanded up to the limit to learn that again.
+        budget.words = 0;
         return [t];
       }
       if (words.length > 1) budget.words -= words.length;

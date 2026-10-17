@@ -308,3 +308,43 @@ test("a brace expansion past the limit is left whole and flagged, never cut shor
   const stages = allStages(parseShell(Array.from({ length: 3 }, () => "rm f{1..400}").join("; ") + "; find . -exec rm {} +"));
   assert.deepEqual(stages.map((st) => st.unexpanded), [undefined, undefined, "f{1..400}", undefined]);
 });
+
+test("a here-document is the command's stdin, not more commands (BUG-2026-019)", () => {
+  const [cat] = allStages(parseShell("cat > users.json <<'EOF'\n[{\"id\":1},{\"id\":2}]\nEOF"));
+  assert.deepEqual(cat.argv, ["cat"]);
+  assert.deepEqual(cat.hereStrings, ['[{"id":1},{"id":2}]']);
+  assert.deepEqual(cmds("cat <<A <<B\na\nA\nb\nB\nls"), ["cat", "ls"]);
+  assert.deepEqual(allStages(parseShell("cat <<-EOF\n\tx\n\tEOF\n"))[0].hereStrings, ["x"]);
+  // An unquoted delimiter leaves substitutions live; a quoted one does not.
+  assert.ok(cmds("cat <<EOF\n$(rm -rf x)\nEOF").includes("rm"));
+  assert.ok(!cmds("cat <<'EOF'\n$(rm -rf x)\nEOF").includes("rm"));
+  // `<<` in a comment, quotes or arithmetic starts no here-document.
+  for (const c of ["echo hi # <<EOF\nrm x\nEOF", "echo '<<EOF'\nrm x\nEOF", "x=$((1<<2))\nrm x\n2", "cat <<EOF\nrm x"]) assert.ok(cmds(c).includes("rm"), c);
+});
+
+test("$'...' and $\"...\" quote as bash does (BUG-2026-019)", () => {
+  const argv = (command: string) => allStages(parseShell(command))[0].argv;
+  assert.deepEqual(argv(String.raw`rm -rf $'\x2eclaude' $'\056git' $'.claude' $".ruff.toml"`), ["rm", "-rf", ".claude", ".git", ".claude", ".ruff.toml"]);
+  assert.deepEqual(argv(String.raw`echo $'it\'s' \$'a' $$'b'`), ["echo", "it's", "$a", "$$b"]);
+  assert.deepEqual(cmds(String.raw`echo $'\''; rm x`), ["echo", "rm"]);
+  assert.deepEqual(cmds(String.raw`echo $$'\' ; rm x #'`), ["echo", "rm"]);
+});
+
+test("brace groups pair in one pass, so unclosed braces cost no more than their length (BUG-2026-019)", () => {
+  assert.equal(braceExpand("{a,{b,c}")?.join(" "), "{a,b {a,c");
+  assert.equal(braceExpand("{a,${x,y}}")?.join(" "), "a ${x,y}");
+  assert.equal(braceExpand("x{a,{b..d}}y")?.join(" "), "xay xby xcy xdy");
+  assert.equal(braceExpand("{9007199254740992..9007199254740993}"), null);
+  for (const word of ["{".repeat(50_000), "{a,".repeat(20_000), "{".repeat(5_000) + "}".repeat(5_000)]) {
+    const t = performance.now();
+    braceExpand(word);
+    assert.ok(performance.now() - t < 1000, `${word.slice(0, 6)}... took too long`);
+  }
+});
+
+test("code nested past the depth limit is a stand-in that asks, never dropped (BUG-2026-019)", () => {
+  const deep = (n: number) => "( ".repeat(n) + "rm -rf x" + " )".repeat(n);
+  assert.ok(cmds(deep(8)).includes("rm"));
+  assert.ok(allStages(parseShell(deep(9))).some((s) => s.tooDeep));
+  assert.ok(allStages(parseShell("echo " + "$(".repeat(12) + "rm x" + ")".repeat(12))).some((s) => s.tooDeep));
+});

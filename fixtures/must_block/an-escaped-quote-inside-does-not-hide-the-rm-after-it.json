@@ -1,0 +1,11 @@
+{
+  "name": "an escaped quote inside $'...' does not hide the rm after it",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo $'\\''; rm -rf .claude"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

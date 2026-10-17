@@ -1,0 +1,11 @@
+{
+  "name": "eight nested subshells around make are allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "( ( ( ( ( ( ( ( cd sub && make ) ) ) ) ) ) ) )"
+    }
+  },
+  "near": "shell.nesting-limit",
+  "source": "BUG-2026-019"
+}

@@ -224,6 +224,15 @@ test("once the text link is a real file again, ah init takes its stand-ins out, 
     const warned = before.checks.filter((ch) => ch.agent === "project" && /is the stand-in ah made/.test(ch.title)).map((ch) => ch.title);
     assert.equal(warned.length, 2, JSON.stringify(before.checks));
     assert.match(warned.join("\n"), /AGENTS\.override\.md .* hides AGENTS\.md from Codex/);
+    assert.match(warned.join("\n"), /CLAUDE\.local\.md .* hides AGENTS\.md from Claude Code/);
+    // With a CLAUDE.md of the user's own, the stand-in hides nothing; what doctor says depends on whether it reads AGENTS.md.
+    const claudeMd = join(c.root, "CLAUDE.md");
+    const localWarning = () => doctor({ agents: ["claude"], root: c.root, json: false }, env, deps).checks.find((ch) => /CLAUDE\.local\.md is the stand-in/.test(ch.title))?.title ?? "";
+    writeFileSync(claudeMd, "@AGENTS.md\n");
+    assert.match(localWarning(), /only repeats ah's block, which Claude Code reads anyway \(CLAUDE\.md imports AGENTS\.md\)$/);
+    writeFileSync(claudeMd, "# Notes\n");
+    assert.match(localWarning(), /without it, ah's block goes in CLAUDE\.md$/);
+    rmSync(claudeMd);
 
     const r = init(initOpts(c.root), env);
     assert.ok(r.ok, r.error);

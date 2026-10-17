@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf .claude nine subshells deep asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "( ( ( ( ( ( ( ( ( rm -rf .claude ) ) ) ) ) ) ) ) )"
+    }
+  },
+  "rule": "shell.nesting-limit",
+  "source": "BUG-2026-019"
+}
