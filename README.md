@@ -162,7 +162,7 @@ npm run verify    # build, typecheck, npm test, hygiene scan, then the fixture c
                   # smoke test (npm pack, install, npx ah test-hooks --in-process) on Linux.
 ```
 
-Tests run with `node --test` on the TypeScript sources directly (Node 22 type stripping); the
+Tests run with `node --test` on the TypeScript sources directly (Node 22 type stripping), one file at a time so the latency tests measure the guard rather than their neighbours; the
 guard is bundled with esbuild into a single file with no runtime dependencies.
 
 ## License
