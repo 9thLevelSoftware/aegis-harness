@@ -239,7 +239,7 @@ export function basename(p: string): string {
 type GlobToken = { kind: "star" } | { kind: "one" } | { kind: "class"; negate: boolean; test: (c: string) => boolean } | { kind: "lit"; ch: string };
 
 /** The POSIX character classes of a bracket expression; a name sh does not know counts as any character. */
-const POSIX_CLASSES: Record<string, RegExp> = {
+const POSIX_CLASSES: Record<string, RegExp> = Object.assign(Object.create(null) as Record<string, RegExp>, {
   alnum: /[\p{L}\p{N}]/u,
   alpha: /\p{L}/u,
   ascii: /[\x00-\x7f]/,
@@ -254,19 +254,22 @@ const POSIX_CLASSES: Record<string, RegExp> = {
   upper: /\p{Lu}/u,
   word: /[\p{L}\p{N}_]/u,
   xdigit: /[0-9A-Fa-f]/,
-};
+});
 
 /**
  * The bracket expressions of a sh glob segment: `bracketAt(i)` reads the one opening at `seg[i]`
  * as bash does (`!` or `^` negates, a `]` first is a member, ranges, `[:alpha:]`, `[=c=]` and
  * `[.c.]`) and gives where it closes and a membership test, or null when it never closes and the
- * `[` is a plain character. Each search past the last `]` or `:]` is cut short, so a segment of
- * thousands of `[` costs its length, and a test is worked out once per character.
+ * `[` is a plain character. Past its first character a search goes the same way wherever it
+ * started, so the positions a search that never closed passed through end any later search that
+ * reaches them: a segment of thousands of `[` or `[[:x:]` costs its length. A test is worked out
+ * once per character.
  */
 export function bracketReader(seg: string, platform: Platform): (i: number) => { end: number; negate: boolean; test: (c: string) => boolean } | null {
   const lastClose = seg.lastIndexOf("]");
   const last: Record<string, number> = { ":": seg.lastIndexOf(":]"), "=": seg.lastIndexOf("=]"), ".": seg.lastIndexOf(".]") };
   const folds = platform === "windows";
+  const dead = new Uint8Array(seg.length);
   return (i) => {
     if (seg[i] !== "[" || lastClose <= i) return null;
     let k = i + 1;
@@ -275,8 +278,14 @@ export function bracketReader(seg: string, platform: Platform): (i: number) => {
     const singles = new Set<string>();
     const ranges: [string, string][] = [];
     const classes: RegExp[] = [];
+    const passed: number[] = [];
     let anything = false;
     for (let first = true; k < seg.length; k++, first = false) {
+      if (!first) {
+        if (dead[k] === 1) k = seg.length;
+        if (k === seg.length) break;
+        passed.push(k);
+      }
       const c = seg[k];
       if (c === "]" && !first) break;
       const kind = seg[k + 1];
@@ -292,7 +301,10 @@ export function bracketReader(seg: string, platform: Platform): (i: number) => {
         k += 2;
       } else singles.add(c);
     }
-    if (k >= seg.length) return null;
+    if (k >= seg.length) {
+      for (const at of passed) dead[at] = 1;
+      return null;
+    }
     const known = new Map<string, boolean>();
     const member = (ch: string) =>
       anything || singles.has(ch) || ranges.some(([a, b]) => ch >= a && ch <= b) || classes.some((re) => re.test(ch));

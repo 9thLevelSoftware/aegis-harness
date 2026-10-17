@@ -1,0 +1,13 @@
+{
+  "name": "Add-Content appending .env to .gitignore through a here-string value is allowed (Codex, Windows PowerShell)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "Add-Content -Path .gitignore -Value @'\n.env\n'@"
+    }
+  },
+  "near": "shell.write-ask-path",
+  "source": "BUG-2026-019"
+}

@@ -661,3 +661,52 @@ test("brace chains, runs of [, long bracket classes, pwsh options and here-strin
   assert.equal(verdictOf(d), "ask guard.time-limit");
   assert.ok(performance.now() - t < 3000, `took ${Math.round(performance.now() - t)} ms`);
 });
+
+test("the writing cmdlets bind their parameters: a value is not a file, a colon-bound or positional path is (BUG-2026-019)", () => {
+  for (const c of [
+    "Add-Content -Path .gitignore -Value @'\n.env\n'@",
+    "Add-Content .gitignore @'\n.env\n'@",
+    "Set-Content -Path notes.txt -Value .ruff.toml",
+    "Set-Content -Pa notes.txt -Va .ruff.toml",
+    "Out-File -FilePath notes.txt -InputObject @'\n.claude/settings.json\n'@",
+    "Set-Content -LiteralPath notes.txt .ruff.toml",
+  ]) {
+    assert.equal(win(c).verdict, "allow", c);
+  }
+  for (const c of [
+    "Set-Content -Path .ruff.toml -Value x",
+    "Set-Content -Path:.ruff.toml -Value x",
+    "Set-Content -Value x .ruff.toml",
+    "Set-Content -Path: .ruff.toml x",
+    "Set-Content a.txt,.ruff.toml x",
+    "Out-File .ruff.toml utf8",
+    "New-Item -Path . -Name .ruff.toml -Value x",
+    "ni .ruff.toml -Value x",
+    "ac .ruff.toml x",
+    // `-V` could be -Verbose, so the word after it is read as a path.
+    "Set-Content -V .ruff.toml notes.txt",
+  ]) {
+    assert.equal(verdictOf(win(c)), "deny shell.write-lint-config", c);
+  }
+});
+
+test("bracket scans that never close are not repeated, class names are not object keys, and long find expressions stay fast (BUG-2026-019)", async () => {
+  const { decideAll } = await import("../src/guard/decide.ts");
+  for (const c of ["rm -rf .claud[[:__proto__:]]", "rm -rf .claud[[:toString:]]", "rm -rf .claud[[:constructor:]]"]) assert.equal(verdictOf(sh(c)), "deny shell.hook-tamper", c);
+  const actions = Array.from({ length: 15 }, (_, i) => `-name a${i} -delete`).join(" , ");
+  for (const [label, c, verdict] of [
+    ["repeated [[:x:]", "rm -rf " + "[[:x:]".repeat(30_000) + ".claude", "allow"],
+    ["a run of [ before a class", "rm -rf " + "[".repeat(100_000) + "[:a:]x", "allow"],
+    ["sixteen actions after a long expression", "find . " + "-name z -o ".repeat(60_000) + actions + " , -name q -delete", "allow"],
+  ] as const) {
+    const t = performance.now();
+    const d = decideAll([{ kind: "shell", command: c }], POSIX_CTX);
+    assert.equal(d.verdict, verdict, `${label}: ${d.rule}`);
+    assert.ok(performance.now() - t < 1500, `${label} took ${Math.round(performance.now() - t)} ms`);
+  }
+  // A long word with many brace groups copies the word per group; it asks at the limit rather than run past it.
+  const t = performance.now();
+  const d = decideAll([{ kind: "shell", command: "echo " + "x".repeat(1_000_000) + "{a,b}".repeat(60) }], POSIX_CTX);
+  assert.equal(verdictOf(d), "ask guard.time-limit");
+  assert.ok(performance.now() - t < 3000, `took ${Math.round(performance.now() - t)} ms`);
+});

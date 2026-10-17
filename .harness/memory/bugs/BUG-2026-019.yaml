@@ -183,7 +183,11 @@ impact: >-
   here-string run by `iex` no longer read, find's `,`, a second action, `-name '('` and `-L`
   before the start missed, wrapper option clusters (`env -iu FOO`), `env -S` with `\_`, npm's
   own options before `-c`, `>|`, `[[:alpha:]]` and a two-stage group piped into sh passing, and
-  brace chains, runs of `[` and long bracket classes taking seconds.
+  brace chains, runs of `[` and long bracket classes taking seconds. A tenth review, of the ninth
+  review's fixes only, found bracket scans that never close repeated for each `[` (48 KB of
+  `[[:x:]` took 4 s and passed), find's narrowing worked out afresh for each of up to 16 actions
+  with no time check, a class named `[[:__proto__:]]` throwing, and a here-string given to
+  `Add-Content -Value` judged as the file written.
 countermeasure:
   kind: test
   ref:
@@ -275,14 +279,18 @@ countermeasure:
     here-string word is its body; find reads its operators apart from values, splits at `,`, and
     needs every action narrowed; wrapper and runner options parse as their tools do; bracket
     expressions take POSIX classes; a group's every command is a pipe source and sink; a word
-    with more than 64 brace groups asks.
+    with more than 64 brace groups asks. After the tenth review: a bracket scan that never
+    closes marks the positions it passed, so no later scan repeats them; find's groups are
+    judged once per command; class names are looked up without the object prototype; brace
+    expansion checks the time limit; and Set-Content, Add-Content, Out-File and New-Item bind
+    their parameters as PowerShell does, so a value is not a path and `-Path:x` is.
     A
     protected basename (`lefthook.yml`) inside a directory being removed is not seen,
     since the guard reads no filesystem. Still beyond any
     deny-list: variable indirection (`A=ah; $A init --remove`, `$(which ah) init --remove`,
     `$s = '...'; iex $s`), arbitrary interpreter programs that build the command at run time, and
-    text that is transformed on its way into a shell (`echo ... | tee log | sh`, `| sed ... | sh`,
-    PowerShell here-strings); the hook wiring is the boundary, and changing it stays the user's
+    text that is transformed on its way into a shell (`echo ... | tee log | sh`, `| sed ... | sh`);
+    the hook wiring is the boundary, and changing it stays the user's
     call.
 must_block_fixture: fixtures/must_block/ah-init-remove-run-by-the-agent-is-denied.json
 must_allow_fixture: fixtures/must_allow/ah-init-remove-dry-run-only-prints-the-plan-and-is-allowed.json

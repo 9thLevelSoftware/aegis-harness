@@ -547,27 +547,28 @@ const FIND_FILTERS = /^-(i?name|i?path|i?regex|i?wholename|i?lname|newer\w*|[acm
 const FIND_MATCH_ALL = /^(?:(?:\.\/)?(?:[*?]*\*[*?]*|\*\/\*)|\^?\.[*+]\$?)$/;
 
 /**
- * Which words before the action at `actionAt` are filters that actually narrow the delete: the
- * filter precedes the action (`-delete` placed first runs on every entry), is not negated
+ * For an action at `actionAt`, which words before it are filters that actually narrow the delete:
+ * the filter precedes the action (`-delete` placed first runs on every entry), is not negated
  * (`! -name x` matches everything else), is not a catch-all (`-name '*'`), and has no `-o` between
  * it and the action in the group that joins them (`-name x -o -delete` and `-name x -prune -o
  * -delete` act on the other branch). Each group that holds the filter but not the action must
  * narrow as a whole: `\( -name a -o -name b \) -delete` deletes only those two names,
- * `\( -name a -o -type f \) -delete` deletes every file. Worked out for every word in three
- * passes: judging each filter on its own took time in the square of a long expression's length.
+ * `\( -name a -o -type f \) -delete` deletes every file. All that does not depend on the action
+ * is worked out once, so each action costs one pass back from it.
  */
-function narrowingFilters(argv: readonly string[], actionAt: number, value: readonly boolean[]): boolean[] {
+function narrowingFilters(argv: readonly string[], value: readonly boolean[], deadline: number | undefined): (actionAt: number) => boolean[] {
   // Only words find reads as its expression count: `-name '('` names a file called `(`.
   const is = (j: number, re: RegExp) => !value[j] && re.test(argv[j] ?? "");
   const negated = (j: number) => is(j - 1, /^(!|-not)$/);
   // `,` runs both sides, so like `-o` it puts a filter and the action in different branches.
-  const isOr = (j: number) => is(j, /^(-o|-or|,)$/);
-  // The depth before each word, and where each `(` closes; one still open at the action holds it too.
-  const depth = new Array<number>(actionAt + 1);
+  const or = argv.map((_, j) => is(j, /^(-o|-or|,)$/));
+  // The depth before each word, and where each `(` closes.
+  const depth = new Array<number>(argv.length + 1);
   const closeAt = new Map<number, number>();
   const opens: number[] = [];
   let d = 0;
-  for (let j = 0; j < actionAt; j++) {
+  for (let j = 0; j < argv.length; j++) {
+    if ((j & 4095) === 0) onTime(deadline);
     depth[j] = d;
     if (is(j, /^\($/)) {
       opens.push(j);
@@ -578,17 +579,18 @@ function narrowingFilters(argv: readonly string[], actionAt: number, value: read
       if (o !== undefined) closeAt.set(o, j);
     }
   }
-  depth[actionAt] = d;
+  depth[argv.length] = d;
   // Whether each closed group, not negated, matches only what some filter in it names: every `-o`
   // branch must hold a filter (or a group that does) that is not negated and not a catch-all.
   // `-type f`, `-true` or `! -name x` alone narrow nothing. Groups close inner first, so a group's
-  // inner groups are judged before it.
+  // inner groups are judged before it, and each word is looked at for one group only.
   const groupNarrows = new Map<number, boolean>();
   for (const [o, c] of closeAt) {
+    onTime(deadline);
     let branch = false;
     let narrows = false;
     for (let j = o + 1; j <= c; j++) {
-      if (j === c || isOr(j)) {
+      if (j === c || or[j]) {
         if (!branch) break;
         narrows = j === c;
         branch = false;
@@ -606,26 +608,38 @@ function narrowingFilters(argv: readonly string[], actionAt: number, value: read
     }
     groupNarrows.set(o, narrows && !negated(o));
   }
-  const out = new Array<boolean>(actionAt).fill(false);
-  // Down the stack of open groups, how many close before the action without narrowing.
-  const failing = [0];
-  for (let j = 0; j < actionAt; j++) {
-    if (is(j, /^\($/)) failing.push(failing[failing.length - 1] + (closeAt.has(j) && groupNarrows.get(j) !== true ? 1 : 0));
-    else if (is(j, /^\)$/)) {
-      if (failing.length > 1) failing.pop();
+  // Each filter that narrows on its own, and the first place a group holding it closes without
+  // narrowing: an action past that place is out of the filter's reach. A group never closed holds
+  // every action after it.
+  const filter = new Array<boolean>(argv.length).fill(false);
+  const reach = new Array<number>(argv.length).fill(Infinity);
+  const stack = [Infinity];
+  for (let j = 0; j < argv.length; j++) {
+    if ((j & 4095) === 0) onTime(deadline);
+    const top = stack[stack.length - 1];
+    if (is(j, /^\($/)) {
+      const c = closeAt.get(j);
+      stack.push(c !== undefined && groupNarrows.get(j) !== true ? Math.min(top, c) : top);
+    } else if (is(j, /^\)$/)) {
+      if (stack.length > 1) stack.pop();
     } else {
-      out[j] = failing[failing.length - 1] === 0 && is(j, FIND_FILTERS) && !negated(j) && (argv[j] === "-empty" || !FIND_MATCH_ALL.test(argv[j + 1] ?? ""));
+      filter[j] = is(j, FIND_FILTERS) && !negated(j) && (argv[j] === "-empty" || !FIND_MATCH_ALL.test(argv[j + 1] ?? ""));
+      reach[j] = top;
     }
   }
-  // The group that joins a filter to the action is the shallowest depth on the way; an `-o` at that depth splits them.
-  let joint = depth[actionAt];
-  const ors = new Set<number>();
-  for (let j = actionAt - 1; j >= 0; j--) {
-    if (out[j] && ors.has(joint)) out[j] = false;
-    joint = Math.min(joint, depth[j]);
-    if (isOr(j)) ors.add(depth[j]);
-  }
-  return out;
+  return (actionAt) => {
+    const out = new Array<boolean>(actionAt).fill(false);
+    // The group that joins a filter to the action is the shallowest depth on the way; an `-o` at that depth splits them.
+    let joint = depth[actionAt];
+    const ors = new Set<number>();
+    for (let j = actionAt - 1; j >= 0; j--) {
+      if ((j & 4095) === 0) onTime(deadline);
+      out[j] = filter[j] && reach[j] > actionAt && !ors.has(joint);
+      joint = Math.min(joint, depth[j]);
+      if (or[j]) ors.add(depth[j]);
+    }
+    return out;
+  };
 }
 
 /** Find words that take the next word as their value; -fprintf takes two, and -exec and its kin every word up to `;` or `{} +`. */
@@ -671,13 +685,15 @@ function findRules(s: Stage, ctx: Context): Decision[] {
   if (starts.length === 0) starts.push(".");
   const stage = { ...s, cmd: "find -delete" };
   // Every action must be narrowed: `-name foo -delete -o -delete` deletes everything else too.
-  const narrowing = actions.length > FIND_MAX_ACTIONS ? [] : actions.map((at) => narrowingFilters(argv, at, value));
+  const narrowedAt = actions.length > FIND_MAX_ACTIONS ? null : narrowingFilters(argv, value, ctx.deadline);
+  const narrowing = narrowedAt === null ? [] : actions.map(narrowedAt);
   if (narrowing.length > 0 && narrowing.every((n) => n.includes(true))) {
     // A filter narrows what goes, but not where: a start inside a protected directory, or a filter
     // that names a protected file outright, still deletes it. A filter on the other side of `-o`
     // (`-path ./.git -prune -o ...`) keeps what it names.
     const named: string[] = [];
     for (let i = 0; i < argv.length; i++) {
+      if ((i & 4095) === 0) onTime(ctx.deadline);
       if (!narrowing.some((n) => n[i])) continue;
       const v = argv[i + 1] ?? "";
       if (/^-i?name$/.test(argv[i]) && !/[*?[]/.test(v)) append(named, starts.map((st) => `${st.replace(/[\\/]+$/, "")}/${v}`));
@@ -1551,6 +1567,64 @@ function destructiveCodeKind(code: string, cmd: string): string | null {
   return null;
 }
 
+/** Parameters of the writing cmdlets that take a value, and their aliases; true for those whose value is a path. */
+const CMDLET_VALUED: Record<string, boolean> = {
+  path: true, literalpath: true, pspath: true, lp: true, filepath: true, name: true,
+  value: false, target: false, inputobject: false, encoding: false, itemtype: false, type: false, filter: false, include: false, exclude: false,
+  credential: false, stream: false, width: false, erroraction: false, ea: false, warningaction: false, wa: false, informationaction: false,
+  infa: false, errorvariable: false, ev: false, warningvariable: false, wv: false, informationvariable: false, iv: false, outvariable: false,
+  ov: false, outbuffer: false, ob: false, pipelinevariable: false, pv: false, progressaction: false, proga: false,
+};
+const CMDLET_SWITCHES = ["force", "nonewline", "append", "noclobber", "passthru", "whatif", "wi", "confirm", "cf", "asbytestream", "verbose", "vb", "debug", "db", "usetransaction", "usetx"];
+
+/**
+ * The files New-Item, Set-Content, Add-Content and Out-File write. Named parameters bind first
+ * and may be cut to any prefix PowerShell can tell apart; the words left over bind in order to
+ * the path and then the value (Out-File: the encoding). A value, such as a here-string's body,
+ * is not a file. A prefix that could be a switch or a parameter it does not know leaves the next
+ * word to bind as a path, so a guess goes the cautious way, and `a,b` writes both.
+ */
+function cmdletPaths(cmd: string, args: readonly string[]): string[] {
+  const paths: string[] = [];
+  const names: string[] = [];
+  const left: string[] = [];
+  let pathBound = false;
+  for (let j = 0; j < args.length; j++) {
+    const m = /^-([A-Za-z]+)(?::(.*))?$/s.exec(args[j]);
+    if (m === null) {
+      left.push(args[j]);
+      continue;
+    }
+    const key = m[1].toLowerCase();
+    const valued = Object.keys(CMDLET_VALUED).filter((n) => n.startsWith(key));
+    const exact = Object.hasOwn(CMDLET_VALUED, key);
+    const takes = exact || (valued.length > 0 && !CMDLET_SWITCHES.some((n) => n.startsWith(key)));
+    if (!takes) continue;
+    const isPath = exact ? CMDLET_VALUED[key] : valued.some((n) => CMDLET_VALUED[n]);
+    const v = m[2] !== undefined && m[2] !== "" ? m[2] : args[++j];
+    if (v === undefined || !isPath) continue;
+    if (exact ? key === "name" : valued.every((n) => n === "name")) names.push(v);
+    else {
+      paths.push(v);
+      pathBound = true;
+    }
+  }
+  const order = (cmd === "out-file" ? ["path", "encoding"] : cmd === "new-item" || cmd === "ni" ? ["path"] : ["path", "value"]).filter((p) => p !== "path" || !pathBound);
+  left.forEach((w, k) => {
+    if (order[k] === undefined || order[k] === "path") paths.push(w);
+  });
+  const out: string[] = [];
+  for (const p of paths) {
+    out.push(p);
+    if (p.includes(",")) append(out, p.split(",").filter((q) => q !== ""));
+  }
+  for (const n of names) {
+    out.push(n);
+    for (const p of paths) out.push(`${p.replace(/[\\/]+$/, "")}/${n}`);
+  }
+  return out;
+}
+
 function writeTargetsOf(s: Stage): string[] {
   const targets = [...s.writes];
   const positionals = s.argv.slice(1).filter((a) => !a.startsWith("-"));
@@ -1578,11 +1652,15 @@ function writeTargetsOf(s: Stage): string[] {
     case "truncate":
     case "touch":
     case "mkdir":
+      append(targets, positionals.filter((p) => p !== "-s" && !/^\d+$/.test(p)));
+      break;
     case "new-item":
+    case "ni":
     case "set-content":
     case "add-content":
+    case "ac":
     case "out-file":
-      append(targets, positionals.filter((p) => p !== "-s" && !/^\d+$/.test(p)));
+      append(targets, cmdletPaths(s.cmd, s.argv.slice(1)));
       break;
     case "git":
       break;

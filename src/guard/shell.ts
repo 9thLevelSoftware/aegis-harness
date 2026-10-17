@@ -917,7 +917,7 @@ function firstBraceGroup(word: string, live: readonly boolean[], limit: number):
  * are. Returns null rather than a partial list once the words would pass `limit`, or their
  * characters a million.
  */
-export function braceExpand(word: string, live: readonly boolean[] = Array.from(word, () => true), limit = BRACE_LIMIT): string[] | null {
+export function braceExpand(word: string, live: readonly boolean[] = Array.from(word, () => true), limit = BRACE_LIMIT, budget?: ParseBudget): string[] | null {
   // Each group is a level of copying the word, so a word with more groups than any real one is
   // refused at once: `{a,b}` ten thousand times would otherwise copy a long word ten thousand times
   // before its first word came out.
@@ -925,6 +925,8 @@ export function braceExpand(word: string, live: readonly boolean[] = Array.from(
   const out: string[] = [];
   let chars = 0;
   const expand = (w: string, l: readonly boolean[]): boolean => {
+    // Each level copies the word: a long word with many groups is slow, so the time limit holds here too.
+    if (budget !== undefined) checkTime(budget);
     const group = firstBraceGroup(w, l, limit);
     if (group === "overflow") return false;
     if (group === null) {
@@ -1129,7 +1131,7 @@ function buildStage(text: string, dialect: ShellDialect, budget: ParseBudget): S
       // bash brace-expands words, not redirection targets: `<<< {a,b}` feeds `{a,b}` to stdin.
       if (t.op !== undefined || tokens[k - 1]?.op !== undefined || t.live === undefined || !t.live.some((l, n) => l && t.text[n] === "{")) return [t];
       // A word with no group to expand stays one word, whatever the budget has left.
-      const words = braceExpand(t.text, t.live, Math.max(budget.words, 1));
+      const words = braceExpand(t.text, t.live, Math.max(budget.words, 1), budget);
       if (words === null) {
         unexpanded ??= t.text;
         // The command already asks; later words need not each be expanded up to the limit to learn that again.

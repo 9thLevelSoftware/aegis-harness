@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf of .claude spelled with a bracket class named __proto__ is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf .claud[[:__proto__:]]"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}
