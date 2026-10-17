@@ -704,9 +704,10 @@ test("bracket scans that never close are not repeated, class names are not objec
     assert.equal(d.verdict, verdict, `${label}: ${d.rule}`);
     assert.ok(performance.now() - t < 1500, `${label} took ${Math.round(performance.now() - t)} ms`);
   }
-  // A long word with many brace groups copies the word per group; it asks at the limit rather than run past it.
+  // A long word with many brace groups copies the word per group: it asks at the brace limit, or at
+  // the time limit on a slow machine, rather than run past it.
   const t = performance.now();
   const d = decideAll([{ kind: "shell", command: "echo " + "x".repeat(1_000_000) + "{a,b}".repeat(60) }], POSIX_CTX);
-  assert.equal(verdictOf(d), "ask guard.time-limit");
+  assert.match(verdictOf(d), /^ask (guard\.time-limit|shell\.brace-expansion-limit)$/);
   assert.ok(performance.now() - t < 3000, `took ${Math.round(performance.now() - t)} ms`);
 });
