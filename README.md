@@ -45,13 +45,19 @@ all out again; `--dry-run` prints the plan.
 
 | `--scope` | Claude Code | Codex |
 | --- | --- | --- |
-| `local` (default) | `.claude/settings.local.json` at the repository root | `.codex/hooks.json` |
+| `local` (default) | `.claude/settings.local.json` at the repository root (on Windows, in this folder) | `.codex/hooks.json` (in a linked worktree, the main checkout's) |
 | `project` | `.claude/settings.json` | `.codex/hooks.json` |
 | `user` | `~/.claude/settings.json` | `~/.codex/hooks.json` |
 
 Local files hold this machine's paths, so `ah init` adds them to `.git/info/exclude` and warns
 if one is already tracked. Claude Code reads `.claude/settings.json` only from the directory a
-session starts in, but `settings.local.json` at the repository root for any session inside it.
+session starts in, but `settings.local.json` at the repository root for any session inside it,
+except on Windows, where it too is read only in the start directory: a session started in a
+subfolder there runs without the hook, so use `--scope user` if you work that way. In a linked
+git worktree Claude Code reads `settings.local.json` and Codex reads every `.codex/` file from the
+main checkout, never the worktree's, so local scope writes them there. The paths are this
+machine's, so a checkout shared between WSL and Windows (`/mnt/c/...`) needs `--scope user` on
+each side: one side cannot run the other's `node`.
 
 Codex then needs two things you do in Codex itself: trust the project when it asks, and trust
 the ah hook in `/hooks`. Codex keys that trust to the entry's hash and position, so ah appends its
@@ -70,20 +76,22 @@ canary proves the command; the last check is the agent: ask it to run `rm -rf /`
 What `ah init` writes, if you wire by hand (Claude Code, exec form, no shell):
 
 ```json
-{"matcher": "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit|Read|Agent|WebFetch|Workflow",
+{"matcher": "^(Bash|PowerShell|Monitor|Edit|Write|MultiEdit|NotebookEdit|Read|Agent|WebFetch|Workflow|mcp__.*)$",
  "hooks": [{"type": "command", "command": "/abs/node", "args": ["/abs/dist/guard.mjs", "--agent", "claude"], "timeout": 5}]}
 ```
 
 and Codex (`command` runs under `bash -c`; `commandWindows` is for Windows):
 
 ```json
-{"matcher": "Bash|Edit|Write|Agent",
+{"matcher": "^(Bash|Edit|Write|Agent|mcp__.*)$",
  "hooks": [{"type": "command", "command": "/abs/node /abs/dist/guard.mjs --agent codex", "timeout": 5}]}
 ```
 
 `PowerShell` is in the Claude Code matcher because on Windows Claude Code routes shell commands
 through that tool (without Git Bash it does not register `Bash` at all); the guard parses it as
-PowerShell on any platform. Git Bash and Cygwin drive spellings (`/c/Users/...`) are resolved against
+PowerShell on any platform. `Monitor` runs a shell command in the background, so it gets the
+same checks as `Bash`. `mcp__.*` sends MCP tool calls through the guard for the credential-literal
+and private-key rules; the matchers are anchored because both agents read them as regexes. Git Bash and Cygwin drive spellings (`/c/Users/...`) are resolved against
 the Windows project root and home; WSL `/mnt/c/...` is a Linux path. `MultiEdit` is a legacy entry for older installs. An allow prints
 nothing, so the per-call cost of a matched tool is one short-lived `node` process.
 

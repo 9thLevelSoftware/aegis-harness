@@ -113,7 +113,8 @@ export function planHooks(settings: unknown, file: string, build: (found: Obj[])
     // Codex files trust under "<file>:<event>:<group index>:<handler index>", so a user's
     // hook that changes index is untrusted until the user reviews it again.
     const moved = groups.some((g, i) => g !== undefined && !isOwnedOnly(g) && kept.indexOf(rest[i] as unknown) !== -1 && kept.indexOf(rest[i] as unknown) !== i);
-    if (moved || splitMixed) notes.push("some of your other hooks changed position, so Codex will ask you to trust them again in /hooks");
+    // The [hooks.state] entry stays with the key, so a hook that moves onto ah's old place inherits its enabled flag.
+    if (moved || splitMixed) notes.push("some of your other hooks changed position, so Codex will ask you to trust them again in /hooks, and one that takes ah's old place keeps any \"enabled = false\" you set there");
   }
   const nextHooks: Obj = { ...hooks };
   if (kept.length > 0) nextHooks[event] = kept;

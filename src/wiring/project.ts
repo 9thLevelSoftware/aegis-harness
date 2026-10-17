@@ -175,3 +175,14 @@ export function readJsonQuiet(path: string): unknown {
 export function isAbsoluteFor(os: Os, p: string): boolean {
   return os === "win32" ? /^(?:[A-Za-z]:[\\/]|\\\\)/.test(p) : isAbsolute(p) && p.startsWith("/");
 }
+
+/**
+ * When a checkout is shared between WSL and Windows, the side whose agents
+ * also read its files but cannot run the paths ah writes: "windows" for a WSL
+ * checkout on a Windows drive (/mnt/c/...), "wsl" for Windows opening a WSL
+ * checkout (\\wsl$\..., \\wsl.localhost\...). Null otherwise.
+ */
+export function sharedAcrossWsl(m: Machine, isWsl = Boolean(m.env.WSL_DISTRO_NAME || m.env.WSL_INTEROP) || existsSync("/proc/sys/fs/binfmt_misc/WSLInterop")): "windows" | "wsl" | null {
+  if (m.os === "win32") return /^\\\\wsl(\$|\.localhost)\\/i.test(m.root) ? "wsl" : null;
+  return m.os === "linux" && isWsl && /^\/mnt\/[a-z](\/|$)/i.test(m.root) ? "windows" : null;
+}

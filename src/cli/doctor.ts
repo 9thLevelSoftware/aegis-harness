@@ -10,7 +10,7 @@
  * leave a call unguarded. Reads only; the canaries write nothing (AH_NO_LOG).
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename, delimiter, dirname, join, relative, resolve } from "node:path";
 import { atLeast, CLAUDE_MIN, CLAUDE_OPTIONAL_TOOLS, CLAUDE_REQUIRED_TOOLS, claudeConfigDir, claudeHooksProblem, claudeMatcherCovers, claudeSettingsFiles, managedDir, parseVersion, type SettingsFile } from "../wiring/claude.ts";
@@ -19,7 +19,7 @@ import { canonical, CODEX_REQUIRED_TOOLS, codexConfigFiles, codexFileProblem, co
 import { readJson, readText } from "../wiring/files.ts";
 import { blockIsCurrent, claudeMdState, CODEX_DOC_BUDGET } from "../wiring/instructions.ts";
 import { entryWords, GUARD_FILE, guardArgs, isOwnedEntry, looksLikeGuard, splitWords } from "../wiring/owned.ts";
-import { defaultMachine, gitTopLevel, readJsonQuiet, type Machine } from "../wiring/project.ts";
+import { defaultMachine, gitTopLevel, mainCheckoutRoot, readJsonQuiet, sharedAcrossWsl, type Machine } from "../wiring/project.ts";
 import { defaultGuardPath } from "./test-hooks.ts";
 import { blockEndByte } from "../wiring/text-block.ts";
 import { get, parseToml } from "../wiring/toml.ts";
@@ -149,12 +149,33 @@ function ownedIn(value: unknown, file: string, scope: string, test: (e: unknown)
   return out;
 }
 
+/** The spellings Claude Code may have keyed a directory's trust under in ~/.claude.json. */
+function trustKeys(m: Machine, dir: string): string[] {
+  if (m.os !== "win32") return [...new Set([dir, canonical(dir)])];
+  let real = dir;
+  try {
+    real = realpathSync.native(dir);
+  } catch {
+    // keep the spelling we have
+  }
+  return [...new Set([real, dir].map((d) => d.replace(/\\/g, "/")))];
+}
+
 /** The node and guard paths an entry names, for checking they still exist. */
 function namedPaths(words: string[]): { node?: string; guard?: string } {
   const gi = words.findIndex((w) => GUARD_FILE.test(w));
   if (gi < 0) return {};
   const before = words.slice(0, gi).filter((w) => w !== "&");
   return { node: before.length > 0 ? before[before.length - 1] : undefined, guard: words[gi] };
+}
+
+/** A project file shared across WSL and Windows holds paths only one side can run. */
+function wslCheck(agent: "claude" | "codex", m: Machine, owned: OwnedAt[]): Check[] {
+  const across = sharedAcrossWsl(m);
+  const files = [...new Set(owned.filter((o) => o.scope === "local" || o.scope === "project").map((o) => rel(m, o.file)))];
+  if (across === null || files.length === 0) return [];
+  const title = across === "windows" ? `${files.join(", ")} sits on a Windows drive, so ${agent === "claude" ? "Claude Code" : "Codex"} running on Windows reads it too and cannot start this WSL node; its calls go through unchecked` : `${files.join(", ")} lives inside WSL, so ${agent === "claude" ? "Claude Code" : "Codex"} running in WSL reads it too and cannot start this Windows node; its calls go through unchecked`;
+  return [{ agent, level: "warn", title, fix: "wire each side with `ah init --scope user` instead" }];
 }
 
 function canaryLine(agent: "claude" | "codex", m: Machine, launch: Launch, timeoutSec: number, label: string): Check[] {
@@ -188,29 +209,78 @@ function managedDropIns(m: Machine): string[] {
   }
 }
 
+/** A managed policy source. Lower tiers win whole: HKLM (0), then the managed files merged (1), then HKCU (2). */
+export interface PolicySource {
+  scope: string;
+  path: string;
+  value: Record<string, unknown>;
+  tier?: number;
+}
+
 /**
  * The switches that turn Claude Code's hooks off, per 2.1.302's hook source:
- * managed-settings.json and its drop-ins merge into one policy, later files
- * winning; elsewhere the first of local, project, user that sets one wins.
- * `files` is in precedence order, managed first.
+ * the first managed tier that exists is the policy (managed-settings.json and
+ * its drop-ins merge, later files winning), except that allowManagedHooksOnly
+ * holds when any managed source sets it; elsewhere the first of local,
+ * project, user that sets one wins. `files` is in precedence order, managed first.
  */
-export function claudeSwitches(files: { scope: string; path: string; value: Record<string, unknown> }[], managedAh: boolean, env: NodeJS.ProcessEnv): Check[] {
+export function claudeSwitches(files: PolicySource[], managedAh: boolean, env: NodeJS.ProcessEnv): Check[] {
   const out: Check[] = [];
   const add = (level: Level, title: string, fix?: string) => out.push({ agent: "claude", level, title, fix });
-  const managed = files.filter((f) => f.scope === "managed");
+  const sources = files.filter((f) => f.scope === "managed");
+  const tier = Math.min(...sources.map((f) => f.tier ?? 1));
+  const managed = sources.filter((f) => (f.tier ?? 1) === tier);
   const policy: Record<string, unknown> = Object.assign({}, ...managed.map((f) => f.value));
   const setIn = (key: string) => [...managed].reverse().find((f) => f.value[key] !== undefined)?.path ?? "";
   const first = files.filter((f) => f.scope !== "managed").find((f) => typeof f.value.disableAllHooks === "boolean");
   const disabledIn = typeof policy.disableAllHooks === "boolean" ? (policy.disableAllHooks ? setIn("disableAllHooks") : null) : first?.value.disableAllHooks === true ? first.path : null;
   if (disabledIn !== null) add("fail", `disableAllHooks is true in ${disabledIn}; no hook runs`, "remove disableAllHooks or set it to false");
   const strict = policy.strictPluginOnlyCustomization;
-  if (policy.allowManagedHooksOnly === true && !managedAh) add("fail", `allowManagedHooksOnly is set in ${setIn("allowManagedHooksOnly")}; only hooks your organization deploys run, and ah's is not one`, "ask whoever manages that file to add the ah hook to it");
+  const lockedIn = sources.find((f) => f.value.allowManagedHooksOnly === true)?.path;
+  if (lockedIn !== undefined && !managedAh) add("fail", `allowManagedHooksOnly is set in ${lockedIn}; only hooks your organization deploys run, and ah's is not one`, "ask whoever manages that policy to add the ah hook to it");
   else if ((strict === true || (Array.isArray(strict) && strict.includes("hooks"))) && !managedAh) add("fail", `strictPluginOnlyCustomization covers hooks in ${setIn("strictPluginOnlyCustomization")}; only managed and plugin hooks run, and ah's is neither`, "ask whoever manages that file to add the ah hook to it");
   if (/^(1|true|yes|on)$/i.test(env.CLAUDE_CODE_SAFE_MODE ?? "") && !managedAh) add("warn", "CLAUDE_CODE_SAFE_MODE is set in this shell; a Claude Code session started from it runs only managed hooks", "unset CLAUDE_CODE_SAFE_MODE");
   return out;
 }
 
-export function doctorClaude(m: Machine, probe: CliProbe): Check[] {
+/** The REG_SZ `Settings` value in `reg.exe query` output, or null. */
+export function parseRegSettings(stdout: string): string | null {
+  return /^\s*Settings\s+REG_(?:EXPAND_)?SZ\s+(.*?)\s*$/m.exec(stdout)?.[1] ?? null;
+}
+
+/**
+ * Claude Code's policy from the Windows registry, plus, in WSL, the Windows
+ * policy a session inherits when wslInheritsWindowsSettings is set. Null when
+ * reg.exe could not be asked.
+ */
+function registryPolicy(m: Machine): PolicySource[] | null {
+  const wsl = m.os === "linux" && Boolean(m.env.WSL_DISTRO_NAME || m.env.WSL_INTEROP) && existsSync("/mnt/c/Windows/System32/reg.exe");
+  if (m.os !== "win32" && !wsl) return [];
+  const reg = m.os === "win32" ? "reg.exe" : "/mnt/c/Windows/System32/reg.exe";
+  const out: PolicySource[] = [];
+  for (const [key, tier] of [["HKLM\\SOFTWARE\\Policies\\ClaudeCode", 0], ["HKCU\\SOFTWARE\\Policies\\ClaudeCode", 2]] as const) {
+    const r = spawnSync(reg, ["query", key, "/v", "Settings"], { encoding: "utf8", windowsHide: true, timeout: 10_000 });
+    if (r.error) return null;
+    const text = r.status === 0 ? parseRegSettings(r.stdout ?? "") : null;
+    if (text === null) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      value = undefined;
+    }
+    out.push({ scope: "managed", path: `${key}\\Settings`, value: isObj(value) ? value : {}, tier });
+  }
+  if (wsl) {
+    const file = readJsonQuiet("/mnt/c/Program Files/ClaudeCode/managed-settings.json");
+    if (isObj(file)) out.push({ scope: "managed", path: "/mnt/c/Program Files/ClaudeCode/managed-settings.json", value: file, tier: 1 });
+    // Windows policy reaches a WSL session only when it opts in.
+    if (!out.some((s) => s.value.wslInheritsWindowsSettings === true)) return [];
+  }
+  return out;
+}
+
+export function doctorClaude(m: Machine, probe: CliProbe, registry: PolicySource[] | null = registryPolicy(m)): Check[] {
   const out: Check[] = [];
   const add = (level: Level, title: string, fix?: string) => out.push({ agent: "claude", level, title, fix });
   const version = probe.found ? parseVersion(probe.stdout) : null;
@@ -243,12 +313,14 @@ export function doctorClaude(m: Machine, probe: CliProbe): Check[] {
   }
   for (const w of new Set(wrapped)) add("info", `${w} has an entry that runs the guard with other words around it; ah does not count or test it`);
 
-  out.push(...claudeSwitches(values.map((v) => ({ scope: v.f.scope, path: rel(m, v.f.path), value: v.value })), owned.some((o) => o.scope === "managed"), m.env));
+  if (registry === null) add("warn", "could not ask reg.exe for Claude Code's registry policy (HKLM and HKCU \\SOFTWARE\\Policies\\ClaudeCode); a policy there can turn ah's hook off", "check that key by hand");
+  out.push(...claudeSwitches([...(registry ?? []), ...values.map((v) => ({ scope: v.f.scope, path: rel(m, v.f.path), value: v.value }))], owned.some((o) => o.scope === "managed"), m.env));
 
   if (owned.length === 0) {
     add("fail", "no ah PreToolUse hook in any Claude Code settings file", "run `ah init --agents claude`");
   } else {
     const scopes = [...new Set(owned.map((o) => rel(m, o.file)))];
+    out.push(...wslCheck("claude", m, owned));
     if (owned.length > 1) {
       // Claude Code runs copies with the same command, args, shell and `if` once, taking one copy's other fields.
       const byRun = new Map<string, Set<string>>();
@@ -272,12 +344,13 @@ export function doctorClaude(m: Machine, probe: CliProbe): Check[] {
       if (e.async === true || e.asyncRewake === true) add("fail", `${where}: the ah entry is async, so it cannot block anything`, "re-run `ah init`");
       if (typeof e.if === "string") add("fail", `${where}: the ah entry only runs when ${JSON.stringify(e.if)} matches, so every other call skips the guard`, "re-run `ah init` to drop the filter");
       const missing = CLAUDE_REQUIRED_TOOLS.filter((t) => !claudeMatcherCovers(o.group.matcher, t));
-      const optional = CLAUDE_OPTIONAL_TOOLS.filter((t) => !claudeMatcherCovers(o.group.matcher, t));
+      const optional = CLAUDE_OPTIONAL_TOOLS.filter((t) => !claudeMatcherCovers(o.group.matcher, t)).map((t) => (t.startsWith("mcp__") ? "MCP tools" : t));
       if (missing.length > 0) add("fail", `${where}: the matcher ${JSON.stringify(o.group.matcher)} skips ${missing.join(", ")}; those calls are never checked`, "re-run `ah init`");
       else add("ok", `${where}: ah hook bound${exec ? " (exec form)" : " (shell form)"} for ${CLAUDE_REQUIRED_TOOLS.join(", ")}${optional.length > 0 ? `; not for ${optional.join(", ")}` : ""}`);
-      if (o.scope === "project") add("info", `${where} is read only by sessions started in ${m.root}; one started in a subdirectory runs without this hook`, "`ah init --scope local` covers the whole repository");
-      if (node && !findCommand(m, node) && exec) add("fail", `${where}: ${node} ${/[\\/]/.test(node) ? "does not exist" : "is not on PATH"}, so the hook cannot start${e.onFailure === "block" ? " and every matched call is blocked" : " and every call goes through unchecked"}`, "re-run `ah init` with the node you use now");
-      if (guard && !exists(guard)) add("fail", `${where}: ${guard} does not exist`, "reinstall @9thlevel/aegis, then re-run `ah init`");
+      const sub = (s: string) => s.replace(/\$\{CLAUDE_PROJECT_DIR\}/g, m.root);
+      if (o.scope === "project" || (o.scope === "local" && m.os === "win32")) add("info", `${where} is read only by sessions started in ${dirname(dirname(o.file))}; one started in a subfolder runs without this hook`, m.os === "win32" ? "`ah init --scope user` covers every folder" : "`ah init --scope local` covers the whole repository");
+      if (node && !findCommand(m, sub(node)) && exec) add("fail", `${where}: ${node} ${/[\\/]/.test(node) ? "does not exist" : "is not on PATH"}, so the hook cannot start${e.onFailure === "block" ? " and every matched call is blocked" : " and every call goes through unchecked"}`, "re-run `ah init` with the node you use now");
+      if (guard && !exists(sub(guard))) add("fail", `${where}: ${guard} does not exist`, "reinstall @9thlevel/aegis, then re-run `ah init`");
       out.push(...versionCheck("claude", m, where, node, guard));
       if (e.onFailure === "block") {
         if (atLeast(version, CLAUDE_MIN.onFailure) === false) add("warn", `${where}: onFailure needs Claude Code ${CLAUDE_MIN.onFailure} or later; this version ignores it and fails open`);
@@ -286,7 +359,6 @@ export function doctorClaude(m: Machine, probe: CliProbe): Check[] {
       if (seen.has(key)) continue;
       seen.add(key);
       const timeout = typeof e.timeout === "number" && e.timeout > 0 ? e.timeout : 600;
-      const sub = (s: string) => s.replace(/\$\{CLAUDE_PROJECT_DIR\}/g, m.root);
       if (exec) out.push(...canaryLine("claude", m, { kind: "exec", file: sub(e.command as string), args: (e.args as string[]).map(sub) }, timeout, where));
       else if (m.os !== "win32") out.push(...canaryLine("claude", m, { kind: "shell", command: e.command as string, shell: "/bin/sh", shellArgs: ["-c"] }, timeout, where));
       else add("warn", `${where}: shell-form entry not tested on Windows (Claude Code picks Git Bash or PowerShell)`, "re-run `ah init` to switch to exec form");
@@ -297,34 +369,31 @@ export function doctorClaude(m: Machine, probe: CliProbe): Check[] {
   const claudeJson = readJsonQuiet(m.env.CLAUDE_CONFIG_DIR ? join(m.env.CLAUDE_CONFIG_DIR, ".claude.json") : join(m.home, ".claude.json"));
   if (claudeJson !== undefined) {
     const projects = get(claudeJson, "projects");
-    let trusted = false;
-    for (let d = m.root; ; d = dirname(d)) {
-      if (isObj(projects) && get(projects, d, "hasTrustDialogAccepted") === true) trusted = true;
-      if (dirname(d) === d || trusted) break;
+    // Claude Code keys trust by the main checkout's root, then walks up from the session directory
+    // as far as the repository's top level; on Windows its keys use forward slashes.
+    const accepted = (d: string) => isObj(projects) && trustKeys(m, d).some((k) => get(projects, k, "hasTrustDialogAccepted") === true);
+    const top = gitTopLevel(m.root);
+    const main = mainCheckoutRoot(m.root);
+    let trusted = main !== null && accepted(main);
+    for (let d = m.root; !trusted; d = dirname(d)) {
+      trusted = accepted(d);
+      if ((top !== null && canonical(d) === canonical(top)) || dirname(d) === d) break;
     }
     if (!trusted) add("warn", "this folder's workspace trust is not accepted yet; interactive Claude Code sessions run no settings-file hook until it is", "start `claude` here once and accept the trust prompt");
   }
 
-  // Instructions.
-  const s = claudeMdState(m.root);
-  const target = s.target ?? (s.present.length === 0 ? join(m.root, "AGENTS.md") : null);
-  if (target !== null) {
-    let state: string;
-    try {
-      state = blockIsCurrent(readText(target).text, target);
-    } catch (err) {
-      state = `unreadable (${(err as Error).message})`;
-    }
-    if (state === "current") add("ok", `${rel(m, target)} carries the guard's instructions for Claude Code`);
-    else add("warn", `${rel(m, target)}: the guard's instructions are ${state}`, "re-run `ah init`");
-    if (s.target === null && atLeast(version, CLAUDE_MIN.agentsMd) === false) add("warn", `Claude Code reads AGENTS.md from ${CLAUDE_MIN.agentsMd}; this version does not`, "update Claude Code");
+  // Instructions: the file Claude Code reads the block from (AGENTS.md when nothing suppresses it, or a CLAUDE.md imports it).
+  const s = claudeMdState(m.root, m.home);
+  const target = s.target ?? join(m.root, "AGENTS.md");
+  let state: string;
+  try {
+    state = blockIsCurrent(readText(target).text, target);
+  } catch (err) {
+    state = `unreadable (${(err as Error).message})`;
   }
-  for (let d = dirname(m.root); dirname(d) !== d; d = dirname(d)) {
-    if (exists(join(d, "CLAUDE.md")) && s.target === null && s.present.length === 0) {
-      add("warn", `${join(d, "CLAUDE.md")} exists above the project, so Claude Code does not read AGENTS.md here`, "re-run `ah init`, or add the guard's block to that file");
-      break;
-    }
-  }
+  if (state === "current") add("ok", `${rel(m, target)} carries the guard's instructions for Claude Code`);
+  else add("warn", `${rel(m, target)}: the guard's instructions are ${state}${s.target !== null && s.present.length === 0 ? ` (${s.reason})` : ""}`, "re-run `ah init`");
+  if (s.suppressing.length === 0 && atLeast(version, CLAUDE_MIN.agentsMd) === false) add("warn", `Claude Code reads AGENTS.md from ${CLAUDE_MIN.agentsMd}; this version does not`, "update Claude Code");
   return out;
 }
 
@@ -365,9 +434,10 @@ export function doctorCodex(m: Machine, probe: CliProbe, featuresList: string | 
   const userConfig = readToml(userConfigPath);
   if (userConfig.error) add("warn", `${rel(m, userConfigPath)} could not be read (${userConfig.error}); trust and feature checks below are incomplete`);
   // A project entry for the session directory or the repository root trusts every layer in between.
+  // In a linked worktree an entry for the main checkout counts too.
   const top = gitTopLevel(m.root);
   const trustOf = (dir: string | null) => (dir === null ? undefined : (get(userConfig.doc, "projects", dir, "trust_level") ?? get(userConfig.doc, "projects", canonical(dir), "trust_level")));
-  const projectTrust = trustOf(m.root) ?? trustOf(top);
+  const projectTrust = trustOf(m.root) ?? trustOf(top) ?? trustOf(mainCheckoutRoot(m.root));
   const projectTrusted = projectTrust === "trusted";
 
   // features.hooks: `codex features list` knows the effective value; config.toml says where it was set.
@@ -399,6 +469,11 @@ export function doctorCodex(m: Machine, probe: CliProbe, featuresList: string | 
     owned.push(...ownedIn(r.value, f.path, f.scope));
     if (ownedIn(r.value, f.path, f.scope, looksLikeGuard).length > 0) add("info", `${rel(m, f.path)} has an entry that runs the guard with other words around it; ah does not count or test it`);
   }
+  const own = join(m.root, ".codex", "hooks.json");
+  if (!codexHooksFiles(m).some((f) => canonical(f.path) === canonical(own))) {
+    const r = readJson(own);
+    if (r.ok && r.exists && ownedIn(r.value, own, "project").length > 0) add("info", `${rel(m, own)} has an ah entry, but in a linked worktree Codex reads .codex/hooks.json from the main checkout, never this one`, "`ah init --scope local` wires the main checkout's copy");
+  }
   for (const c of configDocs) {
     if (ownedIn(c.doc, c.path, "toml").length > 0) add("info", `${rel(m, c.path)} has an inline ah hook in [hooks]; ah init does not manage TOML, so check it by hand`);
   }
@@ -425,6 +500,7 @@ export function doctorCodex(m: Machine, probe: CliProbe, featuresList: string | 
     return [...out, ...codexInstructions(m, projectTrust)];
   }
   if (owned.length > 1) add("warn", `ah is wired ${owned.length} times (${[...new Set(owned.map((o) => rel(m, o.file)))].join(", ")}); Codex runs every copy on every matched call`, "keep one: `ah init --remove` then `ah init`, or delete the extra entry");
+  out.push(...wslCheck("codex", m, owned));
 
   for (const o of owned) {
     const where = rel(m, o.file);

@@ -17,14 +17,18 @@
  *   hash covers command, matcher, timeout and statusMessage, and the key covers
  *   the position, so ah keeps its group where it is or appends it at the end.
  * - Project hooks load only for a project trusted in config.toml.
+ * - In a linked git worktree Codex reads .codex/hooks.json and
+ *   .codex/config.toml from the main checkout, at the same path below its
+ *   root; AGENTS.md it still reads from the worktree.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { carriedOptions, type CarriedOptions } from "./owned.ts";
-import { gitTopLevel, type Machine } from "./project.ts";
+import { gitTopLevel, mainCheckoutRoot, type Machine } from "./project.ts";
 
-export const CODEX_MATCHER = "Bash|Edit|Write|Agent";
+/** Anchored, so it means the same whether Codex searches or matches whole names; MCP tools are `mcp__<server>__<tool>`. */
+export const CODEX_MATCHER = "^(Bash|Edit|Write|Agent|mcp__.*)$";
 
 export type CodexScope = "user" | "project";
 
@@ -48,9 +52,9 @@ export function canonical(p: string): string {
 }
 
 /**
- * The project layers Codex reads for a session started in m.root: every
- * directory from the repository's top level down to m.root (just m.root
- * outside a repository), top first.
+ * The project layers Codex reads AGENTS.md from for a session started in
+ * m.root: every directory from the repository's top level down to m.root
+ * (just m.root outside a repository), top first.
  */
 export function codexLayers(m: Machine): string[] {
   const top = gitTopLevel(m.root);
@@ -64,23 +68,38 @@ export function codexLayers(m: Machine): string[] {
   return canonical(out[0]) === want ? out : [m.root];
 }
 
+/** The layers Codex reads .codex/ files from: codexLayers, moved to the main checkout in a linked worktree. */
+export function codexConfigLayers(m: Machine): string[] {
+  const layers = codexLayers(m);
+  const top = gitTopLevel(m.root);
+  const main = mainCheckoutRoot(m.root);
+  if (top === null || main === null || canonical(main) === canonical(top) || canonical(layers[0]) !== canonical(top)) return layers;
+  return layers.map((d) => join(main, relative(layers[0], d)));
+}
+
 export function codexHooksFiles(m: Machine): { scope: CodexScope; path: string; layer?: string }[] {
   return [
-    ...codexLayers(m)
+    ...codexConfigLayers(m)
       .reverse()
       .map((d) => ({ scope: "project" as const, path: join(d, ".codex", "hooks.json"), layer: d })),
     { scope: "user", path: join(codexHome(m), "hooks.json") },
   ];
 }
 
-/** `local` and `project` both mean the project's .codex/hooks.json: Codex has no machine-local project layer. */
+/**
+ * `local` and `project` both mean a project .codex/hooks.json: Codex has no
+ * machine-local project layer. In a linked worktree `local` is the main
+ * checkout's copy, the one Codex reads; `project` stays in the worktree, to commit.
+ */
 export function codexHooksFile(m: Machine, scope: "local" | "project" | "user"): string {
-  return scope === "user" ? join(codexHome(m), "hooks.json") : join(m.root, ".codex", "hooks.json");
+  if (scope === "user") return join(codexHome(m), "hooks.json");
+  if (scope === "project") return join(m.root, ".codex", "hooks.json");
+  return join(codexConfigLayers(m).at(-1) as string, ".codex", "hooks.json");
 }
 
 export function codexConfigFiles(m: Machine): { scope: CodexScope; path: string }[] {
   return [
-    ...codexLayers(m)
+    ...codexConfigLayers(m)
       .reverse()
       .map((d) => ({ scope: "project" as const, path: join(d, ".codex", "config.toml") })),
     { scope: "user", path: join(codexHome(m), "config.toml") },

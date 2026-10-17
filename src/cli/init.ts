@@ -16,8 +16,8 @@ import { isSymlink, readJson, removeFile, writeAtomic, writeProblem, type JsonSt
 import { editJson } from "../wiring/json-edit.ts";
 import { HookShapeError, planHooks, type HookAction } from "../wiring/hooks-json.ts";
 import { planInstructions } from "../wiring/instructions.ts";
-import { looksLikeGuard } from "../wiring/owned.ts";
-import { defaultMachine, excludeLocally, gitStatusOf, unexcludeLocally, type Machine } from "../wiring/project.ts";
+import { isOwnedEntry, looksLikeGuard } from "../wiring/owned.ts";
+import { defaultMachine, excludeLocally, gitStatusOf, sharedAcrossWsl, unexcludeLocally, type Machine } from "../wiring/project.ts";
 import { BlockError } from "../wiring/text-block.ts";
 import { defaultGuardPath } from "./test-hooks.ts";
 
@@ -210,6 +210,10 @@ export function init(o: InitOptions, env: NodeJS.ProcessEnv = process.env): Init
         if (wrapped > 0) plan.notes.push(`left alone ${wrapped === 1 ? "an entry that runs" : `${wrapped} entries that run`} the guard with other words around it; ah adopts only its own form`);
         if (o.scope === "project") plan.notes.push("this file is meant to be committed, and it now holds this machine's node and guard paths: on another machine the hook cannot start, and the call goes through unchecked (Claude Code blocks it instead with --fail-closed). `--scope local` keeps the paths out of git");
         if (t.agent === "codex" && read.exists && read.style.bom) plan.notes.push("dropped the byte-order mark: Codex cannot parse a hooks.json that starts with one");
+        if (t.agent === "claude" && o.scope === "local" && m.os === "win32") plan.notes.push(`on Windows Claude Code reads this file only for sessions started in ${m.root}; one started in a subfolder runs without the hook (\`--scope user\` covers every folder)`);
+        if (t.agent === "codex" && o.scope === "project" && t.path !== codexHooksFile(m, "local")) plan.notes.push(`in a linked worktree Codex reads ${codexHooksFile(m, "local")} in the main checkout, not this file, so this entry takes effect once the main checkout has it (\`--scope local\` writes it there)`);
+        const across = o.scope === "user" ? null : sharedAcrossWsl(m);
+        if (across !== null) plan.notes.push(across === "windows" ? "this checkout is on a Windows drive, so Claude Code and Codex running on Windows read this file too and cannot start this WSL node; their calls go through unchecked. Wire each side with `--scope user` instead" : "this checkout lives inside WSL, so agents running in WSL read this file too and cannot start this Windows node; their calls go through unchecked. Wire each side with `--scope user` instead");
       }
       changes.push({ agent: t.agent, file: t.path, action: plan.action, detail: [describeHook(t.agent, plan.action, o), ...plan.notes].join("; ") });
       if (plan.action !== "unchanged" && plan.action !== "absent") {
@@ -229,7 +233,9 @@ export function init(o: InitOptions, env: NodeJS.ProcessEnv = process.env): Init
 
   if (o.instructions) {
     try {
-      for (const e of planInstructions(root, o.agents, o.remove)) {
+      // On --remove, an agent that stays wired keeps the instructions it reads.
+      const keep = o.remove ? (["claude", "codex"] as AgentName[]).filter((a) => !o.agents.includes(a) && wired(m, a)) : [];
+      for (const e of planInstructions(root, o.agents, o.remove, keep)) {
         if (o.remove && e.edit.action === "absent") continue;
         changes.push({ agent: "instructions", file: e.path, action: e.edit.action === "absent" ? "unchanged" : e.edit.action, detail: e.why });
         if (e.edit.action === "unchanged" || e.edit.action === "absent") continue;
@@ -319,9 +325,18 @@ function removeEmptyDirs(dirs: string[]): void {
   }
 }
 
-/** Every writable file the agent loads hooks from, for --remove. */
+/** Every writable file the agent loads hooks from, for --remove; for Codex also a worktree's own copy, which it does not read. */
 function hookFiles(m: Machine, agent: AgentName): string[] {
-  return agent === "claude" ? claudeSettingsFiles(m).filter((f) => f.writable).map((f) => f.path) : codexHooksFiles(m).map((f) => f.path);
+  return agent === "claude" ? claudeSettingsFiles(m).filter((f) => f.writable).map((f) => f.path) : [...codexHooksFiles(m).map((f) => f.path), codexHooksFile(m, "project")];
+}
+
+/** Does a file the agent loads hooks from hold ah's entry? */
+function wired(m: Machine, agent: AgentName): boolean {
+  return hookFiles(m, agent).some((f) => {
+    const r = readJson(f);
+    const groups = r.ok && r.exists ? get(r.value, "hooks", "PreToolUse") : undefined;
+    return Array.isArray(groups) && groups.some((g) => isObj(g) && Array.isArray(g.hooks) && g.hooks.some(isOwnedEntry));
+  });
 }
 
 function isObj(v: unknown): v is Record<string, unknown> {

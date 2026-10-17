@@ -166,7 +166,7 @@ test("a hand-wired entry from the README is adopted, with its options", { skip }
     const e = x.hooks.PreToolUse[0].hooks[0];
     assert.match(e.command, /--agent codex --ask-fallback warn$/);
     assert.equal(e.timeout, 10);
-    assert.equal(x.hooks.PreToolUse[0].matcher, "Bash|Edit|Write|Agent");
+    assert.equal(x.hooks.PreToolUse[0].matcher, "^(Bash|Edit|Write|Agent|mcp__.*)$");
   } finally {
     s.done();
   }
@@ -307,7 +307,7 @@ test("doctor catches the switches and mistakes that leave calls unguarded", { sk
     v.hooks.PreToolUse[0].hooks[0].command = win ? "C:\\nowhere\\node.exe" : "/nowhere/node";
     writeFileSync(local, JSON.stringify(v));
     const t = titles();
-    assert.match(t, /skips PowerShell, Edit, Write, NotebookEdit, Read/);
+    assert.match(t, /skips PowerShell, Monitor, Edit, Write, NotebookEdit, Read/);
     assert.match(t, /node(\.exe)? does not exist/);
     assert.match(t, /canary through \.claude/);
 

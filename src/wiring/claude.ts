@@ -7,7 +7,11 @@
  *   copy's timeout and onFailure; Claude Code does not say which.
  * - .claude/settings.json is read only from the directory a session starts
  *   in; .claude/settings.local.json from the repository root, so a session
- *   started in a subdirectory still loads it.
+ *   started in a subdirectory still loads it. Not on Windows: there both sit
+ *   in the start directory (localSettingsRoot).
+ * - Monitor runs a shell command in the background, like Bash. MCP tools are
+ *   `mcp__<server>__<tool>`; a matcher with characters beyond letters, digits,
+ *   `_` and `|` is a regex, so ah's is anchored.
  * - The entry is exec form (`command` + `args`, since 2.1.139): no shell, so a
  *   path with spaces needs no quoting, and on Windows `command` must be a real
  *   .exe (node.exe, never an npm .cmd shim).
@@ -23,10 +27,11 @@ import type { CarriedOptions } from "./owned.ts";
 import { carriedOptions } from "./owned.ts";
 import { mainCheckoutRoot, type Machine } from "./project.ts";
 
-export const CLAUDE_MATCHER = "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit|Read|Agent|WebFetch|Workflow";
+export const CLAUDE_MATCHER = "^(Bash|PowerShell|Monitor|Edit|Write|MultiEdit|NotebookEdit|Read|Agent|WebFetch|Workflow|mcp__.*)$";
 /** Tools whose calls the guard must see; a matcher that misses one leaves a hole. */
-export const CLAUDE_REQUIRED_TOOLS = ["Bash", "PowerShell", "Edit", "Write", "NotebookEdit", "Read"];
-export const CLAUDE_OPTIONAL_TOOLS = ["Agent", "WebFetch", "Workflow"];
+export const CLAUDE_REQUIRED_TOOLS = ["Bash", "PowerShell", "Monitor", "Edit", "Write", "NotebookEdit", "Read"];
+/** `mcp__server__tool` stands for every MCP tool. */
+export const CLAUDE_OPTIONAL_TOOLS = ["Agent", "WebFetch", "Workflow", "mcp__server__tool"];
 
 export const CLAUDE_MIN = { execForm: "2.1.139", agentsMd: "2.1.277", onFailure: "2.1.295" } as const;
 
