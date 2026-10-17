@@ -87,3 +87,18 @@ test("PowerShell single quotes double every single-quote character, and double q
   const doubleQuote = codexCommand(win("C:\\Users\\dev\\\u201Cah\u201D b\\guard.mjs"), ["--agent", "codex"], { short: (p) => p });
   assert.equal(doubleQuote.commandWindows, "& 'C:\\nodejs\\node.exe' 'C:\\Users\\dev\\\u201Cah\u201D b\\guard.mjs' --agent codex");
 });
+
+test("an option that PowerShell reads specially at its start is quoted in both Windows forms", () => {
+  const win = (guardPath: string) => ({ root: "C:\\Users\\dev\\project", home: "C:\\Users\\dev", os: "win32", env: {}, nodePath: "C:\\nodejs\\node.exe", guardPath }) as unknown as Machine;
+  const both = (args: string[]) => [codexCommand(win("C:\\ah\\dist\\guard.mjs"), args, { short: (p) => p }), codexCommand(win("C:\\Users\\dev\\it$x\\dist\\guard.mjs"), args, { short: (p) => p })].map((c) => c.commandWindows ?? "");
+  // @x splats (and @x.y does not parse), ~ may be the home folder, -x is a parameter that PowerShell splits at . or : (node gets -x .y).
+  for (const v of ["@x.y", "@home", "@", "~", "~\\x", "-x.y", "-x:y", "-", "--", "-1.5"]) {
+    const [cmd, ps] = both(["--agent", "codex", "--root", v]);
+    assert.equal(cmd, `C:\\nodejs\\node.exe C:\\ah\\dist\\guard.mjs --agent codex --root "${v}"`);
+    assert.equal(ps, `& 'C:\\nodejs\\node.exe' 'C:\\Users\\dev\\it$x\\dist\\guard.mjs' --agent codex --root '${v}'`);
+    for (const c of [cmd, ps]) assert.deepEqual(splitWords(c, "powershell").slice(-2), ["--root", v], c);
+  }
+  const [cmd, ps] = both(["--agent", "codex", "--root", "C:\\a@b~c", "--home", "x-y.z", "--ask-fallback", "warn", "--no-log"]);
+  assert.equal(cmd, "C:\\nodejs\\node.exe C:\\ah\\dist\\guard.mjs --agent codex --root C:\\a@b~c --home x-y.z --ask-fallback warn --no-log", "the guard's own flags, and @ ~ - after the start, stay bare");
+  assert.equal(ps, "& 'C:\\nodejs\\node.exe' 'C:\\Users\\dev\\it$x\\dist\\guard.mjs' --agent codex --root C:\\a@b~c --home x-y.z --ask-fallback warn --no-log");
+});

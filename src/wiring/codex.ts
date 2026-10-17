@@ -203,7 +203,9 @@ export function codexCommand(m: Machine, guardArgs: string[], look: WindowsLooku
       if (guard) notes.push("the guard path in double quotes");
     }
   }
-  const bareArg = (a: string) => /^[A-Za-z0-9_\\/.:@~+=-]+$/.test(a);
+  // Not with a leading @ (PowerShell splats @x and cannot parse @x.y), ~ (which PowerShell may read as the
+  // home folder) or one - (a PowerShell parameter, which it splits at . or :, so -x.y reaches node as -x .y).
+  const bareArg = (a: string) => /^[A-Za-z0-9_\\/.:@~+=-]+$/.test(a) && !/^(@|~|-(?!-[A-Za-z]))/.test(a);
   const args = guardArgs.map((a) => (bareArg(a) ? a : windowsDoubleQuote(a)));
   if (node !== null && guard !== null && args.every((a) => a !== null)) {
     return { command: posixForm, commandWindows: [node, guard, ...args].join(" "), windowsNote: notes.length > 0 ? `${notes.join(" and ")}, so cmd.exe and PowerShell both run it` : undefined };

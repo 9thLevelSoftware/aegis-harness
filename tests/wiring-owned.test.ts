@@ -132,7 +132,8 @@ test("property: every command ah writes reads back to its node, guard and option
   const pick = <T>(xs: readonly T[]): T => xs[Math.floor(r() * xs.length)];
   const odd = [" ", "'", "''", "\\'", '"', "$", "$(x)", "`", "%", "%PATH%", "!", "^", "&", ";", ",", "=", "(x)", "@", "~1", "#", "-", "é", "日本", "😀", "\u2018", "\u2019", "\u201A", "\u201B", "\u201C", "\u201D", "\u201E"];
   const name = () => {
-    let s = pick(["a", "dev", "My"]);
+    // Sometimes starting with the odd character: an option value that starts with @, ~ or - is one PowerShell reads specially.
+    let s = r() < 0.3 ? pick(odd) : pick(["a", "dev", "My"]);
     for (let n = 1 + Math.floor(r() * 3); n > 0; n--) s += pick(odd) + pick(["", "b", "x y"]);
     return s;
   };
