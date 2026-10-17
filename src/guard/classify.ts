@@ -2,13 +2,16 @@
  * Path classification shared by the edit rules and by the shell rules that
  * look at redirection and copy targets. Purely lexical.
  */
-import type { Context } from "./model.ts";
+import type { Context, Platform } from "./model.ts";
 import {
+  driveForm,
+  globToRegExp,
   hasVariable,
   isFilesystemRoot,
   isSystemPath,
   isTempPath,
   matchGlobs,
+  normalize,
   relativeTo,
   relativeToHome,
   resolvePath,
@@ -104,9 +107,45 @@ export function classifyPath(input: string, ctx: Context): PathInfo {
     return base("normal");
   }
 
+  const hook = hookConfigAbove(abs, ctx);
+  if (hook !== undefined) return base("hook-config", hook);
   if (isSystemPath(abs)) return base("system");
   if (isTempPath(abs) || isTempPath(stripped)) return base("temp");
   return base("outside-project");
+}
+
+/**
+ * Hook wiring an agent loads from above the directory a session started in.
+ * Claude Code reads .claude/settings.local.json at the repository root and Codex
+ * every .codex/ from the root down, so a session in <top>/sub still runs the
+ * hooks `ah init` wired at <top>. The guard knows no git top level, so every
+ * ancestor of the project root counts, each matched as if it were the project
+ * (`lefthook.yml` directly in it, `.claude/settings.json` under it); in a linked
+ * worktree so do the main checkout's twin of the project root and its ancestors.
+ */
+function hookConfigAbove(abs: string, ctx: Context): string | undefined {
+  const layers = ancestors(ctx.projectRoot, ctx.platform).slice(1);
+  if (ctx.mainCheckout !== undefined) layers.push(...ancestors(ctx.mainCheckout, ctx.platform));
+  for (const dir of layers) {
+    const r = relativeTo(dir, abs, ctx.platform);
+    if (r === null || r === ".") continue;
+    const m = ctx.policy.hookConfigPaths.find((g) => globToRegExp(g, ctx.platform).test(r));
+    if (m !== undefined) return m;
+  }
+  return undefined;
+}
+
+/** `dir` and every directory above it, nearest first, in the lexical form relativeTo compares. */
+function ancestors(dir: string, platform: Platform): string[] {
+  const out: string[] = [];
+  for (let d = normalize(driveForm(dir, platform)); ; ) {
+    out.push(d);
+    const i = d.lastIndexOf("/");
+    if (i < 0) return out;
+    const up = i === 0 ? "/" : /^[A-Za-z]:$/.test(d.slice(0, i)) ? `${d.slice(0, i)}/` : d.slice(0, i);
+    if (up === d) return out;
+    d = up;
+  }
 }
 
 /** Device nodes whose overwrite destroys a disk. */

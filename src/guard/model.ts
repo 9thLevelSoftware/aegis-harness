@@ -80,6 +80,12 @@ export interface Context {
   platform: Platform;
   /** Shell that will run `ShellCall.command`. Defaults to POSIX sh (Git Bash on Windows under Claude Code). */
   shellDialect?: "posix" | "powershell" | "cmd";
+  /**
+   * In a linked git worktree, the main checkout's directory that corresponds to
+   * projectRoot. Codex loads project hooks there, so hook files in it and above
+   * it are protected like the project's own. buildContext finds it on disk.
+   */
+  mainCheckout?: string;
   policy: Policy;
 }
 

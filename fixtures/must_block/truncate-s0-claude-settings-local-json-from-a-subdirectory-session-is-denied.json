@@ -1,0 +1,12 @@
+{
+  "name": "truncate -s0 ../.claude/settings.local.json from a subdirectory session is denied",
+  "cwd": "/home/dev/project/sub",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "truncate -s0 ../.claude/settings.local.json"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

@@ -12,6 +12,7 @@ import type { Context, Decision, Platform } from "./model.ts";
 import { normalizeHookPayload, type Agent, type HookEvent } from "./normalize.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
 import { render, type AskFallback } from "./respond.ts";
+import { mainCheckoutOf } from "./worktree.ts";
 import { VERSION } from "../version.ts";
 
 export interface GuardOptions {
@@ -49,8 +50,14 @@ export function buildContext(event: HookEvent, o: GuardOptions, env: NodeJS.Proc
   // platform; Codex on Windows runs commands through PowerShell; everything else
   // (Bash and Monitor, Claude Code on Windows under Git Bash) is POSIX sh.
   const shellDialect = event.toolName === "PowerShell" || (platform === "windows" && agent === "codex") ? "powershell" : "posix";
-  return { projectRoot, homeDir, platform, shellDialect, policy: DEFAULT_POLICY };
+  const ctx: Context = { projectRoot, homeDir, platform, shellDialect, policy: DEFAULT_POLICY };
+  // A root spelled for another platform (a fixture replayed on this machine) is not on this disk.
+  const mainCheckout = platform === HOST_PLATFORM ? mainCheckoutOf(projectRoot) : undefined;
+  if (mainCheckout !== undefined) ctx.mainCheckout = mainCheckout;
+  return ctx;
 }
+
+const HOST_PLATFORM: Platform = process.platform === "win32" ? "windows" : "posix";
 
 export function evaluate(raw: unknown, o: GuardOptions, env: NodeJS.ProcessEnv = process.env): { event: HookEvent; decision: Decision; ctx: Context } {
   const event = normalizeHookPayload(raw, o.agent);

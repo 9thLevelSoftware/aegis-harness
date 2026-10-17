@@ -1,0 +1,14 @@
+{
+  "name": "Remove-Item of the top level's settings.local.json from a subdirectory session is denied (Claude Code, Windows PowerShell)",
+  "agent": "claude",
+  "platform": "windows",
+  "cwd": "C:\\Users\\dev\\project\\sub",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Remove-Item ..\\.Claude\\settings.local.json"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

@@ -1,0 +1,12 @@
+{
+  "name": "rm of another project's settings.local.json from a subdirectory session is allowed",
+  "cwd": "/home/dev/project/sub",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm /home/dev/other/.claude/settings.local.json"
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}
