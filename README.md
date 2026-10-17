@@ -65,9 +65,12 @@ entry after your hooks and keeps it there; after a change to the entry (a new `n
 `--ask-fallback warn`) Codex asks again. `ah doctor` says which step is still missing.
 
 `ah doctor` reads every settings file each agent loads and reports whether the hook is bound and
-for which tools; switches that turn hooks off (`disableAllHooks`, `allowManagedHooksOnly`, Codex
-`features.hooks` and `allow_managed_hooks_only`); entries that make an agent reject a whole file;
-stale paths; duplicates; workspace and hook trust; and whether the `AGENTS.md` block is current.
+for which tools; switches that turn hooks off (`disableAllHooks`, `allowManagedHooksOnly`, Claude
+Code's Windows registry policy, Codex `features.hooks` and `allow_managed_hooks_only`); entries
+that make an agent reject a whole file; stale paths; duplicates; workspace and hook trust; and
+whether the `AGENTS.md` block is current. For Codex it also asks Codex itself (`codex app-server`; no
+model call) which hooks it loads for this folder and whether it trusts ah's, since Codex skips an
+entry that changed after you trusted it.
 Then it runs each hook's command the way its agent would, with three canaries: `rm -rf /` and an
 edit to `.ruff.toml` must be refused and `ls` must pass. It exits 1 when any check fails. The
 canary proves the command; the last check is the agent: ask it to run `rm -rf /` and to edit
