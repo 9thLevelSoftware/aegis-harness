@@ -14,17 +14,18 @@ evaluate or remember anything except the incidents that made its rules.
 
 ## Status
 
-v0. Not yet published to npm. Used on its own repository. Every rule traces to a blueprint
-section or to one of the nineteen records in [`.harness/memory/bugs/`](.harness/memory/bugs/),
-which are what nine earlier harness attempts by the same author taught.
+0.1.0, the first npm release ([CHANGELOG.md](CHANGELOG.md)). Used on its own repository. Every
+rule traces to a blueprint section or to one of the nineteen records in
+[`.harness/memory/bugs/`](.harness/memory/bugs/), which are what nine earlier harness attempts by
+the same author taught.
 
 ## Install
 
 Requires Node 22.18 or later.
 
 ```sh
-npm install -g @9thlevel/aegis   # when published
-# until then, from a checkout:
+npm install -g @9thlevel/aegis
+# or, from a checkout:
 npm ci && npm run build && npm link
 ```
 
