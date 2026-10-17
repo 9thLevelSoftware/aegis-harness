@@ -2,7 +2,7 @@ import { classifyPath, isBlockDevice, protectedInside, wildcardReach, type PathI
 import { ALLOW, ask, deny, strictest, type Context, type Decision, type ShellCall } from "../model.ts";
 import { globToRegExp, hasVariable, isTempPath, normalize } from "../paths.ts";
 import { findSecrets, redact } from "../secrets.ts";
-import { allStages, BRACE_LIMIT, flagsOf, MAX_DEPTH, normalizeCmd, parseShell, pwshRun, subcommandIndex, tooDeep, type BraceBudget, type Pipeline, type ShellDialect, type Stage } from "../shell.ts";
+import { allStages, append, BRACE_LIMIT, flagsOf, MAX_DEPTH, normalizeCmd, parseBudget, parseShell, pwshRun, subcommandIndex, type ParseBudget, type Pipeline, type ShellDialect, type Stage } from "../shell.ts";
 import { AH_INIT_VALUED_OPTIONS } from "../../wiring/init-options.ts";
 
 const FORK_BOMB = /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/;
@@ -61,9 +61,9 @@ export function shellRules(call: ShellCall, ctx: Context): Decision {
     }
   }
 
-  const budget = { words: BRACE_LIMIT };
+  const budget = parseBudget(ctx.parseMs);
   const pipelines = parseShell(raw, { dialect: ctx.shellDialect ?? "posix", budget });
-  pipelines.push(...pipedCommands(pipelines, budget));
+  append(pipelines, pipedCommands(pipelines, budget));
   for (const p of pipelines) decisions.push(...pipelineRules(p, ctx));
   for (const s of allStages(pipelines)) decisions.push(...stageRules(s, ctx));
   return strictest(decisions);
@@ -107,7 +107,7 @@ const STDIN_SHELLS: Record<string, ShellDialect> = {
  * text fed to a shell that runs its stdin is a command line, parsed in that shell's dialect so that
  * every rule sees it.
  */
-function pipedCommands(pipelines: readonly Pipeline[], budget: BraceBudget, depth = 0): Pipeline[] {
+function pipedCommands(pipelines: readonly Pipeline[], budget: ParseBudget): Pipeline[] {
   const out: Pipeline[] = [];
   for (const p of pipelines) {
     for (let j = 0; j < p.stages.length; j++) {
@@ -116,12 +116,10 @@ function pipedCommands(pipelines: readonly Pipeline[], budget: BraceBudget, dept
       if (dialect === undefined || !readsStdinAsCode(sink)) continue;
       const text = sink.hereStrings.length > 0 ? sink.hereStrings.join("\n") : j > 0 ? literalOutput(p.stages[j - 1]) : null;
       if (text === null) continue;
-      if (depth >= MAX_DEPTH) {
-        out.push(tooDeep(text));
-        continue;
-      }
-      const inner = parseShell(text, { dialect, budget });
-      out.push(...inner, ...pipedCommands(inner, budget, depth + 1));
+      // The text runs one shell deeper than the pipeline feeding it, so nesting counts on from there.
+      const inner = parseShell(text, { dialect, budget, depth: p.depth + 1 });
+      append(out, inner);
+      append(out, pipedCommands(inner, budget));
     }
   }
   return out;
@@ -514,17 +512,60 @@ function narrows(argv: readonly string[], i: number, actionAt: number): boolean 
   if (/^(!|-not)$/.test(argv[i - 1] ?? "")) return false;
   if (FIND_MATCH_ALL.test(argv[i + 1] ?? "")) return false;
   // Depths are relative to the filter. The shallowest depth on the way to the action is the group
-  // that joins the two; an `-o` there puts them in different branches, one deeper only widens a
-  // group the action still needs (`\( -name a -o -name b \) -delete` deletes both).
+  // that joins the two; an `-o` there puts them in different branches. Each group that holds the
+  // filter but not the action must narrow as a whole: `\( -name a -o -name b \) -delete` deletes
+  // only those two names, `\( -name a -o -type f \) -delete` deletes every file.
   let depth = 0;
   let joint = 0;
   const ors: number[] = [];
+  const closes: number[] = [];
   for (let j = i + 1; j < actionAt; j++) {
     if (argv[j] === "(") depth++;
-    else if (argv[j] === ")") joint = Math.min(joint, --depth);
-    else if (/^-or?$/.test(argv[j])) ors.push(depth);
+    else if (argv[j] === ")") {
+      if (--depth < joint) closes.push(j);
+      joint = Math.min(joint, depth);
+    } else if (/^-or?$/.test(argv[j])) ors.push(depth);
   }
-  return !ors.includes(joint);
+  if (ors.includes(joint)) return false;
+  depth = 0;
+  for (let j = i - 1, k = 0; j >= 0 && k < closes.length; j--) {
+    if (argv[j] === ")") depth++;
+    else if (argv[j] === "(" && --depth < -k) {
+      if (/^(!|-not)$/.test(argv[j - 1] ?? "") || !findExprNarrows(argv, j + 1, closes[k])) return false;
+      k++;
+    }
+  }
+  return true;
+}
+
+/**
+ * Whether the find expression in argv[from, to) matches only what some narrowing filter names:
+ * every `-o` branch must hold a filter (or a group that does) that is not negated and not a
+ * catch-all. `-type f`, `-true` or `! -name x` alone narrow nothing.
+ */
+function findExprNarrows(argv: readonly string[], from: number, to: number): boolean {
+  let branch = false;
+  let any = false;
+  for (let j = from; j <= to; j++) {
+    if (j === to || /^-or?$/.test(argv[j])) {
+      if (!branch) return false;
+      branch = false;
+      any = true;
+      continue;
+    }
+    const negated = /^(!|-not)$/.test(argv[j - 1] ?? "");
+    if (argv[j] === "(") {
+      let d = 1;
+      let k = j + 1;
+      for (; k < to && d > 0; k++) if (argv[k] === "(") d++; else if (argv[k] === ")") d--;
+      if (!negated && findExprNarrows(argv, j + 1, k - 1)) branch = true;
+      j = k - 1;
+    } else if (FIND_FILTERS.test(argv[j])) {
+      if (!negated && !FIND_MATCH_ALL.test(argv[j + 1] ?? "")) branch = true;
+      j++;
+    }
+  }
+  return any;
 }
 
 function findRules(s: Stage, ctx: Context): Decision[] {

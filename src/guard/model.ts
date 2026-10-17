@@ -87,6 +87,8 @@ export interface Context {
    */
   mainCheckout?: string;
   policy: Policy;
+  /** How long parsing one shell command may take before the guard asks instead (PARSE_MS by default). */
+  parseMs?: number;
 }
 
 export interface Decision {

@@ -348,3 +348,24 @@ test("code nested past the depth limit is a stand-in that asks, never dropped (B
   assert.ok(allStages(parseShell(deep(9))).some((s) => s.tooDeep));
   assert.ok(allStages(parseShell("echo " + "$(".repeat(12) + "rm x" + ")".repeat(12))).some((s) => s.tooDeep));
 });
+
+test("a stage that is one ( ) or { } group is read once, not once per way in (BUG-2026-019)", () => {
+  assert.deepEqual(cmds("( ( ( a; b; c ) ) )"), ["a", "b", "c"]);
+  assert.deepEqual(cmds("{ { a; }; }"), ["a"]);
+  assert.deepEqual(cmds("{ a &}"), ["a"]);
+  assert.deepEqual(cmds("( a ) | sh"), ["sh", "a"]);
+  const t = performance.now();
+  parseShell("( ".repeat(8) + Array.from({ length: 300 }, (_, i) => `cp a${i} b${i}`).join("; ") + " )".repeat(8));
+  assert.ok(performance.now() - t < 1500, "eight subshells around 300 commands took too long");
+});
+
+test("text inside a construct that never closes is still read as commands (BUG-2026-019)", () => {
+  for (const c of ["echo $(rm -rf x", "echo `rm -rf x", "( rm -rf x", "{ echo; rm -rf x"]) assert.ok(cmds(c).includes("rm"), c);
+});
+
+test("an unquoted here-document reads backslashes as bash does (BUG-2026-019)", () => {
+  // `\`` is a literal backtick in the body; `\` at a line's end joins the next line, so `EOF` there ends nothing.
+  assert.deepEqual(cmds("cat <<EOF\nrun \\`git reset --hard\\` to undo\nEOF"), ["cat"]);
+  assert.deepEqual(allStages(parseShell('cat <<EOF\na \\" b \\$x \\\\ c\nEOF'))[0].hereStrings, ['a \\" b $x \\ c']);
+  assert.deepEqual(allStages(parseShell("cat <<EOF\nx\\\nEOF\nrm y\nEOF"))[0].hereStrings, ["xEOF\nrm y"]);
+});

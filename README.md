@@ -121,15 +121,16 @@ folder a session started in, and in a linked worktree's main checkout, so a sess
 cannot remove `../.claude/settings.local.json` or `../.git/hooks/pre-commit` either.
 
 `ah rules` prints the full list with each rule's provenance. The authoritative definition is the
-fixture corpus: [`fixtures/`](fixtures/README.md) holds about 320 calls that must be denied,
-59 that must ask and 255 legitimate neighbours that must pass, and CI runs all of them through the
+fixture corpus: [`fixtures/`](fixtures/README.md) holds about 325 calls that must be denied,
+59 that must ask and 257 legitimate neighbours that must pass, and CI runs all of them through the
 built guard on Linux and Windows. Commands inside loops, `if` blocks, functions and PowerShell
 `{ }` blocks meet every rule, so a `for` loop that runs `rm -rf "$d"` asks like the bare command.
 sh brace expansion is applied first, as bash does it (`mv .ruff.toml{,.bak}`, `.claud{e..e}`,
 quoted parts and all); past 1024 words the guard asks instead. A here-document is read as the
 command's stdin, as bash reads it, so JSON or a commit message in one is text, unless the command
 runs its stdin (`bash <<'EOF'`, `cat <<'EOF' | sh`). `$'...'` is decoded (`$'\x2eclaude'` is
-`.claude`), and code nested more than eight levels deep asks. A wildcard counts as the protected
+`.claude`), and code nested more than eight levels deep asks, as does a command that takes the
+guard more than two seconds to read, since a hook that times out lets the call through. A wildcard counts as the protected
 path it names (`rm .claude/*`, `rm .eslintrc*`, `rm .g*/hooks/pre-commit`); one that names only
 an extension (`rm dist/*.js`) or nothing (`rm -rf src/*`) does not. In Git Bash a wildcard skips
 dotfiles, as sh does; in PowerShell and cmd it matches them.

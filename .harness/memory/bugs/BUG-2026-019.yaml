@@ -78,6 +78,14 @@ source:
       `cat <<A <<B` is stdin, and `<<` in a comment, quotes or `$(( ))` starts none. `$'...'`
       decodes escapes (`\x2e`, `\056`, `\u0061`) and lets `\'` stay inside; `$$'x'` is the pid
       then 'x'; `$"..."` quotes like "...".
+  - kind: session
+    date: 2026-10-17
+    note: >-
+      A seventh review timed the sixth fix: inputs of tens of KB (here-document operators whose
+      delimiter never comes, quoted bodies full of apostrophes, eight nested subshells) took the
+      guard past the 5 s hook timeout, where the hook lets the call through. bash 5.2 joins a
+      body line ending in `\` to the next under an unquoted delimiter, keeps `` \` `` literal
+      there, and closes a `{ }` group at `&}`.
 root_cause: >-
   The README told people to paste JSON into settings files. Whether the hook then ran depended on
   rules the README did not know: which files each agent loads and from which directory, what makes
@@ -156,7 +164,13 @@ impact: >-
   dropped unread; that a sequence past 2^53 looped until the hook timed out, and the parse error
   fallback then let the command through; that unclosed braces took quadratic time; that
   `find . \( -name .eslintrc.json -o -name x \) -delete` passed; and that Git Bash wildcards
-  matched dotfiles, so `rm -rf *s/*/node_modules` was denied for reaching .harness.
+  matched dotfiles, so `rm -rf *s/*/node_modules` was denied for reaching .harness. A seventh
+  review found that fix quadratic or exponential on inputs a few KB to 1 MB long (a `( )` stage
+  was parsed twice per level, here-document searches restarted at every line, the tokenizer and
+  splitter re-read the growing word at every quote and brace), each enough to time the hook out;
+  that `find . \( -name foo -o -type f \) -delete` passed; that `{ { rm -rf .claude; }; }` passed
+  because nested brace groups were paired wrongly; and that an escaped backtick in an unquoted
+  here-document was run as a substitution.
 countermeasure:
   kind: test
   ref:
@@ -234,7 +248,12 @@ countermeasure:
     eight levels, and piped shells past eight, ask (shell.nesting-limit); sequences past 2^53
     count as past the limit; a parse error reaches decideAll and asks; brace groups pair in one
     pass; find's -o separates a filter from the action only in the group that joins them; the
-    leading-dot rule follows the shell (sh, Git Bash included) and case folding the platform. A
+    leading-dot rule follows the shell (sh, Git Bash included) and case folding the platform.
+    After the seventh review: parsing is linear (a group stage is read once, failed here-document
+    searches are remembered, words are built as character arrays) and stops with an ask
+    (guard.time-limit) past 2 s; brace output is capped at a million characters; a group joined
+    by -o narrows a find only if every branch does; nested brace groups pair, `&}` closes one,
+    and text in a construct that never closes is read as commands. A
     protected basename (`lefthook.yml`) inside a directory being removed is not seen,
     since the guard reads no filesystem. Still beyond any
     deny-list: variable indirection (`A=ah; $A init --remove`, `$(which ah) init --remove`,

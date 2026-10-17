@@ -8,8 +8,10 @@
  * `pwsh -Command "..."`, `cmd /c ...`, `eval`, `iex`, `Start-Process`,
  * `npx -c`, `$(...)` and backtick substitutions, process substitutions and
  * PowerShell's `( )` and `{ }` blocks, so that rules see every command that
- * will actually run. On input it cannot make sense of it degrades to a
- * whitespace split rather than throwing: the guard must never crash open.
+ * will actually run. It throws rather than guess (ParseTimeout once a
+ * parse runs past its budget's deadline), and the guard asks when it does:
+ * a call it cannot read must not pass unread. Work stays close to linear in
+ * the command's length, since a hook that times out lets the call through.
  */
 
 export interface Stage {
@@ -41,6 +43,8 @@ export interface Pipeline {
   raw: string;
   /** True when this pipeline came out of a substitution, subshell or `-c` string. */
   nested: boolean;
+  /** How many substitutions, subshells, groups and shells it sits inside. */
+  depth: number;
 }
 
 /** How deep substitutions, subshells, groups and `-c` strings are read; code below that asks rather than passes unread. */
@@ -96,51 +100,81 @@ export interface ParseOptions {
   /** Which shell will run the top-level command line. Defaults to POSIX sh. */
   dialect?: ShellDialect;
   /**
-   * Brace-expanded words the parse may still produce, shared by every parse of one command
-   * (its substitutions, `sh -c` strings and the text it pipes into a shell), so a short command
-   * cannot multiply into more words than the guard can judge before the hook times out.
+   * What the parse may still spend, shared by every parse of one command (its substitutions,
+   * `sh -c` strings and the text it pipes into a shell), so a short command cannot multiply into
+   * more work than the guard can do before the hook times out.
    */
-  budget?: BraceBudget;
+  budget?: ParseBudget;
+  /** How deep the text already sits, for text a shell reads from a pipe or here-string. */
+  depth?: number;
 }
 
-export interface BraceBudget {
+export interface ParseBudget {
+  /** Brace-expanded words left. */
   words: number;
+  /** performance.now() past which parsing throws ParseTimeout. */
+  deadline: number;
+}
+
+/** How long one command may take to parse; past it the guard asks, well inside the hook's timeout. */
+export const PARSE_MS = 2000;
+
+export class ParseTimeout extends Error {
+  constructor() {
+    super(`parsing took longer than ${PARSE_MS} ms`);
+  }
+}
+
+export function parseBudget(ms = PARSE_MS): ParseBudget {
+  return { words: BRACE_LIMIT, deadline: performance.now() + ms };
+}
+
+/** Throws ParseTimeout once the budget's deadline has passed. Loops call it every few thousand steps. */
+export function checkTime(budget: ParseBudget): void {
+  if (performance.now() > budget.deadline) throw new ParseTimeout();
 }
 
 /** Parses a command line. It throws on input it cannot read, so that the caller asks rather than judging a guess. */
 export function parseShell(command: string, options: ParseOptions = {}): Pipeline[] {
-  return parseInner(command, 0, false, options.dialect ?? "posix", options.budget ?? { words: BRACE_LIMIT });
+  const depth = options.depth ?? 0;
+  return parseInner(command, depth, depth > 0, options.dialect ?? "posix", options.budget ?? parseBudget());
 }
 
 /** A stand-in for code the parser did not read because it sits past MAX_DEPTH. */
-export function tooDeep(command: string): Pipeline {
-  return { raw: command, nested: true, stages: [{ ...makeStage([], {}, [], [], false, command), tooDeep: true }] };
+export function tooDeep(command: string, depth = MAX_DEPTH + 1): Pipeline {
+  return { raw: command, nested: true, depth, stages: [{ ...makeStage([], {}, [], [], false, command), tooDeep: true }] };
 }
 
-function parseInner(command: string, depth: number, nested: boolean, dialect: ShellDialect, budget: BraceBudget): Pipeline[] {
-  if (depth > MAX_DEPTH) return [tooDeep(command)];
-  const { commands, substitutions } = splitTop(dialect === "posix" ? hereDocsAsStrings(command) : command, dialect);
+/** `out.push(...more)` without spreading: a long list passed as arguments overflows the stack. */
+export function append<T>(out: T[], more: readonly T[]): void {
+  for (const x of more) out.push(x);
+}
+
+function parseInner(command: string, depth: number, nested: boolean, dialect: ShellDialect, budget: ParseBudget): Pipeline[] {
+  if (depth > MAX_DEPTH) return [tooDeep(command, depth)];
+  checkTime(budget);
+  const { commands, substitutions } = splitTop(dialect === "posix" ? hereDocsAsStrings(command, budget) : command, dialect, budget);
   const out: Pipeline[] = [];
   for (const stageStrings of commands) {
     const stages: Stage[] = [];
     const extra: Pipeline[] = [];
     for (const s of stageStrings) {
-      const text = s.trim();
+      const text = s.text.trim();
       if (!text) continue;
-      const grouped = unwrapGroup(text, dialect);
-      if (grouped !== null) {
-        extra.push(...parseInner(grouped, depth + 1, true, dialect, budget));
+      // A stage that is one `( )` or `{ }` group whole: its commands, read once.
+      if (s.group !== undefined) {
+        append(extra, parseInner(s.group, depth + 1, true, dialect, budget));
         continue;
       }
       const stage = buildStage(text, dialect, budget);
       stages.push(stage);
       const inner = inlineCommandOf(stage, dialect);
-      if (inner !== null) extra.push(...parseInner(inner.command, depth + 1, true, inner.dialect, budget));
+      if (inner !== null) append(extra, parseInner(inner.command, depth + 1, true, inner.dialect, budget));
     }
-    if (stages.length > 0) out.push({ stages, raw: stageStrings.join(" | "), nested });
-    out.push(...extra);
+    if (stages.length > 0) out.push({ stages, raw: stageStrings.map((st) => st.text).join(" | "), nested, depth });
+    append(out, extra);
   }
-  for (const sub of substitutions) out.push(...parseInner(sub, depth + 1, true, dialect, budget));
+  for (const sub of substitutions) append(out, parseInner(sub, depth + 1, true, dialect, budget));
   return out;
 }
 
@@ -164,8 +198,9 @@ interface HereDoc {
  * a `<<` inside quotes, a comment, `${ }` or arithmetic is no here-document, and one whose
  * delimiter line never comes, or whose body would start inside another nesting level, stays.
  */
-export function hereDocsAsStrings(s: string): string {
+export function hereDocsAsStrings(s: string, budget?: ParseBudget): string {
   if (!s.includes("<<")) return s;
+  const missing = new Map<string, number>();
   type Frame = { kind: "cmd" | "arith" | "param" | "index"; dq: boolean; parens: number };
   const stack: Frame[] = [{ kind: "cmd", dq: false, parens: 0 }];
   const edits: { start: number; end: number; text: string }[] = [];
@@ -177,6 +212,7 @@ export function hereDocsAsStrings(s: string): string {
   const level = () => `${stack.length}:${stack[stack.length - 1].parens}`;
 
   for (let i = 0; i < s.length; i++) {
+    if ((i & 4095) === 0 && budget !== undefined) checkTime(budget);
     const c = s[i];
     const top = stack[stack.length - 1];
     if (sq) {
@@ -236,7 +272,7 @@ export function hereDocsAsStrings(s: string): string {
         pending = [];
         continue;
       }
-      const end = hereDocBodies(s, i + 1, pending);
+      const end = hereDocBodies(s, i + 1, pending, missing);
       if (end !== null) {
         for (const h of pending) edits.push({ start: h.op, end: h.opEnd, text: `<<< ${h.body}` });
         edits.push({ start: i + 1, end: Math.min(end, s.length), text: "" });
@@ -337,20 +373,33 @@ function hereDocOperator(s: string, i: number, level: string): HereDoc | null {
  * Read the bodies of `docs` from `from` on, in order, each up to the line that is its delimiter.
  * Each doc gets its body as a quoted word; returns where the last delimiter line ends, or null
  * when a delimiter line never comes (bash would then read to the end, which this does not guess).
+ * Under an unquoted delimiter a line ending in `\` runs on into the next, as bash reads it.
+ * `missing` remembers, per delimiter, an offset from which a search already found no delimiter
+ * line, so that a command full of here-documents that never end is read once, not once per line.
  */
-function hereDocBodies(s: string, from: number, docs: HereDoc[]): number | null {
+function hereDocBodies(s: string, from: number, docs: HereDoc[], missing: Map<string, number>): number | null {
   let pos = from;
   for (const h of docs) {
+    const key = `${h.quoted ? "q" : "u"}${h.strip ? "-" : ""}:${h.delim}`;
+    if ((missing.get(key) ?? Infinity) <= pos) return null;
     const start = pos;
     let found = false;
+    let carry = "";
     while (pos <= s.length) {
       const nl = s.indexOf("\n", pos);
       const lineEnd = nl < 0 ? s.length : nl;
-      const line = s.slice(pos, lineEnd).replace(/\r$/, "");
-      if ((h.strip ? line.replace(/^\t+/, "") : line) === h.delim) {
+      const raw = s.slice(pos, lineEnd);
+      if (!h.quoted && /(?:^|[^\\])(?:\\\\)*\\$/.test(raw) && nl >= 0) {
+        carry += (h.strip ? raw.replace(/^\t+/, "") : raw).slice(0, -1);
+        pos = nl + 1;
+        continue;
+      }
+      const line = carry + (h.strip ? raw.replace(/^\t+/, "") : raw).replace(/\r$/, "");
+      carry = "";
+      if (line === h.delim) {
         let body = s.slice(start, Math.max(start, pos - 1));
         if (h.strip) body = body.replace(/^\t+/gm, "");
-        h.body = h.quoted ? `'${body.replace(/'/g, "'\\''")}'` : `"${body.replace(/[\\"]/g, "\\$&")}"`;
+        h.body = h.quoted ? `'${body.replace(/'/g, "'\\''")}'` : `"${asDoubleQuoted(body)}"`;
         pos = lineEnd + 1;
         found = true;
         break;
@@ -358,26 +407,34 @@ function hereDocBodies(s: string, from: number, docs: HereDoc[]): number | null 
       if (nl < 0) break;
       pos = nl + 1;
     }
-    if (!found) return null;
+    if (!found) {
+      missing.set(key, Math.min(missing.get(key) ?? Infinity, start));
+      return null;
+    }
   }
   return pos;
 }
 
 /**
- * `( ... )` subshells and `{ ...; }` groups: return the inner text, or null. In sh a group's `{`
- * is a word of its own, so `{rm,-rf,x}` is one brace-expanded command, not a group.
+ * An unquoted here-document body as the inside of a "..." word that bash reads the same way.
+ * Both treat `\$`, `` \` ``, `\\` and `\`+newline as escapes and keep any other backslash, so
+ * those stay as they are; only `"` differs, an escape in "..." and plain text in the body.
  */
-function unwrapGroup(text: string, dialect: ShellDialect): string | null {
-  if (text.startsWith("(") && text.endsWith(")")) return text.slice(1, -1);
-  if (text.startsWith("{") && text.endsWith("}") && (dialect !== "posix" || /^\{\s/.test(text))) {
-    const inner = text.slice(1, -1).trim();
-    return inner.endsWith(";") ? inner.slice(0, -1) : inner;
-  }
-  return null;
+function asDoubleQuoted(body: string): string {
+  return body.replace(/\\[$`\\\n]|\\"|\\$|"/g, (m) => (m === '"' ? '\\"' : m === '\\"' ? '\\\\\\"' : m === "\\" ? "\\\\" : m));
+}
+
+interface SplitStage {
+  text: string;
+  /**
+   * Set when the stage is one `( )` subshell or `{ }` group and nothing else: the text inside it.
+   * In sh a group's `{` is a word of its own, so `{rm,-rf,x}` is one brace-expanded command.
+   */
+  group?: string;
 }
 
 interface Split {
-  commands: string[][];
+  commands: SplitStage[][];
   substitutions: string[];
 }
 
@@ -386,12 +443,26 @@ interface Split {
  * substitutions. Returns commands (each a list of pipe stages) and the text of
  * every `$(...)` and backtick substitution found at any depth.
  */
-function splitTop(s: string, dialect: ShellDialect): Split {
+function splitTop(s: string, dialect: ShellDialect, budget?: ParseBudget): Split {
   const escapeChar = dialect === "posix" ? "\\" : dialect === "powershell" ? "`" : "^";
-  const commands: string[][] = [];
-  const substitutions: string[] = [];
-  let stages: string[] = [];
-  let cur = "";
+  const commands: SplitStage[][] = [];
+  // A group that makes up its whole stage is read through the stage, so its entry here is dropped.
+  const substitutions: (string | null)[] = [];
+  let stages: SplitStage[] = [];
+  // The stage so far, a character at a time: a string grown with += and searched after every
+  // character costs the square of its length.
+  let cur: string[] = [];
+  let blank = true;
+  const add = (...xs: string[]) => {
+    for (const x of xs) {
+      if (x === "") continue;
+      cur.push(x);
+      if (blank && x.trim() !== "") blank = false;
+    }
+  };
+  // The group that opened the stage, once it has closed: its entry in substitutions and how long
+  // the stage was when it closed. The stage is that group alone if nothing but blanks follows.
+  let opener: { sub: number; length: number } | null = null;
   let inSingle = false;
   let inDouble = false;
   let backtickStart = -1;
@@ -403,13 +474,22 @@ function splitTop(s: string, dialect: ShellDialect): Split {
   // whether it runs as a command where it stands: every group in PowerShell and cmd
   // (`$null = (ah x)`, `if ($c) { ah x }`, `1 | % { ah x }`), and in sh a subshell or process
   // substitution (`(rm -rf x) 2>/dev/null`, `diff <(ah x) y`), not an array (`a=(x y)`).
-  const groups: { start: number; runs: boolean }[] = [];
+  const groups: { start: number; runs: boolean; opens: boolean }[] = [];
+  let running = 0;
   let braceDepth = 0;
   let braceStart = 0;
 
   const endStage = () => {
-    stages.push(cur);
-    cur = "";
+    let length = cur.length;
+    while (length > 0 && cur[length - 1].trim() === "") length--;
+    const text = cur.join("");
+    if (opener !== null && opener.length === length) {
+      stages.push({ text, group: substitutions[opener.sub] ?? "" });
+      substitutions[opener.sub] = null;
+    } else stages.push({ text });
+    cur = [];
+    blank = true;
+    opener = null;
   };
   const endCommand = () => {
     endStage();
@@ -423,17 +503,18 @@ function splitTop(s: string, dialect: ShellDialect): Split {
   const opensAnsi = (i: number) => dialect === "posix" && dollarQuotes(s, i, lastEscape);
 
   for (let i = 0; i < s.length; i++) {
+    if ((i & 4095) === 0 && budget !== undefined) checkTime(budget);
     const c = s[i];
     const next = s[i + 1];
     const prev = i > 0 ? s[i - 1] : "";
 
     if (inSingle) {
       if (ansi && c === "\\") {
-        cur += c + (next ?? "");
+        add(c, next ?? "");
         i++;
         continue;
       }
-      cur += c;
+      add(c);
       if (c === "'") inSingle = ansi = false;
       continue;
     }
@@ -444,13 +525,13 @@ function splitTop(s: string, dialect: ShellDialect): Split {
         i += skip - 1;
         continue;
       }
-      cur += c + (next ?? "");
+      add(c, next ?? "");
       i++;
       lastEscape = i;
       continue;
     }
     if (backtickStart >= 0) {
-      cur += c;
+      add(c);
       if (c === "`") {
         substitutions.push(s.slice(backtickStart, i));
         backtickStart = -1;
@@ -458,7 +539,7 @@ function splitTop(s: string, dialect: ShellDialect): Split {
       continue;
     }
     if (subs.length > 0) {
-      cur += c;
+      add(c);
       if (inDouble) {
         if (c === '"') inDouble = false;
         continue;
@@ -477,69 +558,83 @@ function splitTop(s: string, dialect: ShellDialect): Split {
         }
       } else if (c === "$" && next === "(") {
         subs.push({ start: i + 2, outerDouble: false });
-        cur += next;
+        add(next);
         i++;
       }
       continue;
     }
     if (c === '"') {
       inDouble = !inDouble;
-      cur += c;
+      add(c);
       continue;
     }
     if (c === "$" && next === "(") {
       subs.push({ start: i + 2, outerDouble: inDouble });
       inDouble = false;
-      cur += c + next;
+      add(c, next);
       i++;
       continue;
     }
     if (c === "`" && dialect === "posix") {
       backtickStart = i + 1;
-      cur += c;
+      add(c);
       continue;
     }
     if (inDouble) {
-      cur += c;
-      if (c === "'" ) { /* literal inside double quotes */ }
+      add(c);
       continue;
     }
     if (c === "'") {
       inSingle = true;
       ansi = opensAnsi(i);
-      cur += c;
+      add(c);
       continue;
     }
     if (c === "(" || (c === "{" && dialect === "powershell")) {
       // Process substitution `<(` / `>(` and subshells both nest.
-      groups.push({ start: i + 1, runs: dialect !== "posix" || prev === "" || /[\s<>;&|(]/.test(prev) });
-      cur += c;
+      const runs = dialect !== "posix" || prev === "" || /[\s<>;&|(]/.test(prev);
+      groups.push({ start: i + 1, runs, opens: runs && blank && groups.length === 0 && braceDepth === 0 });
+      if (runs) running++;
+      add(c);
       continue;
     }
     if ((c === ")" || (c === "}" && dialect === "powershell")) && groups.length > 0) {
-      const group = groups.pop() as { start: number; runs: boolean };
+      const group = groups.pop() as { start: number; runs: boolean; opens: boolean };
+      if (group.runs) running--;
+      add(c);
       // Only the outermost group that runs is recorded; parsing it finds the inner ones once.
-      if (group.runs && !groups.some((g) => g.runs)) substitutions.push(s.slice(group.start, i));
-      cur += c;
+      if (group.runs && running === 0) {
+        substitutions.push(s.slice(group.start, i));
+        if (group.opens) opener = { sub: substitutions.length - 1, length: cur.length };
+      }
       continue;
     }
     if (groups.length > 0) {
-      cur += c;
+      add(c);
       continue;
     }
-    if (c === "{" && (cur.trim() === "" ) && (next === " " || next === "\t" || next === "\n")) {
+    if (c === "{" && blank && (next === " " || next === "\t" || next === "\n")) {
       if (braceDepth++ === 0) braceStart = i + 1;
-      cur += c;
+      add(c);
       continue;
     }
-    if (c === "}" && braceDepth > 0 && /(^|[\s;])$/.test(cur)) {
-      // `{ rm -rf x; } > log`: a redirected group is not unwrapped whole, so its commands are recorded here.
-      if (--braceDepth === 0) substitutions.push(s.slice(braceStart, i));
-      cur += c;
+    if (c === "{" && braceDepth > 0 && /[\s;&|(]/.test(prev) && (next === " " || next === "\t" || next === "\n")) {
+      // A group inside the group: `{ { rm -rf x; }; }` closes at the last `}`.
+      braceDepth++;
+      add(c);
+      continue;
+    }
+    if (c === "}" && braceDepth > 0 && (cur.length === 0 || /[\s;&]/.test(cur[cur.length - 1]))) {
+      // `{ rm -rf x; } > log`: a redirected group is not one whole stage, so its commands are recorded here.
+      add(c);
+      if (--braceDepth === 0) {
+        substitutions.push(s.slice(braceStart, i));
+        opener = { sub: substitutions.length - 1, length: cur.length };
+      }
       continue;
     }
     if (braceDepth > 0) {
-      cur += c;
+      add(c);
       continue;
     }
 
@@ -553,24 +648,35 @@ function splitTop(s: string, dialect: ShellDialect): Split {
     }
     if (c === "&") {
       // `&>file`, `>&2`, `2>&1`, `<&0` are redirections; `sleep 1& rm x` backgrounds `sleep 1`.
-      if (next === ">" || /[<>]\d*$/.test(cur)) {
-        cur += c;
+      if (next === ">" || endsInRedirection(cur)) {
+        add(c);
         continue;
       }
-      if (dialect === "powershell" && cur.trim() === "") {
+      if (dialect === "powershell" && blank) {
         // Call operator: `& "C:\\tool.exe" args`
         continue;
       }
       endCommand();
       continue;
     }
-    cur += c;
+    add(c);
   }
+  // Text left inside a construct that never closes is still read as commands; bash would refuse
+  // the line, but the guard should not judge less than what it was shown.
+  const open = [subs.find((x) => x.start >= 0)?.start, groups.find((g) => g.runs)?.start, backtickStart >= 0 ? backtickStart : undefined, braceDepth > 0 ? braceStart : undefined];
+  for (const at of open) if (at !== undefined) substitutions.push(s.slice(at));
   endCommand();
   return {
-    commands: commands.map((st) => st.filter((x) => x.trim() !== "")).filter((st) => st.length > 0),
-    substitutions,
+    commands: commands.map((st) => st.filter((x) => x.text.trim() !== "")).filter((st) => st.length > 0),
+    substitutions: substitutions.filter((x): x is string => x !== null),
   };
+}
+
+/** Whether the stage so far ends in `<` or `>` and digits, so that a `&` next is part of a redirection (`>&2`). */
+function endsInRedirection(cur: readonly string[]): boolean {
+  let k = cur.length - 1;
+  while (k >= 0 && /^\d$/.test(cur[k])) k--;
+  return k >= 0 && (cur[k] === "<" || cur[k] === ">");
 }
 
 /**
@@ -596,6 +702,8 @@ interface Token {
 
 /** Brace-expanded words one command may yield before the guard stops expanding and asks instead. */
 export const BRACE_LIMIT = 1024;
+/** Characters one word's brace expansion may yield: a long word times many alternatives is too. */
+const BRACE_CHARS = 1 << 20;
 
 interface BraceGroup {
   start: number;
@@ -677,16 +785,19 @@ function firstBraceGroup(word: string, live: readonly boolean[], limit: number):
  * `{rm,-rf,x}` is `rm -rf x`, `.claud{e..e}` is `.claude`. Only braces and commas marked
  * `live` (unquoted, unescaped) count, so `{a,"b,c"}` is `a b,c` and `"{a,b}"` stays as it is.
  * Alternatives nest; `${VAR}` and a group with neither a comma nor a sequence stay as they
- * are. Returns null rather than a partial list once the words would pass `limit`.
+ * are. Returns null rather than a partial list once the words would pass `limit`, or their
+ * characters a million.
  */
 export function braceExpand(word: string, live: readonly boolean[] = Array.from(word, () => true), limit = BRACE_LIMIT): string[] | null {
   const out: string[] = [];
+  let chars = 0;
   const expand = (w: string, l: readonly boolean[]): boolean => {
     const group = firstBraceGroup(w, l, limit);
     if (group === "overflow") return false;
     if (group === null) {
       out.push(w);
-      return out.length <= limit;
+      chars += w.length;
+      return out.length <= limit && chars <= BRACE_CHARS;
     }
     for (const part of group.parts) {
       if (!expand(w.slice(0, group.start) + part.text + w.slice(group.end + 1), [...l.slice(0, group.start), ...part.live, ...l.slice(group.end + 1)])) return false;
@@ -721,17 +832,22 @@ function ansiEscape(s: string, i: number): [string, number] {
   return [`\\${c}`, 2];
 }
 
-function tokenize(stage: string, dialect: ShellDialect): Token[] {
+function tokenize(stage: string, dialect: ShellDialect, budget?: ParseBudget): Token[] {
   const escapeChar = dialect === "posix" ? "\\" : dialect === "powershell" ? "`" : "^";
   const tokens: Token[] = [];
-  let cur = "";
+  // The word so far, a character at a time (see splitTop), and how many unquoted `$` end it.
+  let cur: string[] = [];
   let live: boolean[] = [];
+  let dollars = 0;
   let has = false;
   let bare = true;
   /** Append text that sh will not brace-expand: quoted, escaped, or inside a substitution. */
   const dead = (text: string) => {
-    cur += text;
-    for (let k = 0; k < text.length; k++) live.push(false);
+    for (let k = 0; k < text.length; k++) {
+      cur.push(text[k]);
+      live.push(false);
+    }
+    if (text !== "") dollars = 0;
   };
   let inSingle = false;
   let ansi = false;
@@ -739,24 +855,26 @@ function tokenize(stage: string, dialect: ShellDialect): Token[] {
   let depth = 0; // $( ) and ( ) nesting inside a token
   /** A `$` just before a quote that makes it `$'...'` (ANSI-C) or `$"..."` (locale) in sh: the `$` is not part of the word. */
   const dropQuotingDollar = (): boolean => {
-    let run = 0;
-    while (cur[cur.length - 1 - run] === "$" && live[live.length - 1 - run]) run++;
     // `$$'x'` is the shell's pid and then 'x'; only an odd run leaves a `$` to quote with.
-    if (dialect !== "posix" || run % 2 === 0) return false;
-    cur = cur.slice(0, -1);
+    if (dialect !== "posix" || dollars % 2 === 0) return false;
+    cur.pop();
     live.pop();
+    dollars = 0;
     return true;
   };
 
   const flush = () => {
-    if (has) tokens.push(bare ? { text: cur, bare, live } : { text: cur, live });
-    cur = "";
+    const text = cur.join("");
+    if (has) tokens.push(bare ? { text, bare, live } : { text, live });
+    cur = [];
     live = [];
+    dollars = 0;
     has = false;
     bare = true;
   };
 
   for (let i = 0; i < stage.length; i++) {
+    if ((i & 4095) === 0 && budget !== undefined) checkTime(budget);
     const c = stage[i];
     const next = stage[i + 1];
     if (inSingle) {
@@ -808,7 +926,7 @@ function tokenize(stage: string, dialect: ShellDialect): Token[] {
     if (c === ">" || c === "<") {
       // Redirection. Fold a preceding bare fd number (`2>`) into the operator.
       let op = "";
-      if (has && /^\d+$/.test(cur)) { op = cur; cur = ""; live = []; has = false; }
+      if (has && cur.length > 0 && cur.every((ch) => ch >= "0" && ch <= "9")) { op = cur.join(""); cur = []; live = []; dollars = 0; has = false; }
       else flush();
       op += c;
       if (next === c) {
@@ -828,8 +946,9 @@ function tokenize(stage: string, dialect: ShellDialect): Token[] {
       tokens.push({ text: op, op });
       continue;
     }
-    cur += c;
+    cur.push(c);
     live.push(true);
+    dollars = c === "$" ? dollars + 1 : 0;
     has = true;
   }
   flush();
@@ -860,8 +979,8 @@ function stripCompoundLeads(argv: string[]): void {
   }
 }
 
-function buildStage(text: string, dialect: ShellDialect, budget: BraceBudget): Stage {
-  let tokens = tokenize(dialect === "powershell" ? text.replace(PWSH_ASSIGNMENT, "") : text, dialect);
+function buildStage(text: string, dialect: ShellDialect, budget: ParseBudget): Stage {
+  let tokens = tokenize(dialect === "powershell" ? text.replace(PWSH_ASSIGNMENT, "") : text, dialect, budget);
   let unexpanded: string | undefined;
   if (dialect === "posix") {
     tokens = tokens.flatMap((t, k) => {

@@ -474,3 +474,48 @@ test("Git Bash on Windows: wildcards skip dotfiles as sh does, and case still fo
   // PowerShell wildcards do match a leading dot.
   assert.equal(verdictOf(win("Remove-Item -Recurse *s\\*\\x")), "deny shell.write-harness");
 });
+
+test("find: a group with -o narrows only if every branch does (BUG-2026-019)", () => {
+  for (const c of [
+    "find . \\( -name foo -o -type f \\) -delete",
+    "find . \\( -name foo -o -true \\) -delete",
+    "find . \\( -name foo -o ! -name bar \\) -delete",
+    "find . \\( -name foo -o -type f \\) -exec rm {} +",
+    "find . ! \\( -name foo \\) -delete",
+    "find . \\( -name a -o \\( -name b -o -true \\) \\) -delete",
+  ]) assert.equal(verdictOf(sh(c)), "deny shell.rm-recursive-cwd", c);
+  for (const c of ["find . -type f \\( -name '*.pyc' -o -name '*.pyo' \\) -delete", "find . \\( -name '*.pyc' -o \\( -name '*.pyo' -a -type f \\) \\) -delete", "find . \\( -name x \\) -delete"]) {
+    assert.equal(verdictOf(sh(c)), "allow", c);
+  }
+});
+
+test("brace groups pair as bash pairs them, and an unclosed construct hides nothing (BUG-2026-019)", () => {
+  for (const c of ["{ { { rm -rf .claude; }; }; }", "{ true & rm -rf .claude &}", "echo $(rm -rf .claude", "cat <<EOF | sh\nx\\\nEOF\nrm -rf .claude\nEOF"]) {
+    assert.equal(verdictOf(sh(c)), "deny shell.hook-tamper", c);
+  }
+  assert.equal(verdictOf(sh("cat > docs/howto.md <<EOF\nVersion $VERSION. To undo, run \\`git reset --hard HEAD~1\\`.\nEOF")), "allow");
+});
+
+test("a command the parser cannot finish in time asks, and ordinary large ones finish well inside it (BUG-2026-019)", async () => {
+  const { decideAll } = await import("../src/guard/decide.ts");
+  const late = decideAll([{ kind: "shell", command: "ls" }], { ...POSIX_CTX, parseMs: -1 });
+  assert.equal(late.verdict, "ask");
+  assert.equal(late.rule, "guard.time-limit");
+  const sql = Array.from({ length: 5000 }, (_, i) => `INSERT INTO t (id, name) VALUES (${i}, 'it''s ${i}');`).join("\n");
+  for (const [label, c] of [
+    ["unterminated here-documents", "true <<Z\n".repeat(10_000)],
+    ["a SQL seed with apostrophes", `psql "$DB" <<'SQL'\n${sql}\nSQL`],
+    ["eight subshells around many commands", "( ".repeat(8) + Array.from({ length: 2000 }, () => "true").join(" && ") + " )".repeat(8)],
+    ["nested here-strings", 'echo; ((((((((bash <<< "((((((((bash <<< \\"rm -rf .claude\\"))))))))"))))))))'],
+    ["40k parentheses", "(".repeat(40_000) + "echo" + ")".repeat(40_000)],
+    ["200k unclosed braces", "echo " + "{".repeat(200_000)],
+    ["many $'' words", "echo " + "$'a'".repeat(50_000)],
+    ["a long word times many alternatives", "echo {1..1000}" + "A".repeat(1 << 20)],
+  ] as const) {
+    const t = performance.now();
+    const d = decideAll([{ kind: "shell", command: c }], POSIX_CTX);
+    assert.notEqual(d.rule, "guard.time-limit", label);
+    assert.notEqual(d.rule, "guard.internal-error", label);
+    assert.ok(performance.now() - t < 1500, `${label} took ${Math.round(performance.now() - t)} ms`);
+  }
+});
