@@ -122,13 +122,35 @@ function guardPackageIsOurs(guard: string): boolean {
   }
 }
 
+/**
+ * The words of a commandWindows as ah wrote it before it read typographic
+ * quotes the way PowerShell does: the `& '...'` form, with node and guard
+ * single-quoted, options bare or single-quoted and only ASCII ' doubled, so
+ * U+2018 to U+201B stayed single; or the cmd.exe form, a bare node, then the
+ * guard and options bare or in double quotes that could hold U+201C to U+201E.
+ * PowerShell ends a string at such a quote. Reading these lines the way they
+ * were written lets `ah init` replace them and --remove take them out. Null
+ * unless quoting these words that way gives back exactly this line.
+ */
+function legacyWindowsWords(command: string): string[] | null {
+  const ps = command.startsWith("& ");
+  const words = [...command.matchAll(ps ? /'((?:[^']|'')*)'|\S+/g : /"([^"]*)"|\S+/g)].map((t) => (t[1] === undefined ? t[0] : ps ? t[1].replace(/''/g, "'") : t[1]));
+  const q = (w: string) => (ps ? `'${w.replace(/'/g, "''")}'` : `"${w}"`);
+  const again = words.map((w, i) => (i === 0 ? w : (ps && i < 3) || !/^[A-Za-z0-9_\\/.:@~+=,-]+$/.test(w) ? q(w) : w));
+  return again.join(" ") === command ? words : null;
+}
+
 /** The words of every command form an entry carries (`command`, `args`, `commandWindows`). */
 export function entryWords(entry: Record<string, unknown>): string[][] {
   const forms: string[][] = [];
   const args = Array.isArray(entry.args) ? entry.args.filter((a): a is string => typeof a === "string") : null;
   if (typeof entry.command === "string") forms.push(args ? [entry.command, ...args] : splitWords(entry.command));
-  // cmd.exe does not quote with ', so a single quote in a Windows command is PowerShell's.
-  if (typeof entry.commandWindows === "string") forms.push(splitWords(entry.commandWindows, "powershell"));
+  if (typeof entry.commandWindows === "string") {
+    // cmd.exe does not quote with ', so a single quote in a Windows command is PowerShell's.
+    const words = splitWords(entry.commandWindows, "powershell");
+    const legacy = guardArgs(words) === null ? legacyWindowsWords(entry.commandWindows) : null;
+    forms.push(legacy !== null && guardArgs(legacy) !== null ? legacy : words);
+  }
   return forms;
 }
 

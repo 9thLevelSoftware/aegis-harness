@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { claudeGroup } from "../src/wiring/claude.ts";
-import { codexGroup } from "../src/wiring/codex.ts";
+import { codexCommand, codexGroup } from "../src/wiring/codex.ts";
 import { planHooks } from "../src/wiring/hooks-json.ts";
 import { carriedOptions, entryWords, guardArgs, isOwnedEntry, looksLikeGuard, splitWords } from "../src/wiring/owned.ts";
 import type { Machine } from "../src/wiring/project.ts";
@@ -83,6 +83,37 @@ test("an entry that mentions the guard but is not ah's is reported, not adopted"
   assert.ok(looksLikeGuard({ type: "command", command: "npx ah guard --agent claude | tee log" }));
   assert.equal(looksLikeGuard({ type: "command", command: "/usr/bin/node /x/dist/guard.mjs --agent codex" }), false, "ah's own entry");
   assert.equal(looksLikeGuard({ type: "command", command: "npx prettier --check" }), false);
+});
+
+test("a Windows entry the previous ah wrote with a typographic quote it did not escape is ah's: `ah init` replaces it and --remove takes it out", () => {
+  // What ah wrote before it read U+2018 to U+201B as PowerShell's single quotes and U+201C to U+201E as its double quotes.
+  const cases: [string, string, string[], string][] = [
+    ["C:\\Users\\dev\\it\u2019s tools\\node.exe", "C:\\Users\\dev\\ah\\dist\\guard.mjs", [], "& 'C:\\Users\\dev\\it\u2019s tools\\node.exe' 'C:\\Users\\dev\\ah\\dist\\guard.mjs' --agent codex"],
+    ["C:\\nodejs\\node.exe", "C:\\Users\\dev\\O'Brien\u2018s $x\\dist\\guard.mjs", ["--root", "C:\\Users\\dev\\\u201Ait\u201B s"], "& 'C:\\nodejs\\node.exe' 'C:\\Users\\dev\\O''Brien\u2018s $x\\dist\\guard.mjs' --agent codex --root 'C:\\Users\\dev\\\u201Ait\u201B s'"],
+    ["C:\\nodejs\\node.exe", "C:\\Users\\dev\\\u201Eah b\\dist\\guard.mjs", ["--root", "C:\\Users\\dev\\it\u201Ds"], 'C:\\nodejs\\node.exe "C:\\Users\\dev\\\u201Eah b\\dist\\guard.mjs" --agent codex --root "C:\\Users\\dev\\it\u201Ds"'],
+  ];
+  const look = { short: (p: string) => p };
+  for (const [nodePath, guardPath, extra, commandWindows] of cases) {
+    const m = { root: "C:\\Users\\dev\\project", home: "C:\\Users\\dev", os: "win32", env: {}, nodePath, guardPath } as unknown as Machine;
+    const old = { type: "command", command: codexCommand(m, ["--agent", "codex", ...extra], look).command, commandWindows, timeout: 5 };
+    const ps = commandWindows.startsWith("& ");
+    assert.ok(isOwnedEntry(old), commandWindows);
+    assert.equal(looksLikeGuard(old), false, commandWindows);
+    assert.deepEqual(entryWords(old)[1], [...(ps ? ["&"] : []), nodePath, guardPath, "--agent", "codex", ...extra], commandWindows);
+    assert.deepEqual(carriedOptions(old), extra.length > 0 ? { extra } : {}, commandWindows);
+    const lint = { matcher: "Bash", hooks: [{ type: "command", command: "lint" }] };
+    const file = { hooks: { PreToolUse: [lint, { matcher: "Bash|Edit|Write|Agent", hooks: [old] }] } };
+    const init = planHooks(file, "hooks.json", (found) => codexGroup(m, {}, found, look), { placement: "keep-indexes" });
+    assert.equal(init.action, "updated", commandWindows);
+    assert.deepEqual(init.value, { hooks: { PreToolUse: [lint, codexGroup(m, {}, [old], look)] } }, commandWindows);
+    assert.deepEqual(planHooks(file, "hooks.json", () => null).value, { hooks: { PreToolUse: [lint] } }, commandWindows);
+    // Only that writer's exact line: anything else is the user's.
+    const quotedGuard = ps ? `'${guardPath.replace(/'/g, "''")}'` : `"${guardPath}"`;
+    for (const theirs of [`${commandWindows}; calc`, commandWindows.replace(`${quotedGuard} `, `${quotedGuard}  `), commandWindows.replace(quotedGuard, guardPath), ps ? `& ${commandWindows}` : `"${nodePath}"${commandWindows.slice(nodePath.length)}`]) {
+      assert.notEqual(theirs, commandWindows);
+      assert.equal(isOwnedEntry({ ...old, commandWindows: theirs }), false, theirs);
+    }
+  }
 });
 
 function prng(seed: number): () => number {
