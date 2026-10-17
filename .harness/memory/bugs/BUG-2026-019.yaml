@@ -34,23 +34,50 @@ source:
   - kind: incident
     path: .harness/memory/bugs/BUG-2026-018.yaml
     note: the earlier time a hook contract written from memory was wrong
+  - kind: session
+    date: 2026-10-17
+    note: >-
+      A review of the guard after ah init landed ran each bypass listed under impact through
+      dist/guard.mjs and got allow (Write/Edit of the top level's settings.local.json from a
+      subdirectory got ask). Checked with the real binaries: Codex 0.163 in a linked worktree loads
+      project hooks from the main checkout (a session in <wt>/sub loads <main>/.codex/hooks.json and
+      <main>/sub/.codex/hooks.json, never the worktree's); Claude Code 2.1.302's Monitor tool runs
+      tool_input.command in the background, "uses the same permission rules as Bash", and runs it
+      through Git Bash on Windows.
 root_cause: >-
   The README told people to paste JSON into settings files. Whether the hook then ran depended on
   rules the README did not know: which files each agent loads and from which directory, what makes
   it reject a file, how Codex keys trust, and which switches turn hooks off. Nothing checked that a
   wired hook actually ran, so a hook that never fired looked the same as a guard with nothing to
   block. Separately, the guard refused edits to hook files but not `ah init --remove`, which an
-  agent could run to take the hook out through ah itself.
+  agent could run to take the hook out through ah itself. The first fix for that knew three
+  spellings of the CLI; the hook-config classifier measured paths from the session's start
+  directory while ah init wires the git top level (and Codex reads a worktree's main checkout);
+  and normalize.ts routed Monitor, a shell tool, to the other-tools path.
 impact: >-
   Found while building ah init, before ah was published: the README matcher missed Workflow; a
   Codex entry inserted at the top would have untrusted the user's own hooks; a settings file with
   one malformed entry would have silently disabled the guard; and a hook in .claude/settings.json
-  did not run for a session started in a subdirectory.
+  did not run for a session started in a subdirectory. The review then found the guard unwirable
+  without a deny. `ah init --remove` ran as `./dist/ah.mjs` or an absolute ah.mjs (shebang exec),
+  `node node_modules/.bin/ah`, `& ah.ps1` or `& aegis.ps1`, `pwsh -File ah.ps1`,
+  `powershell -File ah.ps1`, `env -S 'ah init --remove'`, `pnpm -C . exec ah`,
+  `pnpm --dir . exec ah`, `pnpm --package=@9thlevel/aegis dlx ah`, `pnpm ah`, `yarn ah`,
+  `yarn run ah`, `npm exec @9thlevel/aegis -- init`, `npm exec -c '...'`, `npx -c '...'`,
+  PowerShell `Start-Process ah 'init --remove'` (and -FilePath/-ArgumentList), `iex '...'`,
+  `Invoke-Expression '...'`, and inside `python3 -c "os.system(...)"` or
+  `node -e "execSync(...)"`. From a session started in <top>/sub, `rm`, `rm -f` by absolute path,
+  `mv`, `cp /dev/null`, `truncate -s0`, `: >`, `echo '{}' >` and `sed -i '/guard.mjs/d'` on
+  ../.claude/settings.local.json all passed, and a Write or Edit of it only asked. A Monitor call
+  running `rm -rf ~/work` passed.
 countermeasure:
   kind: test
   ref:
     - tests/init-doctor.test.ts
     - tests/json-edit.test.ts
+    - tests/hook-config-layers.test.ts
+    - tests/shell-rules.test.ts
+    - tests/shell-parser.test.ts
   change: >-
     `ah init` writes the hook and the AGENTS.md block from what the agents' documents and binaries
     say, refuses to write a file it cannot read back exactly, keeps every other byte, appends
@@ -60,6 +87,21 @@ countermeasure:
     through each hook command as its agent would run it. CI runs both from the installed package on
     Linux and with paths containing spaces on Windows. shell.hook-tamper now also denies
     `ah init --remove`, `--uninstall` and `--ask-fallback warn` run by the agent; `--dry-run` passes.
+    After the review: the rule knows ah by its bin names and bundle file (`ah`, `aegis`, `ah.mjs`,
+    with `.ps1` stripped like `.cmd`), run directly, by node, bun or deno, by `pwsh -File`, or by
+    `pnpm`/`yarn [run]` as a local bin; the parser skips package-manager options before
+    exec/dlx, drops npm's `--`, reads `npx -c`/`npm exec --call`/`pnpm exec -c` as a shell
+    command line, splices `env -S` into the command, and reads `iex`, `Invoke-Expression` and
+    `Start-Process` like eval; inline interpreter code that shows an exec hint and spells an
+    ah/aegis/ah.mjs `init` with a weakening flag is denied. The project-level hook files
+    (hookConfigPaths, anchored at each directory) in every ancestor of the project root are hook
+    configuration, compared lexically with no git call and case-insensitively on Windows; in a
+    linked worktree the guard reads the .git file once per process and protects the main
+    checkout's twin of the project root and its ancestors too. Monitor with a string command is a
+    shell call in the POSIX dialect. Still beyond any deny-list: variable indirection
+    (`A=ah; $A init --remove`, `$(which ah) init --remove`) and arbitrary interpreter programs
+    that build the command at run time; the hook wiring is the boundary, and changing it stays the
+    user's call.
 must_block_fixture: fixtures/must_block/ah-init-remove-run-by-the-agent-is-denied.json
 must_allow_fixture: fixtures/must_allow/ah-init-remove-dry-run-only-prints-the-plan-and-is-allowed.json
 expiry_policy: "re-check the facts in source whenever Claude Code or Codex changes its hook or settings documentation; ah doctor's checks follow them"
