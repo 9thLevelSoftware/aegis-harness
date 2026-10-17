@@ -27,7 +27,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run typecheck
-      - run: npm test
+      - run: npm run test:ci   # npm test, plus an annotation per failing test
       - run: npm run check:hygiene
       - name: Fixture corpus end to end, with the per-call latency budget (150 ms)
         run: npm run test:hooks
@@ -72,7 +72,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run typecheck
-      - run: npm test
+      - run: npm run test:ci   # npm test, plus an annotation per failing test
       - run: npm run check:hygiene
       - name: Fixture corpus end to end, with the slower-runner latency budget (AH_LATENCY_BUDGET_MS)
         run: npm run test:hooks

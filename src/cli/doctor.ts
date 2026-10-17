@@ -11,14 +11,15 @@
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { userInfo } from "node:os";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { atLeast, CLAUDE_MIN, CLAUDE_OPTIONAL_TOOLS, CLAUDE_REQUIRED_TOOLS, claudeConfigDir, claudeMatcherCovers, claudeSettingsFiles, managedDir, parseVersion, type SettingsFile } from "../wiring/claude.ts";
 import { canaries, runCanary, type Launch } from "../wiring/canary.ts";
 import { CODEX_REQUIRED_TOOLS, codexConfigFiles, codexHome, codexHooksFiles, codexMatcherCovers, codexRequirementsFile, parseCodexVersion, parseFeaturesHooks } from "../wiring/codex.ts";
 import { readJson, readText } from "../wiring/files.ts";
 import { blockIsCurrent, claudeMdState, CODEX_DOC_BUDGET } from "../wiring/instructions.ts";
 import { entryWords, guardArgs, isOwnedEntry, splitWords } from "../wiring/owned.ts";
-import { defaultMachine, readJsonQuiet, type Machine } from "../wiring/project.ts";
+import { defaultMachine, gitTopLevel, readJsonQuiet, type Machine } from "../wiring/project.ts";
 import { blockEndByte } from "../wiring/text-block.ts";
 import { get, parseToml } from "../wiring/toml.ts";
 
@@ -353,7 +354,9 @@ export function doctorCodex(m: Machine, probe: CliProbe, featuresList: string | 
   const projectConfigPath = codexConfigFiles(m).find((f) => f.scope === "project")?.path as string;
   const userConfig = readToml(userConfigPath);
   if (userConfig.error) add("warn", `${rel(m, userConfigPath)} could not be read (${userConfig.error}); trust and feature checks below are incomplete`);
-  const projectTrust = get(userConfig.doc, "projects", m.root, "trust_level");
+  // An entry for the repository root also trusts the layers below it.
+  const top = gitTopLevel(m.root);
+  const projectTrust = get(userConfig.doc, "projects", m.root, "trust_level") ?? (top !== null ? get(userConfig.doc, "projects", top, "trust_level") : undefined);
   const projectTrusted = projectTrust === "trusted";
 
   // features.hooks: `codex features list` knows the effective value; config.toml says where it was set.
@@ -418,7 +421,10 @@ export function doctorCodex(m: Machine, probe: CliProbe, featuresList: string | 
     else add("fail", `${where}: Codex has not trusted the ah hook yet, so it skips it`, "start Codex in this project, open /hooks, and trust the ah entry");
 
     const timeout = Number.isInteger(e.timeout) && (e.timeout as number) > 0 ? (e.timeout as number) : 600;
-    if (m.os !== "win32") out.push(...canaryLine("codex", m, { kind: "shell", command: e.command as string, shell: bashPath(), shellArgs: ["-c"] }, timeout, `${where} (bash -c)`));
+    if (m.os !== "win32") {
+      const shell = codexShell();
+      out.push(...canaryLine("codex", m, { kind: "shell", command: e.command as string, shell, shellArgs: ["-c"] }, timeout, `${where} (${basename(shell)} -c)`));
+    }
     else {
       const ps = canaryLine("codex", m, { kind: "shell", command: cmd, shell: "powershell.exe", shellArgs: ["-NoProfile", "-NonInteractive", "-Command"] }, timeout, `${where} (PowerShell)`);
       const cmdExe = canaryLine("codex", m, { kind: "shell", command: `"${cmd}"`, shell: "cmd.exe", shellArgs: ["/d", "/s", "/c"] }, timeout, `${where} (cmd.exe)`);
@@ -433,8 +439,16 @@ export function doctorCodex(m: Machine, probe: CliProbe, featuresList: string | 
   return [...out, ...codexInstructions(m, projectTrust)];
 }
 
-function bashPath(): string {
-  for (const p of ["/bin/bash", "/usr/bin/bash", "/usr/local/bin/bash", "/opt/homebrew/bin/bash"]) if (existsSync(p)) return p;
+/** The shell Codex runs a hook `command` with: the login shell when it is bash or zsh, else bash from PATH. */
+function codexShell(): string {
+  let login = "";
+  try {
+    login = userInfo().shell ?? "";
+  } catch {
+    // no passwd entry
+  }
+  if (/(^|\/)(bash|zsh)$/.test(login) && existsSync(login)) return login;
+  for (const d of (process.env.PATH ?? "").split(":")) if (d !== "" && existsSync(join(d, "bash"))) return join(d, "bash");
   return "/bin/sh";
 }
 

@@ -7,8 +7,9 @@
  *   files). The same entry in two files runs twice.
  * - hooks.json takes only `description` and `hooks` at the top level; any other
  *   key, a wrong value type or an unknown handler `type` rejects the whole file.
- * - `command` runs as `bash -c <command>` on Linux and macOS, so paths are
- *   shell-quoted. Codex does not document the shell behind `commandWindows`;
+ * - `command` runs as `<login shell> -c <command>` when the login shell is
+ *   bash or zsh (so zsh on a default macOS), else `bash -c`; paths are quoted
+ *   for both. Codex does not document the shell behind `commandWindows`;
  *   ah writes a form that cmd.exe and PowerShell both run (short 8.3 paths
  *   without quotes) when it can, and `ah doctor` runs it through both.
  * - Trust is recorded per hook in ~/.codex/config.toml under
@@ -132,10 +133,15 @@ export function codexNextSteps(changed: boolean): string[] {
   ];
 }
 
-/** Does a Codex matcher (a regex, tried against the tool name and its aliases) select `names`? */
+/**
+ * Does a Codex matcher select a tool known by any of `names`? Codex compares a
+ * matcher made only of names and `|` as a list of exact, case-sensitive names
+ * ("Bas" does not match Bash); anything else is an unanchored regex search.
+ */
 export function codexMatcherCovers(matcher: unknown, names: readonly string[]): boolean {
   if (matcher === undefined || matcher === null || matcher === "" || matcher === "*") return true;
   if (typeof matcher !== "string") return false;
+  if (/^[A-Za-z0-9_|]+$/.test(matcher)) return matcher.split("|").some((n) => names.includes(n));
   try {
     const re = new RegExp(matcher);
     return names.some((n) => re.test(n));
