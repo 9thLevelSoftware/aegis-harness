@@ -85,3 +85,44 @@ test("build sees the entries it replaces", () => {
   });
   assert.deepEqual(seen, [entry({ timeout: 30 })]);
 });
+
+test("keep-indexes (Codex): appends, replaces in place, and says when a user's hook changes position", () => {
+  const A = { matcher: "Read", hooks: [{ type: "command", command: "a" }] };
+  const B = { matcher: "Write", hooks: [{ type: "command", command: "b" }] };
+  const k = { placement: "keep-indexes" as const };
+  const moved = (n: string[]) => n.some((x) => /changed position/.test(x));
+
+  let p = planHooks({ hooks: { PreToolUse: [A, B] } }, "s", build, k);
+  assert.deepEqual(p.value.hooks, { PreToolUse: [A, B, group()] });
+  assert.equal(moved(p.notes), false);
+
+  p = planHooks({ hooks: { PreToolUse: [group({ timeout: 9 }), A] } }, "s", build, k);
+  assert.deepEqual(p.value.hooks, { PreToolUse: [group(), A] });
+  assert.equal(moved(p.notes), false);
+
+  p = planHooks({ hooks: { PreToolUse: [A, group()] } }, "s", () => null, k);
+  assert.deepEqual(p.value.hooks, { PreToolUse: [A] });
+  assert.equal(moved(p.notes), false);
+
+  p = planHooks({ hooks: { PreToolUse: [group(), A] } }, "s", () => null, k);
+  assert.deepEqual(p.value.hooks, { PreToolUse: [A] });
+  assert.ok(moved(p.notes), "A moved from index 1 to 0");
+
+  p = planHooks({ hooks: { PreToolUse: [{ matcher: "Bash", hooks: [A.hooks[0], entry()] }, B] } }, "s", build, k);
+  assert.deepEqual(p.value.hooks, { PreToolUse: [{ matcher: "Bash", hooks: [A.hooks[0]] }, B, group()] });
+  assert.equal(moved(p.notes), false, "the user's handler kept index 0");
+
+  p = planHooks({ hooks: { PreToolUse: [{ matcher: "Bash", hooks: [entry(), A.hooks[0]] }] } }, "s", build, k);
+  assert.deepEqual(p.value.hooks, { PreToolUse: [{ matcher: "Bash", hooks: [A.hooks[0]] }, group()] });
+  assert.ok(moved(p.notes), "the user's handler moved from :0:1 to :0:0");
+
+  p = planHooks({ hooks: { PreToolUse: [group(), A, group()] } }, "s", build, k);
+  assert.deepEqual(p.value.hooks, { PreToolUse: [group(), A] });
+  assert.equal(moved(p.notes), false);
+});
+
+test("first-owned (Claude Code): the group goes where the first ah entry was", () => {
+  const A = { matcher: "Read", hooks: [{ type: "command", command: "a" }] };
+  const p = planHooks({ hooks: { PreToolUse: [A, { matcher: "Bash", hooks: [entry(), { type: "command", command: "z" }] }] } }, "s", build);
+  assert.deepEqual(p.value.hooks, { PreToolUse: [A, group(), { matcher: "Bash", hooks: [{ type: "command", command: "z" }] }] });
+});

@@ -40,6 +40,20 @@ jobs:
           npm install --silent "$GITHUB_WORKSPACE/$(cat $GITHUB_WORKSPACE/pack.txt)"
           npx ah version
           npx ah test-hooks --in-process
+      - name: ah init and ah doctor from the installed package, in a scratch project
+        run: |
+          AH=/tmp/ah-install/node_modules/.bin/ah
+          mkdir -p /tmp/ah-proj && cd /tmp/ah-proj && git init -q
+          printf '# Scratch\n' > AGENTS.md
+          $AH init
+          $AH init | tee second.txt
+          if grep -E ' (added|updated|created|appended|prepended|replaced) ' second.txt; then echo "second ah init changed something"; exit 1; fi
+          $AH doctor --agents claude
+          $AH doctor --agents codex --json > codex.json || true
+          node "$GITHUB_WORKSPACE/scripts/ci-doctor-codex.mjs" codex.json
+          $AH init --remove
+          test "$(cat AGENTS.md)" = "# Scratch"
+          test ! -e .claude/settings.local.json && test ! -e .codex/hooks.json
 
   windows:
     # Devil develops on Windows 11 (WSL2 is fine for v0). The guard must still
@@ -62,3 +76,20 @@ jobs:
       - run: npm run check:hygiene
       - name: Fixture corpus end to end, with the slower-runner latency budget (AH_LATENCY_BUDGET_MS)
         run: npm run test:hooks
+      - name: ah init and ah doctor with node and the guard under paths with spaces
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP "ah with space"
+          New-Item -ItemType Directory -Force (Join-Path $dir "dist") | Out-Null
+          Copy-Item (Get-Command node).Source $dir
+          Copy-Item dist/guard.mjs (Join-Path $dir "dist")
+          $proj = Join-Path $env:RUNNER_TEMP "ah proj"
+          New-Item -ItemType Directory -Force $proj | Out-Null
+          git -C $proj init -q
+          node dist/ah.mjs init --root $proj --node (Join-Path $dir "node.exe") --guard (Join-Path $dir "dist/guard.mjs")
+          if ($LASTEXITCODE) { exit 1 }
+          node dist/ah.mjs doctor --root $proj --agents claude
+          if ($LASTEXITCODE) { exit 1 }
+          node dist/ah.mjs doctor --root $proj --agents codex --json > codex.json
+          node scripts/ci-doctor-codex.mjs codex.json
+          if ($LASTEXITCODE) { exit 1 }

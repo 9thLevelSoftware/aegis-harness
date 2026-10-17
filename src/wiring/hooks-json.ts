@@ -44,7 +44,25 @@ export function ownedEntries(settings: unknown, event = "PreToolUse"): { group: 
  * Plan the change. `build` receives the ah entries found (so it can carry a
  * person's options over) and returns the canonical group, or null to remove.
  */
-export function planHooks(settings: unknown, file: string, build: (found: Obj[]) => Obj | null, event = "PreToolUse"): HookPlan {
+export interface PlanOptions {
+  event?: string;
+  /**
+   * "first-owned" (default): the canonical group takes the place of the first
+   * group that held an ah entry. "keep-indexes": it takes the place of ah's own
+   * group, or goes at the end, so no other group moves forward or back. Codex
+   * keys its hook trust by group index, so inserting before a user's group
+   * would make Codex distrust it.
+   */
+  placement?: "first-owned" | "keep-indexes";
+}
+
+function isOwnedOnly(g: unknown): boolean {
+  return isObj(g) && Array.isArray(g.hooks) && g.hooks.length > 0 && g.hooks.every(isOwnedEntry);
+}
+
+export function planHooks(settings: unknown, file: string, build: (found: Obj[]) => Obj | null, opts: PlanOptions = {}): HookPlan {
+  const event = opts.event ?? "PreToolUse";
+  const keepIndexes = opts.placement === "keep-indexes";
   if (!isObj(settings)) throw new HookShapeError(`${file} is not a JSON object; ah will not rewrite it`);
   if (settings.hooks !== undefined && !isObj(settings.hooks)) throw new HookShapeError(`${file}: "hooks" is not an object; ah will not rewrite it`);
   const hooks = (settings.hooks ?? {}) as Obj;
@@ -53,29 +71,50 @@ export function planHooks(settings: unknown, file: string, build: (found: Obj[])
 
   const found: Obj[] = [];
   const notes: string[] = [];
-  const kept: unknown[] = [];
-  let insertAt = -1;
+  /** Each group after ah's entries are taken out; null marks a group that held only ah entries. */
+  const rest: (unknown | null)[] = [];
+  let firstAny = -1;
+  let firstOwn = -1;
+  let splitMixed = false;
   for (const g of groups) {
-    if (!isObj(g) || !Array.isArray(g.hooks)) {
-      kept.push(g);
-      continue;
-    }
-    const mine = g.hooks.filter(isOwnedEntry) as Obj[];
+    const mine = isObj(g) && Array.isArray(g.hooks) ? (g.hooks.filter(isOwnedEntry) as Obj[]) : [];
     if (mine.length === 0) {
-      kept.push(g);
+      rest.push(g);
       continue;
     }
     found.push(...mine);
-    if (insertAt < 0) insertAt = kept.length;
-    if (mine.length === g.hooks.length) continue; // ah's own group: dropped, replaced below
-    kept.push({ ...g, hooks: g.hooks.filter((e) => !isOwnedEntry(e)) });
-    notes.push(`moved the ah entry out of a matcher group that also holds other hooks (matcher ${JSON.stringify(g.matcher ?? "")})`);
+    const hooksOf = (g as Obj).hooks as unknown[];
+    if (firstAny < 0) firstAny = rest.length;
+    if (mine.length === hooksOf.length) {
+      if (firstOwn < 0) firstOwn = rest.length;
+      rest.push(null);
+      continue;
+    }
+    const others = hooksOf.filter((e) => !isOwnedEntry(e));
+    if (hooksOf.findIndex(isOwnedEntry) < hooksOf.length - mine.length) splitMixed = true;
+    rest.push({ ...(g as Obj), hooks: others });
+    notes.push(`moved the ah entry out of a matcher group that also holds other hooks (matcher ${JSON.stringify((g as Obj).matcher ?? "")})`);
   }
   if (found.length > 1) notes.push(`found ${found.length} ah entries for ${event}; kept one`);
 
   const want = build(found);
-  if (want) kept.splice(insertAt < 0 ? kept.length : insertAt, 0, want);
+  // Where the canonical group goes, as an index into `rest`.
+  let at: number;
+  if (keepIndexes) at = firstOwn >= 0 ? firstOwn : rest.length;
+  else at = firstAny >= 0 ? firstAny : rest.length;
+  const kept: unknown[] = [];
+  rest.forEach((g, i) => {
+    if (i === at && want) kept.push(want);
+    if (g !== null) kept.push(g);
+  });
+  if (at >= rest.length && want) kept.push(want);
 
+  if (keepIndexes) {
+    // Codex files trust under "<file>:<event>:<group index>:<handler index>", so a user's
+    // hook that changes index is untrusted until the user reviews it again.
+    const moved = groups.some((g, i) => g !== undefined && !isOwnedOnly(g) && kept.indexOf(rest[i] as unknown) !== -1 && kept.indexOf(rest[i] as unknown) !== i);
+    if (moved || splitMixed) notes.push("some of your other hooks changed position, so Codex will ask you to trust them again in /hooks");
+  }
   const nextHooks: Obj = { ...hooks };
   if (kept.length > 0) nextHooks[event] = kept;
   else delete nextHooks[event];

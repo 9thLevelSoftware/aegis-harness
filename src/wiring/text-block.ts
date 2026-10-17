@@ -12,7 +12,7 @@ const END_LINE = /^[ \t]*<!--[ \t]*ah:end\b[^\n]*-->[ \t]*$/;
 export const BLOCK_BEGIN = "<!-- ah:begin (managed by `ah init`; edits between these markers are replaced) -->";
 export const BLOCK_END = "<!-- ah:end -->";
 
-export type BlockAction = "created" | "appended" | "replaced" | "unchanged" | "removed" | "absent";
+export type BlockAction = "created" | "appended" | "prepended" | "replaced" | "unchanged" | "removed" | "absent";
 
 export interface BlockEdit {
   /** The new file content, or null when the file should be deleted (it held nothing but the block). */
@@ -68,11 +68,20 @@ export function readBlock(text: string, file: string): string[] | null {
  * Put `body` (lines, no markers) into the file's managed block: create the
  * file, append a block to it, or replace the existing block's lines.
  */
-export function upsertBlock(original: string | null, body: readonly string[], file: string): BlockEdit {
+export function upsertBlock(original: string | null, body: readonly string[], file: string, where: "end" | "start" = "end"): BlockEdit {
   const block = [BLOCK_BEGIN, ...body, BLOCK_END];
   if (original === null) return { text: block.join("\n") + "\n", action: "created" };
   const s = split(original);
   const at = locateBlock(s.lines, file);
+  if (at && where === "start" && at.begin > 0) {
+    // Move it: Codex reads only the first 32 KiB of a project's instructions.
+    const without = removeBlock(original, file).text ?? "";
+    return { ...upsertBlock(without === "" ? null : without, body, file, "start"), action: "replaced" };
+  }
+  if (!at && where === "start") {
+    const lines = [...block, ...(s.lines.length > 0 ? ["", ...s.lines] : [])];
+    return { text: join(s, lines, s.lines.length > 0 ? s.trailing : true), action: s.lines.length > 0 ? "prepended" : "created" };
+  }
   if (at) {
     const current = s.lines.slice(at.begin, at.end + 1);
     const next = [s.lines[at.begin], ...body, s.lines[at.end]];
@@ -98,4 +107,12 @@ export function removeBlock(original: string | null, file: string): BlockEdit {
   const lines = [...s.lines.slice(0, from), ...s.lines.slice(at.end + 1)];
   if (lines.every((l) => l.trim() === "")) return { text: null, action: "removed" };
   return { text: join(s, lines), action: "removed" };
+}
+
+/** Bytes (UTF-8) from the start of the file to the end of the block's end marker, or null without a block. */
+export function blockEndByte(text: string, file: string): number | null {
+  const s = split(text);
+  const at = locateBlock(s.lines, file);
+  if (!at) return null;
+  return Buffer.byteLength(s.bom + s.lines.slice(0, at.end + 1).join(s.eol), "utf8");
 }

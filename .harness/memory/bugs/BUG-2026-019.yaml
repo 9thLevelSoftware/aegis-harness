@@ -1,0 +1,65 @@
+incident_id: BUG-2026-019
+date_recorded: 2026-10-17
+status: mitigated
+title: Hand-wired hooks depended on agent loading rules nobody had checked, and the agent could unwire them
+observed_on: process (aegis-harness, building ah init and ah doctor against Claude Code 2.1.302 and Codex 0.163.0)
+source:
+  - kind: doc
+    path: https://code.claude.com/docs/en/hooks
+    note: >-
+      Read with the settings and memory pages on 2026-10-17 and checked against the 2.1.302 binary
+      and `claude doctor`. Hooks from every settings file run; copies with the same command, args,
+      shell and `if` run once, with one copy's timeout and onFailure. One invalid PreToolUse entry
+      (a non-string matcher, a bad onFailure, a non-positive timeout) makes Claude Code load nothing
+      from that file. Unknown keys on a hook entry are dropped on the next settings write, so a
+      marker key cannot identify ah's entry. .claude/settings.json is read only from the directory
+      a session starts in; .claude/settings.local.json from the repository root. Exec form
+      (command + args) runs with no shell and, without onFailure "block", fails open. The tool list
+      gained Workflow. Interactive sessions run no settings-file hook until workspace trust is
+      accepted. AGENTS.md is read only when no CLAUDE.md is present.
+  - kind: doc
+    path: https://developers.openai.com/codex/hooks
+    note: >-
+      Read on 2026-10-17 and checked by loading test files with the 0.163.0 binary's app-server
+      (hooks/list, network off, scratch CODEX_HOME). hooks.json takes only description and hooks at
+      the top level; another key, a string timeout or an unknown handler type rejects the whole
+      file. Every source runs and a duplicate runs twice. Trust is recorded in config.toml under
+      hooks.state."<file>:pre_tool_use:<group>:<handler>" with a hash of the entry, so inserting a
+      group before a user's group makes Codex distrust theirs. Project hooks load only for a
+      trusted project; features.hooks = false turns all hooks off. An untrusted project's
+      AGENTS.md is not read, and only the first 32 KiB of AGENTS.md files are.
+  - kind: incident
+    path: .harness/memory/bugs/BUG-2026-014.yaml
+    note: the hand-wiring rule this record replaces with ah init and a canary
+  - kind: incident
+    path: .harness/memory/bugs/BUG-2026-018.yaml
+    note: the earlier time a hook contract written from memory was wrong
+root_cause: >-
+  The README told people to paste JSON into settings files. Whether the hook then ran depended on
+  rules the README did not know: which files each agent loads and from which directory, what makes
+  it reject a file, how Codex keys trust, and which switches turn hooks off. Nothing checked that a
+  wired hook actually ran, so a hook that never fired looked the same as a guard with nothing to
+  block. Separately, the guard refused edits to hook files but not `ah init --remove`, which an
+  agent could run to take the hook out through ah itself.
+impact: >-
+  Found while building ah init, before ah was published: the README matcher missed Workflow; a
+  Codex entry inserted at the top would have untrusted the user's own hooks; a settings file with
+  one malformed entry would have silently disabled the guard; and a hook in .claude/settings.json
+  did not run for a session started in a subdirectory.
+countermeasure:
+  kind: test
+  ref:
+    - tests/init-doctor.test.ts
+    - tests/json-edit.test.ts
+  change: >-
+    `ah init` writes the hook and the AGENTS.md block from what the agents' documents and binaries
+    say, refuses to write a file it cannot read back exactly, keeps every other byte, appends
+    Codex's entry after the user's, and runs the guard on `rm -rf /` before wiring it. `ah doctor`
+    reads every file each agent loads, reports the switches, rejections, stale paths, duplicates and
+    trust that leave calls unguarded, and pushes canaries (rm -rf /, an edit to .ruff.toml, ls)
+    through each hook command as its agent would run it. CI runs both from the installed package on
+    Linux and with paths containing spaces on Windows. shell.hook-tamper now also denies
+    `ah init --remove`, `--uninstall` and `--ask-fallback warn` run by the agent; `--dry-run` passes.
+must_block_fixture: fixtures/must_block/ah-init-remove-run-by-the-agent-is-denied.json
+must_allow_fixture: fixtures/must_allow/ah-init-remove-dry-run-only-prints-the-plan-and-is-allowed.json
+expiry_policy: "re-check the facts in source whenever Claude Code or Codex changes its hook or settings documentation; ah doctor's checks follow them"

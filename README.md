@@ -15,7 +15,7 @@ evaluate or remember anything except the incidents that made its rules.
 ## Status
 
 v0. Not yet published to npm. Used on its own repository. Every rule traces to a blueprint
-section or to one of the eighteen records in [`.harness/memory/bugs/`](.harness/memory/bugs/),
+section or to one of the nineteen records in [`.harness/memory/bugs/`](.harness/memory/bugs/),
 which are what nine earlier harness attempts by the same author taught.
 
 ## Install
@@ -30,52 +30,55 @@ npm ci && npm run build && npm link
 
 ## Wiring the hook
 
-`ah init` will do this in step 2. For now, by hand. Use absolute paths to `node` and to
-`guard.mjs`: the agent launches hooks without your shell's PATH, and on Windows an npm bin is a
-`.cmd` shim that some launchers cannot execute directly (BUG-2026-014). `npm root -g` prints the global `node_modules` directory.
-
-**Claude Code**, in `.claude/settings.json` of the project (or `~/.claude/settings.json`):
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit|Read|Agent|WebFetch",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/absolute/path/to/node",
-            "args": ["/absolute/path/to/node_modules/@9thlevel/aegis/dist/guard.mjs", "--agent", "claude"],
-            "timeout": 5
-          }
-        ]
-      }
-    ]
-  }
-}
+```sh
+ah init      # Claude Code and Codex, this project, this machine (--agents claude or codex for one)
+ah doctor    # checks what each agent will load, then pushes a canary through each hook
 ```
 
-**Codex**, in `.codex/hooks.json` of the project (or `~/.codex/hooks.json`):
+`ah init` writes one PreToolUse entry per agent with absolute paths to `node` and `guard.mjs`
+(agents launch hooks without your shell's PATH, and on Windows an npm bin is a `.cmd` shim:
+BUG-2026-014), and a short block between `<!-- ah:begin -->` markers in `AGENTS.md` that tells the
+agent what a refusal means. It first runs the guard on `rm -rf /` and will not wire one that lets
+it through. Nothing else in those files changes: your hooks keep their place and their text, a
+file that is not plain JSON is refused, and a second run is a no-op. `ah init --remove` takes it
+all out again; `--dry-run` prints the plan.
+
+| `--scope` | Claude Code | Codex |
+| --- | --- | --- |
+| `local` (default) | `.claude/settings.local.json` at the repository root | `.codex/hooks.json` |
+| `project` | `.claude/settings.json` | `.codex/hooks.json` |
+| `user` | `~/.claude/settings.json` | `~/.codex/hooks.json` |
+
+Local files hold this machine's paths, so `ah init` adds them to `.git/info/exclude` and warns
+if one is already tracked. Claude Code reads `.claude/settings.json` only from the directory a
+session starts in, but `settings.local.json` at the repository root for any session inside it.
+
+Codex then needs two things you do in Codex itself: trust the project when it asks, and trust
+the ah hook in `/hooks`. Codex keys that trust to the entry's hash and position, so ah appends its
+entry after your hooks and keeps it there; after a change to the entry (a new `node` path,
+`--ask-fallback warn`) Codex asks again. `ah doctor` says which step is still missing.
+
+`ah doctor` reads every settings file each agent loads and reports whether the hook is bound and
+for which tools; switches that turn hooks off (`disableAllHooks`, `allowManagedHooksOnly`, Codex
+`features.hooks` and `allow_managed_hooks_only`); entries that make an agent reject a whole file;
+stale paths; duplicates; workspace and hook trust; and whether the `AGENTS.md` block is current.
+Then it runs each hook's command the way its agent would, with three canaries: `rm -rf /` and an
+edit to `.ruff.toml` must be refused and `ls` must pass. It exits 1 when any check fails. The
+canary proves the command; the last check is the agent: ask it to run `rm -rf /` and to edit
+`.ruff.toml`. Both should be refused with text like the sample at the top of this file.
+
+What `ah init` writes, if you wire by hand (Claude Code, exec form, no shell):
 
 ```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash|Edit|Write|Agent",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/absolute/path/to/node /absolute/path/to/node_modules/@9thlevel/aegis/dist/guard.mjs --agent codex",
-            "commandWindows": "C:\\absolute\\path\\to\\node.exe C:\\absolute\\path\\to\\node_modules\\@9thlevel\\aegis\\dist\\guard.mjs --agent codex",
-            "timeout": 5
-          }
-        ]
-      }
-    ]
-  }
-}
+{"matcher": "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit|Read|Agent|WebFetch|Workflow",
+ "hooks": [{"type": "command", "command": "/abs/node", "args": ["/abs/dist/guard.mjs", "--agent", "claude"], "timeout": 5}]}
+```
+
+and Codex (`command` runs under `bash -c`; `commandWindows` is for Windows):
+
+```json
+{"matcher": "Bash|Edit|Write|Agent",
+ "hooks": [{"type": "command", "command": "/abs/node /abs/dist/guard.mjs --agent codex", "timeout": 5}]}
 ```
 
 `PowerShell` is in the Claude Code matcher because on Windows Claude Code routes shell commands
@@ -83,15 +86,6 @@ through that tool (without Git Bash it does not register `Bash` at all); the gua
 PowerShell on any platform. Git Bash and Cygwin drive spellings (`/c/Users/...`) are resolved against
 the Windows project root and home; WSL `/mnt/c/...` is a Linux path. `MultiEdit` is a legacy entry for older installs. An allow prints
 nothing, so the per-call cost of a matched tool is one short-lived `node` process.
-
-Project-scoped Codex hooks load only when the `.codex/` directory is trusted, and Codex asks you to
-review and trust each non-managed hook definition via `/hooks`. Trust is tied to the hook's hash, so
-after any change to the entry (a new `node` path, `--ask-fallback warn`, a different timeout) run
-`/hooks` again or re-run the check below; until then the hook is skipped. Hooks are on by default in
-current Codex builds; if `features.hooks = false` is in your `config.toml`, nothing here runs.
-
-Check the wiring: ask the agent to run `rm -rf /`. It should be refused with the text shown at the
-top of this file.
 
 ## What it blocks
 
@@ -126,9 +120,10 @@ is caught; everything else passes). It does not resolve symlinks. If you need a 
 container or a separate user; the guard then stops the mistakes, and the boundary stops the rest.
 
 It fails open by default. Malformed input or an internal error exits 1, which Claude Code treats as
-a non-blocking hook error, so a broken install never locks you out. To fail closed instead, add
-`"onFailure": "block"` to the Claude Code hook entry (Claude Code v2.1.295 or later); under it a
-hook that cannot start, times out, or exits with a code other than 0 or 2 blocks the call.
+a non-blocking hook error, so a broken install never locks you out. To fail closed instead, run
+`ah init --fail-closed` (Claude Code v2.1.295 or later; it sets `"onFailure": "block"`); then a
+hook that cannot start, times out, or exits with a code other than 0 or 2 blocks the call. Codex
+has no such switch: a hook that cannot start lets the call through.
 
 ## Recording a false positive
 
@@ -147,6 +142,8 @@ line each, so you can see what fires in a real project before touching a rule.
 
 | command | what |
 | --- | --- |
+| `ah init [--agents claude,codex] [--scope local\|project\|user] [--fail-closed] [--remove] [--dry-run]` | wires the hook and the `AGENTS.md` block (see [Wiring the hook](#wiring-the-hook)). `ah init --help` for the rest. |
+| `ah doctor [--agents claude,codex] [--json]` | checks the wiring and runs the canaries. |
 | `ah guard --agent claude\|codex [--root DIR] [--home DIR] [--platform posix\|windows] [--ask-fallback deny\|warn] [--no-log]` | the hook. Reads a PreToolUse payload on stdin. `--no-log` skips the `.harness/metrics.jsonl` line. Env overrides: `AH_PROJECT_ROOT`, `AH_HOME`, `AH_PLATFORM`; `CLAUDE_PROJECT_DIR` is honoured as the root. |
 | `ah test-hooks [--budget-ms N] [--json]` | runs the fixture corpus in-process and through `dist/guard.mjs`, reports p50/p95 latency. Also picks up `.harness/hook_tests/` in the current project. |
 | `ah bug add\|list` | incident records. |
@@ -159,7 +156,8 @@ npm ci
 npm run verify    # build, typecheck, npm test, hygiene scan, then the fixture corpus end to end
                   # through dist/guard.mjs with the p95 budget (150 ms; 400 ms on Windows;
                   # AH_LATENCY_BUDGET_MS overrides). CI runs the same, plus an installed-package
-                  # smoke test (npm pack, install, npx ah test-hooks --in-process) on Linux.
+                  # smoke test (npm pack, install, npx ah test-hooks --in-process, then
+                  # ah init and ah doctor in a scratch project) on Linux.
 ```
 
 Tests run with `node --test` on the TypeScript sources directly (Node 22 type stripping), one file at a time so the latency tests measure the guard rather than their neighbours; the

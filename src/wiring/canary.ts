@@ -54,3 +54,28 @@ export function verdictOf(exitCode: number | null, stdout: string): CanaryResult
     return null;
   }
 }
+
+export interface Canary {
+  label: string;
+  expect: "deny" | "allow";
+  payload: Record<string, unknown>;
+}
+
+/**
+ * The calls `ah doctor` pushes through each hook: the two refusals the plan
+ * names (a recursive delete of the filesystem root, an edit to `.ruff.toml`)
+ * and one call that must pass, so a hook that denies everything is caught too.
+ */
+export function canaries(agent: "claude" | "codex", root: string, sep: "/" | "\\"): Canary[] {
+  const base = { hook_event_name: "PreToolUse", cwd: root, session_id: "ah-doctor", transcript_path: "" };
+  const ruff = `${root}${sep}.ruff.toml`;
+  const edit =
+    agent === "claude"
+      ? { tool_name: "Edit", tool_input: { file_path: ruff, old_string: 'select = ["E"]', new_string: 'select = ["E"]\nignore = ["F401"]' } }
+      : { tool_name: "apply_patch", tool_input: { command: '*** Begin Patch\n*** Update File: .ruff.toml\n@@\n select = ["E"]\n+ignore = ["F401"]\n*** End Patch' } };
+  return [
+    { label: "rm -rf /", expect: "deny", payload: { ...base, tool_name: "Bash", tool_input: { command: "rm -rf /" } } },
+    { label: "an edit to .ruff.toml", expect: "deny", payload: { ...base, ...edit } },
+    { label: "ls", expect: "allow", payload: { ...base, tool_name: "Bash", tool_input: { command: "ls" } } },
+  ];
+}

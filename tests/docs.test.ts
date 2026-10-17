@@ -9,6 +9,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { CLAUDE_MATCHER } from "../src/wiring/claude.ts";
+import { CODEX_MATCHER } from "../src/wiring/codex.ts";
+import { isOwnedEntry } from "../src/wiring/owned.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const readme = readFileSync(resolve(root, "README.md"), "utf8");
@@ -50,4 +53,14 @@ test("the README's sample deny is what the built guard prints for rm -rf /", { s
   const printed = JSON.parse(r.stdout).hookSpecificOutput.permissionDecisionReason as string;
   const norm = (s: string) => s.split("\n").map((l) => l.trimEnd()).join("\n").trim();
   assert.equal(norm(block![1]), norm(printed));
+});
+
+test("the README's hand-wired entries are what ah init writes, and ah init would adopt them", () => {
+  const blocks = [...readme.matchAll(/^```json\n([\s\S]*?)\n```$/gm)].map((m) => JSON.parse(m[1]) as { matcher: string; hooks: Record<string, unknown>[] });
+  const claude = blocks.find((b) => Array.isArray(b.hooks[0].args) && b.hooks[0].args.includes("claude"));
+  const codex = blocks.find((b) => String(b.hooks[0].command).endsWith("--agent codex"));
+  assert.ok(claude && codex, "README shows a Claude Code and a Codex entry");
+  assert.equal(claude.matcher, CLAUDE_MATCHER);
+  assert.equal(codex.matcher, CODEX_MATCHER);
+  for (const b of [claude, codex]) assert.ok(isOwnedEntry(b.hooks[0]), JSON.stringify(b.hooks[0]));
 });
