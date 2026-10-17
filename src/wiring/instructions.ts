@@ -15,7 +15,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { agentsBlockLines, AGENTS_BLOCK_BODY } from "./agents-md.ts";
 import { readText } from "./files.ts";
-import { blockEndByte, fencedLines, readBlock, removeBlock, upsertBlock, type BlockEdit } from "./text-block.ts";
+import { blockEndByte, lineKinds, readBlock, removeBlock, upsertBlock, type BlockEdit } from "./text-block.ts";
 
 export interface InstructionEdit {
   path: string;
@@ -42,11 +42,17 @@ function isFile(p: string): boolean {
   }
 }
 
-/** A line that imports AGENTS.md (`@AGENTS.md`, `@./AGENTS.md`), outside fenced code. */
+/**
+ * A line that imports AGENTS.md (`@AGENTS.md`, `@./AGENTS.md`), read as
+ * markdown: no byte-order mark, a lone CR ends a line, and an import in code,
+ * an HTML comment or a block quote does not count. Claude Code skips code; a
+ * missed import only puts the block in CLAUDE.md as well, so the doubtful
+ * places do not count either.
+ */
 export function importsAgentsMd(text: string): boolean {
-  const lines = text.split(/\r?\n/);
-  const code = fencedLines(lines, true);
-  return lines.some((l, i) => !code[i] && /(^|\s)@(\.\/)?AGENTS\.md(\s|$)/.test(l));
+  const lines = text.replace(/^\uFEFF/, "").split(/\r\n|\r|\n/);
+  const kinds = lineKinds(lines);
+  return lines.some((l, i) => kinds[i] === "text" && !/^[ \t]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)*>/.test(l) && /(^|\s)@(\.\/)?AGENTS\.md(\s|$)/.test(l));
 }
 
 export interface ClaudeMdFile {
@@ -103,6 +109,7 @@ export const CODEX_DOC_BUDGET = 32768;
 /** Upsert the block; for Codex, move it to the top when the end of the file is past Codex's read budget. */
 function placeBlock(original: string | null, file: string, codex: boolean): { edit: BlockEdit; note?: string } {
   const atEnd = upsertBlock(original, AGENTS_BLOCK_BODY, file);
+  if (atEnd.action === "prepended") return { edit: atEnd, note: "at the top of the file: it ends inside a code block that is never closed" };
   if (!codex || atEnd.text === null) return { edit: atEnd };
   const end = blockEndByte(atEnd.text, file);
   if (end === null || end <= CODEX_DOC_BUDGET) return { edit: atEnd };
@@ -131,7 +138,8 @@ export function planInstructions(root: string, agents: readonly string[], remove
     const s = claudeMdState(root);
     if (s.target !== null) {
       const t = readText(s.target).text;
-      out.push({ path: s.target, original: t, edit: upsertBlock(t, AGENTS_BLOCK_BODY, s.target), why: s.reason });
+      const placed = placeBlock(t, s.target, false);
+      out.push({ path: s.target, original: t, edit: placed.edit, why: [s.reason, placed.note].filter(Boolean).join("; ") });
     }
   }
   return out;

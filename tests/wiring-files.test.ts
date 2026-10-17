@@ -240,7 +240,7 @@ test("--remove leaves the blocks an agent that stays wired reads, and touches on
   }
 });
 
-test("an @AGENTS.md import counts only outside fenced code, by CommonMark's fence rules", () => {
+test("an @AGENTS.md import counts only outside code, by CommonMark's rules", () => {
   assert.equal(importsAgentsMd("# Notes\n\n@AGENTS.md\n"), true);
   assert.equal(importsAgentsMd("See @./AGENTS.md\r\n"), true);
   assert.equal(importsAgentsMd("```\nx\n```\n@AGENTS.md\n"), true);
@@ -248,6 +248,32 @@ test("an @AGENTS.md import counts only outside fenced code, by CommonMark's fenc
   assert.equal(importsAgentsMd("````\n```\n@AGENTS.md\n````\n"), false, "a shorter fence does not close a longer one");
   assert.equal(importsAgentsMd("```md\n~~~\n@AGENTS.md\n```\n"), false, "a tilde fence does not close a backtick one");
   assert.equal(importsAgentsMd("```sh\n@AGENTS.md\n"), false, "a fence that never closes runs to the end");
+  for (const bom of ["﻿```markdown\n@AGENTS.md\n```\n\n# Our rules\n", "﻿~~~\n@AGENTS.md\n~~~\n", "﻿```md\r\n@AGENTS.md\r\n```\r\n"]) assert.equal(importsAgentsMd(bom), false, "a byte-order mark does not hide the fence on line 1");
+  assert.equal(importsAgentsMd("﻿@AGENTS.md\n"), true);
+  assert.equal(importsAgentsMd("```\r@AGENTS.md\r```\r"), false, "a lone CR ends a line");
+  assert.equal(importsAgentsMd("# Notes\r@AGENTS.md\r"), true);
+  assert.equal(importsAgentsMd("# Notes\n\n    ```\n@AGENTS.md\n"), true, "four spaces in is indented code, not a fence");
+  assert.equal(importsAgentsMd("- ```\n  @AGENTS.md\n  ```\n"), false, "a fence in a list item");
+  assert.equal(importsAgentsMd("<!--\n@AGENTS.md\n-->\n"), false, "an HTML comment");
+  assert.equal(importsAgentsMd("> ```\n> @AGENTS.md\n> ```\n"), false, "a block quote");
+  assert.equal(importsAgentsMd("- > @AGENTS.md\n"), false);
+});
+
+test("a CLAUDE.md saved with a byte-order mark and a fenced @AGENTS.md example still gets the block; an AGENTS.md ending in open code gets it on top", () => {
+  const d = scratch();
+  try {
+    writeFileSync(join(d, "AGENTS.md"), "# P\n");
+    writeFileSync(join(d, "CLAUDE.md"), "﻿```markdown\n@AGENTS.md\n```\n\n# Our rules\n");
+    const s = claudeMdState(d, join(d, "home"));
+    assert.equal(s.target, join(d, "CLAUDE.md"));
+    assert.deepEqual(planInstructions(d, ["claude"], false).map((e) => [relative(d, e.path), e.edit.action]), [["AGENTS.md", "appended"], ["CLAUDE.md", "appended"]]);
+    writeFileSync(join(d, "AGENTS.md"), "# Build\n\n```sh\nmake\n");
+    const [agents] = planInstructions(d, ["codex"], false);
+    assert.equal(agents.edit.action, "prepended");
+    assert.match(agents.why, /at the top of the file: it ends inside a code block that is never closed/);
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
 });
 
 test("unexcludeLocally takes out exactly what excludeLocally put in, final newline or not", () => {
