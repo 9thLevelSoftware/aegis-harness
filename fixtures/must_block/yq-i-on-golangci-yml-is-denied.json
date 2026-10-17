@@ -1,0 +1,11 @@
+{
+  "name": "yq -i on .golangci.yml is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "yq -i '.linters.disable-all = true' .golangci.yml"
+    }
+  },
+  "rule": "shell.write-lint-config",
+  "source": "BUG-2026-020"
+}

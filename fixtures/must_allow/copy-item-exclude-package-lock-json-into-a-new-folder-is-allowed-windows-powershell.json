@@ -1,0 +1,12 @@
+{
+  "name": "Copy-Item -Exclude package-lock.json into a new folder is allowed (Windows PowerShell)",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Copy-Item .\\template\\* .\\new-app -Recurse -Exclude package-lock.json"
+    }
+  },
+  "near": "shell.write-lockfile",
+  "source": "BUG-2026-020"
+}

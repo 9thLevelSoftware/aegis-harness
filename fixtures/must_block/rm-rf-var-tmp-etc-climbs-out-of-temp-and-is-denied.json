@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf /var/tmp/../../etc climbs out of temp and is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf /var/tmp/../../etc"
+    }
+  },
+  "rule": "shell.rm-outside-project",
+  "source": "BUG-2026-020"
+}

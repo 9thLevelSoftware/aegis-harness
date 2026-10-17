@@ -1,0 +1,13 @@
+{
+  "name": "Codex rm settings.local.json with workdir .claude is denied",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm settings.local.json",
+      "workdir": "/home/dev/project/.claude"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-020"
+}

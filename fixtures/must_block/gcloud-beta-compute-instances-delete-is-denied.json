@@ -1,0 +1,11 @@
+{
+  "name": "gcloud beta compute instances delete is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gcloud beta compute instances delete vm-1 --zone us-central1-a"
+    }
+  },
+  "rule": "shell.remote-destroy",
+  "source": "BUG-2026-020"
+}

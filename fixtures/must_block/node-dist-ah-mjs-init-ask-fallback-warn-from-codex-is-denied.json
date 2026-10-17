@@ -4,7 +4,7 @@
   "payload": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "node node_modules/@9thlevel/aegis/dist/ah.mjs init --ask-fallback warn"
+      "command": "node node_modules/@9thlevelsoftware/aegis/dist/ah.mjs init --ask-fallback warn"
     }
   },
   "rule": "shell.hook-tamper",

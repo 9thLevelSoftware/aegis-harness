@@ -1,0 +1,12 @@
+{
+  "name": "Write of CLAUDE.md telling the agent never to add @ts-nocheck is allowed",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/home/dev/project/CLAUDE.md",
+      "content": "# Rules\n\n- Never add `// @ts-nocheck` or `/* eslint-disable */`; fix the error instead.\n"
+    }
+  },
+  "near": "edit.lint-suppression-blanket",
+  "source": "BUG-2026-020"
+}

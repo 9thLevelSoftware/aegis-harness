@@ -1,0 +1,11 @@
+{
+  "name": "make 2>&1 >&2 duplicates descriptors and is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "make build 2>&1 >&2"
+    }
+  },
+  "near": "shell.write-lint-config",
+  "source": "BUG-2026-020"
+}

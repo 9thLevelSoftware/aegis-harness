@@ -1,0 +1,11 @@
+{
+  "name": "mocha -u tdd (its --ui flag) is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mocha -u tdd test/"
+    }
+  },
+  "near": "shell.write-baseline",
+  "source": "BUG-2026-020"
+}

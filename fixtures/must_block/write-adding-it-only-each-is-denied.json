@@ -1,0 +1,12 @@
+{
+  "name": "Write adding it.only.each is denied",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/home/dev/project/src/math.test.ts",
+      "content": "it.only.each([[1], [2]])('adds %i', (n) => {\n  expect(n).toBe(n);\n});\n"
+    }
+  },
+  "rule": "edit.test-only",
+  "source": "BUG-2026-020"
+}

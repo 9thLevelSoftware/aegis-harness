@@ -1,0 +1,11 @@
+{
+  "name": "aws s3 sync with a second bucket in a flag value asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "aws s3 sync --exclude s3://x ./local s3://prod"
+    }
+  },
+  "rule": "shell.deploy-or-publish",
+  "source": "BUG-2026-020"
+}

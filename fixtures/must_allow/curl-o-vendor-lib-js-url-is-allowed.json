@@ -1,0 +1,11 @@
+{
+  "name": "curl -o vendor/lib.js URL is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -fsSL -o vendor/lib.js https://example.com/lib.js"
+    }
+  },
+  "near": "shell.write-lint-config",
+  "source": "BUG-2026-020"
+}

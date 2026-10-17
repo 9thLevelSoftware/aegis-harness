@@ -1,0 +1,12 @@
+{
+  "name": "codex exec -c features.hooks=false is denied (Codex)",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "codex exec -c features.hooks=false 'x'"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-020"
+}

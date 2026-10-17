@@ -1,0 +1,11 @@
+{
+  "name": "scp -i with a key file uploads a build and is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "scp -i ~/.ssh/deploy_key dist.tgz deploy@example.com:/srv"
+    }
+  },
+  "near": "shell.credential-exfil",
+  "source": "BUG-2026-020"
+}

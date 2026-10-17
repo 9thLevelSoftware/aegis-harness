@@ -1,0 +1,13 @@
+{
+  "name": "rm -rf ../../dist from a package folder inside the project is allowed",
+  "cwd": "/home/dev/project/packages/web",
+  "root": "/home/dev/project",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf ../../dist"
+    }
+  },
+  "near": "shell.rm-outside-project",
+  "source": "BUG-2026-020"
+}

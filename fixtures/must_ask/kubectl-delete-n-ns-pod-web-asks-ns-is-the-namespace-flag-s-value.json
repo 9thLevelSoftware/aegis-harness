@@ -1,0 +1,11 @@
+{
+  "name": "kubectl delete -n ns pod web asks (ns is the namespace flag's value)",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "kubectl delete -n ns pod web"
+    }
+  },
+  "rule": "shell.deploy-or-publish",
+  "source": "BUG-2026-020"
+}

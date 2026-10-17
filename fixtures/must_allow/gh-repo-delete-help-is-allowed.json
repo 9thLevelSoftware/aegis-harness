@@ -1,0 +1,11 @@
+{
+  "name": "gh repo delete --help is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gh repo delete --help"
+    }
+  },
+  "near": "shell.remote-destroy",
+  "source": "BUG-2026-020"
+}

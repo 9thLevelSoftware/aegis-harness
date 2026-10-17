@@ -1,0 +1,12 @@
+{
+  "name": "cmd move /y within the project is allowed (Windows PowerShell)",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "cmd /c move /y build\\out.js dist\\out.js"
+    }
+  },
+  "near": "shell.rm-recursive-root",
+  "source": "BUG-2026-020"
+}

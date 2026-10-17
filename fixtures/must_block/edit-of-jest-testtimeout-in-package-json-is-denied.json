@@ -1,0 +1,13 @@
+{
+  "name": "Edit of jest testTimeout in package.json is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "/home/dev/project/package.json",
+      "old_string": "  \"jest\": {\n    \"testTimeout\": 5000",
+      "new_string": "  \"jest\": {\n    \"testTimeout\": 500000"
+    }
+  },
+  "rule": "edit.manifest-lint-section",
+  "source": "BUG-2026-020"
+}

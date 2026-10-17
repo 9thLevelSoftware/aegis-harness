@@ -27,9 +27,9 @@ import type { CarriedOptions } from "./owned.ts";
 import { carriedOptions } from "./owned.ts";
 import { mainCheckoutRoot, type Machine } from "./project.ts";
 
-export const CLAUDE_MATCHER = "^(Bash|PowerShell|Monitor|Edit|Write|MultiEdit|NotebookEdit|Read|Agent|WebFetch|Workflow|mcp__.*)$";
+export const CLAUDE_MATCHER = "^(Bash|PowerShell|Monitor|Edit|Write|MultiEdit|NotebookEdit|Read|Grep|Agent|WebFetch|Workflow|mcp__.*)$";
 /** Tools whose calls the guard must see; a matcher that misses one leaves a hole. */
-export const CLAUDE_REQUIRED_TOOLS = ["Bash", "PowerShell", "Monitor", "Edit", "Write", "NotebookEdit", "Read"];
+export const CLAUDE_REQUIRED_TOOLS = ["Bash", "PowerShell", "Monitor", "Edit", "Write", "NotebookEdit", "Read", "Grep"];
 /** `mcp__server__tool` stands for every MCP tool. */
 export const CLAUDE_OPTIONAL_TOOLS = ["Agent", "WebFetch", "Workflow", "mcp__server__tool"];
 

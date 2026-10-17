@@ -1,0 +1,11 @@
+{
+  "name": "git config --unset core.hooksPath is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git config --unset core.hooksPath"
+    }
+  },
+  "rule": "shell.hook-bypass",
+  "source": "BUG-2026-020"
+}

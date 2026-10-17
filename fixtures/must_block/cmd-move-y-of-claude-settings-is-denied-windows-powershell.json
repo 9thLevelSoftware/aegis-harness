@@ -1,0 +1,12 @@
+{
+  "name": "cmd move /y of .claude settings is denied (Windows PowerShell)",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "cmd /c move /y .claude\\settings.local.json x.json"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-020"
+}

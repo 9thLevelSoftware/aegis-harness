@@ -1,0 +1,11 @@
+{
+  "name": "claude --setting-sources user is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "claude --setting-sources user -p 'x'"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-020"
+}

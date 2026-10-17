@@ -1,0 +1,62 @@
+incident_id: BUG-2026-020
+date_recorded: 2026-10-17
+status: mitigated
+title: A probe pass on the 0.1.0 candidate found forty-five bypasses, false refusals and contract gaps
+observed_on: process (aegis-harness, the release probe CONTRIBUTING.md requires before 0.1.0)
+source:
+  - kind: session
+    date: 2026-10-17
+    note: >-
+      Twelve probe lenses (bypass by destruction, config writes, credentials and remote code, git
+      hooks and Windows; false positives on POSIX and Windows; the hook contract) fed commands to
+      dist/guard.mjs as JSON payloads and never ran them. Each finding was then reproduced by
+      independent verifiers: 45 held, 12 of them serious. Three lenses returned nothing because a
+      safety check stopped them; their ground (obfuscated and encoded commands, interpreter
+      payloads, exfiltration channels) was not probed in this pass.
+  - kind: doc
+    path: https://code.claude.com/docs/en/hooks
+    note: >-
+      The payload's cwd follows the agent's cd while CLAUDE_PROJECT_DIR stays where the session
+      started; after /cd the new directory's settings and hooks apply. --settings
+      '{"disableAllHooks": true}' turns hooks off for one run. `claude --help` (2.1.302) lists
+      --bare, --safe-mode and --restricted, which skip hooks or the settings files that hold them.
+  - kind: doc
+    path: https://developers.openai.com/codex/hooks
+    note: >-
+      Shell calls carry a workdir. `codex --help` (0.163.0) documents --disable FEATURE and
+      -c features.<name>=false; write_stdin to a running exec session runs no PreToolUse hook.
+root_cause: >-
+  The rules modelled the commonest spelling of each act and the directory a session started in.
+  Writes were found only in plain redirects and a short list of copiers, so `>&`, clustered
+  `sed -i`, `dd of=`, `curl -o`, rsync and a copy into a directory went unjudged; remote code only
+  through a pipe; key reads only through cat-like readers. Relative paths were resolved against
+  the project root even after a cd, in the payload or in the command. On the other side, broad
+  patterns refused everyday work: a temp prefix checked after the system list (and, found while
+  fixing that, taken at face value in `/tmp/../etc`), lint section headers seen as unchanged
+  patch context, suppressions named in prose, `> /dev/stderr`, and reads of git config.
+impact: >-
+  Before the fix an agent could rewrite lint and hook configs, run downloaded code, print private
+  keys, or start a second agent with no hooks, each with a one-word change of spelling, and
+  `cd .claude && rm settings.local.json` passed. Everyday commands (`rm -rf /var/tmp/x`, a Codex
+  patch adding a dependency next to [tool.ruff], a CLAUDE.md rule against @ts-nocheck) were denied.
+countermeasure:
+  kind: test
+  ref: fixtures/README.md
+  change: >-
+    Each finding became a must_block, must_ask or must_allow fixture (146 in all, seven of them from
+    an automated review of the fixes; the `root` field lets a fixture's cwd differ from the project
+    root). The guard now reads the directory a command runs in (payload cwd, Codex workdir,
+    cd/pushd/Set-Location/env -C within the line, with both directories counted after `;` or `||`);
+    treats `>&file`, every in-place editor (both yq flavours), downloads to a file, rsync and copies
+    into a directory as writes; denies downloaded code run through process or command substitution
+    and `iex (iwr ...)`; denies key reads by searchers, filters, dd, openssl, archives and
+    redirects, Read of ~/.npmrc, and Grep in content mode outside the public files of ~/.ssh and
+    ~/.aws/config (Grep joined the Claude Code matcher); denies a nested claude or codex started
+    with hooks off; reads gcloud alpha/beta and global flags; and stops refusing the false positives
+    listed under impact. Left as known limits in the README: a cd to a variable, a settings file
+    handed to a nested agent, a Codex interactive shell fed through write_stdin, and a recursive
+    Remove-Item narrowed by -Include at the project root (still denied). The blocked lenses' ground
+    gets its own probe before 0.2.0.
+must_block_fixture: fixtures/must_block/cd-claude-rm-settings-local-json-is-denied.json
+must_allow_fixture: fixtures/must_allow/cd-dist-rm-rf-is-allowed.json
+expiry_policy: "re-run the probe pass before every minor release"

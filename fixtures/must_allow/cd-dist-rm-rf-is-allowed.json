@@ -1,0 +1,11 @@
+{
+  "name": "cd dist && rm -rf * is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd dist && rm -rf *"
+    }
+  },
+  "near": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-020"
+}

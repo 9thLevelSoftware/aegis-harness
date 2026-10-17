@@ -1,0 +1,12 @@
+{
+  "name": "Remove-Item * -Include *.orig -Recurse is denied (Windows PowerShell)",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Remove-Item * -Include *.orig -Recurse"
+    }
+  },
+  "rule": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-020"
+}

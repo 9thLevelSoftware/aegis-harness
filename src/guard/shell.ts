@@ -25,7 +25,7 @@ export interface Stage {
   env: Record<string, string>;
   /** Wrappers that were peeled off, in order (`sudo`, `xargs`, ...). */
   wrappers: string[];
-  /** Files written through `>`, `>>`, `&>` or `tee`. `/dev/null` is dropped. */
+  /** Files written through `>`, `>>`, `&>` or `tee`. `/dev/null`, the standard streams and the terminal are dropped. */
   writes: string[];
   /** Files read through `<`. */
   reads: string[];
@@ -37,6 +37,8 @@ export interface Stage {
   unexpanded?: string;
   /** Set on a stand-in for code nested past MAX_DEPTH, which the parser did not read. */
   tooDeep?: true;
+  /** The directory a peeled wrapper runs the command in: `env -C dir`, `sudo -D dir`. */
+  chdir?: string;
   /**
    * Set when the stage is a `( )` or `{ }` group: the pipelines directly inside it. Its own argv is
    * `:`, carrying only the group's redirections; the commands inside are pipelines of their own,
@@ -53,10 +55,20 @@ export interface Pipeline {
   nested: boolean;
   /** How many substitutions, subshells, groups and shells it sits inside. */
   depth: number;
+  /** The operator between it and the pipeline before it in the same list; absent for the first. */
+  after?: Separator;
+  /** Set when it came out of a `$( )` or backtick substitution, which the parser lists after the command line it sits in. */
+  substitution?: true;
 }
+
+/** What joins two pipelines of a list: `&&` runs the second only if the first succeeded, `||` only if it failed. */
+export type Separator = "&&" | "||" | ";" | "&";
 
 /** How deep substitutions, subshells, groups and `-c` strings are read; code below that asks rather than passes unread. */
 export const MAX_DEPTH = 8;
+
+/** Writing here prints or discards and changes no file: `/dev/null`, `/dev/stderr`, `/dev/fd/2`, `/dev/tty`, and Windows `NUL`. */
+const STREAM_DEVICE = /^(\/dev\/(null|stdout|stderr|tty|fd\/\d+)|[Nn][Uu][Ll])$/;
 
 const SH_FAMILY = new Set(["sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "fish", "busybox"]);
 const PWSH = new Set(["pwsh", "powershell"]);
@@ -100,6 +112,8 @@ const WRAPPER_OPTS_WITH_ARG: Record<string, Set<string>> = {
   setsid: new Set(),
   corepack: new Set(),
 };
+/** Wrapper options that run the command in another directory. */
+const CHDIR_OPTS: Record<string, Set<string>> = { env: new Set(["-C", "--chdir"]), sudo: new Set(["-D", "--chdir"]) };
 /** Wrappers whose first positional argument is not the command. */
 const WRAPPER_POSITIONAL_SKIP: Record<string, number> = { timeout: 1 };
 
@@ -156,7 +170,7 @@ function parseInner(command: string, depth: number, nested: boolean, dialect: Sh
   checkTime(budget);
   const { commands, substitutions } = splitTop(dialect === "posix" ? hereDocsAsStrings(command, budget) : command, dialect, budget);
   const out: Pipeline[] = [];
-  for (const stageStrings of commands) {
+  for (const { stages: stageStrings, after } of commands) {
     const stages: Stage[] = [];
     const extra: Pipeline[] = [];
     for (const s of stageStrings) {
@@ -177,10 +191,15 @@ function parseInner(command: string, depth: number, nested: boolean, dialect: Sh
       const inner = inlineCommandOf(stage, dialect);
       if (inner !== null) append(extra, parseInner(inner.command, depth + 1, true, inner.dialect, budget));
     }
-    if (stages.length > 0) out.push({ stages, raw: stageStrings.map((st) => st.text).join(" | "), nested, depth });
+    if (stages.length > 0) out.push({ stages, raw: stageStrings.map((st) => st.text).join(" | "), nested, depth, ...(after === undefined ? {} : { after }) });
     append(out, extra);
   }
-  for (const sub of substitutions) append(out, parseInner(sub, depth + 1, true, dialect, budget));
+  for (const sub of substitutions) {
+    for (const p of parseInner(sub, depth + 1, true, dialect, budget)) {
+      p.substitution = true;
+      out.push(p);
+    }
+  }
   return out;
 }
 
@@ -444,8 +463,14 @@ interface SplitStage {
   tail?: string;
 }
 
+interface SplitCommand {
+  stages: SplitStage[];
+  /** The operator before it. */
+  after?: Separator;
+}
+
 interface Split {
-  commands: SplitStage[][];
+  commands: SplitCommand[];
   substitutions: string[];
 }
 
@@ -457,6 +482,9 @@ interface Split {
 function splitTop(s: string, dialect: ShellDialect, budget?: ParseBudget): Split {
   const escapeChar = dialect === "posix" ? "\\" : dialect === "powershell" ? "`" : "^";
   const commands: SplitStage[][] = [];
+  // The operator that ended each command; seps[k] stands before commands[k].
+  const seps: (Separator | undefined)[] = [];
+  let sep: Separator | undefined;
   // A group that makes up its whole stage is read through the stage, so its entry here is dropped.
   const substitutions: (string | null)[] = [];
   let stages: SplitStage[] = [];
@@ -509,9 +537,11 @@ function splitTop(s: string, dialect: ShellDialect, budget?: ParseBudget): Split
     opener = null;
     goesOn = -1;
   };
-  const endCommand = () => {
+  const endCommand = (next?: Separator) => {
     endStage();
     commands.push(stages);
+    seps.push(sep);
+    sep = next;
     stages = [];
   };
 
@@ -691,9 +721,9 @@ function splitTop(s: string, dialect: ShellDialect, budget?: ParseBudget): Split
       continue;
     }
 
-    if (c === "&" && next === "&") { endCommand(); i++; continue; }
-    if (c === "|" && next === "|") { endCommand(); i++; continue; }
-    if (c === ";" || c === "\n") { endCommand(); continue; }
+    if (c === "&" && next === "&") { endCommand("&&"); i++; continue; }
+    if (c === "|" && next === "|") { endCommand("||"); i++; continue; }
+    if (c === ";" || c === "\n") { endCommand(";"); continue; }
     if (c === "|" && cur[cur.length - 1] === ">" && cur.length !== goesOn) {
       // `>|` writes over a file even under noclobber: a redirection, not a pipe.
       add(c);
@@ -714,7 +744,7 @@ function splitTop(s: string, dialect: ShellDialect, budget?: ParseBudget): Split
         // Call operator: `& "C:\\tool.exe" args`
         continue;
       }
-      endCommand();
+      endCommand("&");
       continue;
     }
     add(c);
@@ -726,8 +756,22 @@ function splitTop(s: string, dialect: ShellDialect, budget?: ParseBudget): Split
   const first = Math.min(...open.map((at) => at ?? Infinity));
   if (first !== Infinity) substitutions.push(s.slice(first));
   endCommand();
+  // An empty command between two operators is a line break after `&&` or `||` (`a &&` + newline + `b`),
+  // which joins what follows as the operator does.
+  const kept: SplitCommand[] = [];
+  let carry: Separator | undefined;
+  for (let k = 0; k < commands.length; k++) {
+    const st = commands[k].filter((x) => x.text.trim() !== "");
+    if (st.length === 0) {
+      if (seps[k] === "&&" || seps[k] === "||") carry = seps[k];
+      continue;
+    }
+    const after = carry ?? seps[k];
+    kept.push(after === undefined ? { stages: st } : { stages: st, after });
+    carry = undefined;
+  }
   return {
-    commands: commands.map((st) => st.filter((x) => x.text.trim() !== "")).filter((st) => st.length > 0),
+    commands: kept,
     substitutions: substitutions.filter((x): x is string => x !== null),
   };
 }
@@ -1153,13 +1197,16 @@ function buildStage(text: string, dialect: ShellDialect, budget: ParseBudget): S
     const t = tokens[i];
     if (t.op !== undefined) {
       const target = tokens[i + 1];
-      const isOutput = t.op.includes(">") && !t.op.endsWith("&") && !t.op.startsWith("<");
+      // `>&file` and `1>&file` send stdout and stderr to the file, like `&>file`; only digits or `-`
+      // after `>&` (`2>&1`, `>&-`, `3>&2-`) duplicate or close a descriptor instead.
+      const duplicates = t.op.endsWith("&") && target !== undefined && /^\d*-?$/.test(target.text);
+      const isOutput = t.op.includes(">") && !t.op.startsWith("<") && !duplicates;
       const isInput = t.op === "<";
       if (target && target.op === undefined) {
         i++;
         // A whitespace-only target (`> ""`) names no file.
         if (target.text.trim() === "") continue;
-        if (isOutput && !target.text.startsWith("&") && target.text !== "/dev/null" && target.text.toLowerCase() !== "nul") {
+        if (isOutput && !target.text.startsWith("&") && !STREAM_DEVICE.test(target.text)) {
           writes.push(target.text);
         }
         if (isInput) reads.push(target.text);
@@ -1182,6 +1229,12 @@ function buildStage(text: string, dialect: ShellDialect, budget: ParseBudget): S
   let guard = 0;
   let splits = 0;
   let tooDeep = false;
+  let chdir: string | undefined;
+  // `env -C a env -C b`: the second directory is taken from the first.
+  const chdirTo = (dir: string | undefined) => {
+    if (dir === undefined || dir === "") return;
+    chdir = chdir === undefined || /^(?:[\\/~]|[A-Za-z]:)/.test(dir) ? dir : `${chdir}/${dir}`;
+  };
   while (argv.length > 0 && guard++ < 8) {
     const name = normalizeCmd(argv[0]);
     if (!WRAPPERS.has(name)) break;
@@ -1208,8 +1261,10 @@ function buildStage(text: string, dialect: ShellDialect, budget: ParseBudget): S
         continue;
       }
       if (a.startsWith("--")) {
+        const eq = a.indexOf("=");
+        if (CHDIR_OPTS[name]?.has(eq < 0 ? a : a.slice(0, eq))) chdirTo(eq < 0 ? argv[k + 1] : a.slice(eq + 1));
         k++;
-        if (!a.includes("=") && withArg.has(a)) k++;
+        if (eq < 0 && withArg.has(a)) k++;
         continue;
       }
       if (a.startsWith("-") && a.length > 1) {
@@ -1218,6 +1273,7 @@ function buildStage(text: string, dialect: ShellDialect, budget: ParseBudget): S
         k++;
         for (let l = 1; l < a.length; l++) {
           if (!withArg.has(`-${a[l]}`)) continue;
+          if (CHDIR_OPTS[name]?.has(`-${a[l]}`)) chdirTo(l === a.length - 1 ? argv[k] : a.slice(l + 1));
           if (l === a.length - 1) k++;
           break;
         }
@@ -1237,13 +1293,14 @@ function buildStage(text: string, dialect: ShellDialect, budget: ParseBudget): S
   // tee writes its file arguments.
   const cmd = argv.length > 0 ? normalizeCmd(argv[0]) : (wrappers[wrappers.length - 1] ?? "");
   if (cmd === "tee") {
-    for (const a of argv.slice(1)) if (!a.startsWith("-")) writes.push(a);
+    for (const a of argv.slice(1)) if (!a.startsWith("-") && !STREAM_DEVICE.test(a)) writes.push(a);
   }
 
   const opaque = isOpaque(cmd, argv);
   const stage = makeStage(argv, env, wrappers, writes, opaque, text, reads, hereStrings);
   if (unexpanded !== undefined) stage.unexpanded = unexpanded;
   if (tooDeep) stage.tooDeep = true;
+  if (chdir !== undefined) stage.chdir = chdir;
   return stage;
 }
 

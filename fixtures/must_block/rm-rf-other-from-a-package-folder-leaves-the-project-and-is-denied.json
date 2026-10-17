@@ -1,0 +1,13 @@
+{
+  "name": "rm -rf ../../../other from a package folder leaves the project and is denied",
+  "cwd": "/home/dev/project/packages/web",
+  "root": "/home/dev/project",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf ../../../other"
+    }
+  },
+  "rule": "shell.rm-outside-project",
+  "source": "BUG-2026-020"
+}

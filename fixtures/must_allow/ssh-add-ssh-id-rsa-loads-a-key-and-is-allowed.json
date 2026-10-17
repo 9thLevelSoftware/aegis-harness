@@ -1,0 +1,11 @@
+{
+  "name": "ssh-add - < ~/.ssh/id_rsa loads a key and is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ssh-add - < ~/.ssh/id_rsa"
+    }
+  },
+  "near": "shell.credential-read",
+  "source": "BUG-2026-020"
+}

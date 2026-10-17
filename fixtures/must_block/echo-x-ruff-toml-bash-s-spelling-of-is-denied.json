@@ -1,0 +1,11 @@
+{
+  "name": "echo x >& .ruff.toml (bash's spelling of &>) is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo x >& .ruff.toml"
+    }
+  },
+  "rule": "shell.write-lint-config",
+  "source": "BUG-2026-020"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "Read of a CA certificate ca.pem is allowed",
+  "payload": {
+    "tool_name": "Read",
+    "tool_input": {
+      "file_path": "/home/dev/project/certs/ca.pem"
+    }
+  },
+  "near": "tool.read-private-key",
+  "source": "BUG-2026-020"
+}
