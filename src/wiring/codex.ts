@@ -116,9 +116,37 @@ export function posixQuote(word: string): string {
   return /^[A-Za-z0-9_\/.:@%+=,-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
 }
 
-/** A Windows path cmd.exe and PowerShell both take as one bare word. */
+/**
+ * A Windows path cmd.exe and PowerShell both take as one bare word. Not with
+ * `,` (an array to PowerShell) or `=` (with `,` and `;`, the end of cmd.exe's
+ * command word), nor a leading `@` or `-`.
+ */
 export function windowsBare(word: string): boolean {
-  return /^[A-Za-z0-9_\\/.:@~+=,-]+$/.test(word) && !word.startsWith("@") && !word.startsWith("-");
+  return /^[A-Za-z0-9_\\/.:@~+-]+$/.test(word) && !word.startsWith("@") && !word.startsWith("-");
+}
+
+/** A word in double quotes for cmd.exe and PowerShell alike, or null when one of them reads something inside: % (cmd.exe), or ", its typographic forms, $ and ` (PowerShell). */
+export function windowsDoubleQuote(word: string): string | null {
+  return /["%$`\u201C-\u201E]/.test(word) ? null : `"${word}"`;
+}
+
+/**
+ * The node path as the first word of a line cmd.exe and PowerShell both run,
+ * when it is not bare: its drive, then the rest in double quotes (C:"\...").
+ * A line that starts with a quote is a string to PowerShell, not a command,
+ * but a quote inside a word groups in both shells and in node.exe's reading
+ * of its own program name. cmd.exe keeps such a first word whole only when it
+ * starts with a drive, so a UNC path gets null, as does a path that one of
+ * the shells reads inside double quotes.
+ */
+export function windowsFirstWord(path: string): string | null {
+  const rest = windowsDoubleQuote(path.slice(2));
+  return /^[A-Za-z]:/.test(path) && rest !== null ? path.slice(0, 2) + rest : null;
+}
+
+/** A PowerShell single-quoted string. Every character PowerShell reads as a single quote (', U+2018 to U+201B) is doubled. */
+export function powershellQuote(word: string): string {
+  return `'${word.replace(/['\u2018-\u201B]/g, "$&$&")}'`;
 }
 
 /** The 8.3 short form of a Windows path, or the path itself when the volume has none. */
@@ -136,17 +164,8 @@ export interface CodexCommand {
   windowsNote?: string;
 }
 
-/** The first `node` on PATH, per `where node`, or null. */
-export function nodeOnPath(): string | null {
-  if (process.platform !== "win32") return null;
-  const r = spawnSync("where.exe", ["node"], { encoding: "utf8", windowsHide: true });
-  const first = (r.stdout ?? "").split(/\r?\n/).find((l) => l.trim() !== "");
-  return r.status === 0 && first ? first.trim() : null;
-}
-
 export interface WindowsLookups {
   short?: (p: string) => string;
-  onPath?: () => string | null;
 }
 
 /**
@@ -154,8 +173,11 @@ export interface WindowsLookups {
  * PowerShell alike, since Codex does not document which one it uses. Both run
  * a line whose first word is a bare path, and both take later arguments in
  * double quotes. So the node path goes first as is, as its 8.3 short form, or
- * as plain `node` when that is the same node on PATH; the guard path goes
- * bare, short, or double-quoted. Only when none of that works does ah fall
+ * quoted after its drive (windowsFirstWord); the guard path goes bare, short,
+ * or double-quoted. Never plain `node`: cmd.exe looks for a bare command name
+ * in the current directory before PATH, and the agent can write a node.cmd
+ * there. Only when none of that works (a UNC node path that needs quoting,
+ * or a character one of the shells reads inside double quotes) does ah fall
  * back to PowerShell's `& '...'`, which cmd.exe cannot run.
  */
 export function codexCommand(m: Machine, guardArgs: string[], look: WindowsLookups = {}): CodexCommand {
@@ -168,9 +190,8 @@ export function codexCommand(m: Machine, guardArgs: string[], look: WindowsLooku
     node = short(m.nodePath);
     if (windowsBare(node)) notes.push("the node path as its 8.3 short name");
     else {
-      const found = (look.onPath ?? nodeOnPath)();
-      node = found !== null && found.toLowerCase() === m.nodePath.toLowerCase() ? "node" : null;
-      if (node) notes.push("`node` from PATH (the same node.exe), because its path has spaces and no 8.3 name");
+      node = windowsFirstWord(m.nodePath);
+      if (node) notes.push("the node path in double quotes after its drive");
     }
   }
   let guard: string | null = m.guardPath;
@@ -178,20 +199,19 @@ export function codexCommand(m: Machine, guardArgs: string[], look: WindowsLooku
     guard = short(m.guardPath);
     if (windowsBare(guard)) notes.push("the guard path as its 8.3 short name");
     else {
-      guard = /["%$`]/.test(m.guardPath) ? null : `"${m.guardPath}"`;
+      guard = windowsDoubleQuote(m.guardPath);
       if (guard) notes.push("the guard path in double quotes");
     }
   }
-  const bareArg = (a: string) => /^[A-Za-z0-9_\\/.:@~+=,-]+$/.test(a);
-  const args = guardArgs.map((a) => (bareArg(a) ? a : /["%$`]/.test(a) ? null : `"${a}"`));
+  const bareArg = (a: string) => /^[A-Za-z0-9_\\/.:@~+=-]+$/.test(a);
+  const args = guardArgs.map((a) => (bareArg(a) ? a : windowsDoubleQuote(a)));
   if (node !== null && guard !== null && args.every((a) => a !== null)) {
     return { command: posixForm, commandWindows: [node, guard, ...args].join(" "), windowsNote: notes.length > 0 ? `${notes.join(" and ")}, so cmd.exe and PowerShell both run it` : undefined };
   }
-  const q = (p: string) => `'${p.replace(/'/g, "''")}'`;
   return {
     command: posixForm,
-    commandWindows: `& ${q(m.nodePath)} ${q(m.guardPath)} ${guardArgs.map((a) => (bareArg(a) ? a : q(a))).join(" ")}`,
-    windowsNote: "PowerShell quoting, which cmd.exe cannot run: the paths have spaces and no 8.3 names. Codex does not document its Windows hook shell, so run `ah doctor`",
+    commandWindows: ["&", powershellQuote(m.nodePath), powershellQuote(m.guardPath), ...guardArgs.map((a) => (bareArg(a) ? a : powershellQuote(a)))].join(" "),
+    windowsNote: "PowerShell quoting, which cmd.exe cannot run: the node path is a UNC path that needs quoting, or a path or option has a character one of the shells reads inside double quotes (% $ ` or a double quote). Codex does not document its Windows hook shell, so run `ah doctor`",
   };
 }
 

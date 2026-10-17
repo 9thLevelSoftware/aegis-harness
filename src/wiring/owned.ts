@@ -10,20 +10,40 @@
  */
 import { readFileSync } from "node:fs";
 
-/** Split a command line into words. Quotes group; backslashes stay literal (Windows paths). */
-export function splitWords(command: string): string[] {
+/** The characters PowerShell reads as quotes: ' and U+2018 to U+201B as single, " and U+201C to U+201E as double. */
+const PS_QUOTE: Record<"'" | '"', RegExp> = { "'": /^['\u2018-\u201B]$/, '"': /^["\u201C-\u201E]$/ };
+
+/**
+ * Split a command line into words, the way the shell it is written for reads
+ * every form ah writes. Quotes group; backslashes stay literal (Windows
+ * paths), except that `posix` reads `\'` outside quotes as the apostrophe
+ * posixQuote writes it as. `powershell` (the default for a line that starts
+ * with the call operator `&`, which no other shell takes) reads PS_QUOTE as
+ * quotes, and two of a kind inside quotes of that kind as the second one.
+ */
+export function splitWords(command: string, shell: "posix" | "powershell" = /^\s*&/.test(command) ? "powershell" : "posix"): string[] {
+  const ps = shell === "powershell";
+  const is = (kind: "'" | '"', c: string | undefined) => c !== undefined && (ps ? PS_QUOTE[kind].test(c) : c === kind);
+  const chars = [...command];
   const out: string[] = [];
   let cur = "";
   let quote: '"' | "'" | null = null;
   let has = false;
-  for (const ch of command) {
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
     if (quote) {
-      if (ch === quote) quote = null;
-      else cur += ch;
+      if (!is(quote, ch)) cur += ch;
+      else if (ps && is(quote, chars[i + 1])) cur += chars[++i];
+      else quote = null;
       continue;
     }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
+    if (is("'", ch) || is('"', ch)) {
+      quote = is("'", ch) ? "'" : '"';
+      has = true;
+      continue;
+    }
+    if (!ps && ch === "\\" && chars[i + 1] === "'") {
+      cur += chars[++i];
       has = true;
       continue;
     }
@@ -107,7 +127,8 @@ export function entryWords(entry: Record<string, unknown>): string[][] {
   const forms: string[][] = [];
   const args = Array.isArray(entry.args) ? entry.args.filter((a): a is string => typeof a === "string") : null;
   if (typeof entry.command === "string") forms.push(args ? [entry.command, ...args] : splitWords(entry.command));
-  if (typeof entry.commandWindows === "string") forms.push(splitWords(entry.commandWindows));
+  // cmd.exe does not quote with ', so a single quote in a Windows command is PowerShell's.
+  if (typeof entry.commandWindows === "string") forms.push(splitWords(entry.commandWindows, "powershell"));
   return forms;
 }
 
