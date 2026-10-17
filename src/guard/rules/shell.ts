@@ -1,5 +1,5 @@
 import { classifyPath, isBlockDevice, protectedInside, wildcardReach, type PathInfo } from "../classify.ts";
-import { isPrivateFile, isPublicPem } from "../credentials.ts";
+import { isPrivateFile, isPrivateHomeFile, isPublicPem } from "../credentials.ts";
 import { ALLOW, ask, deny, onTime, strictest, TimeLimit, type Context, type Decision, type ShellCall } from "../model.ts";
 import { globToRegExp, hasVariable, isTempPath, normalize, resolvePath, stripQuotes, trimSeparators } from "../paths.ts";
 import { findSecrets, redact } from "../secrets.ts";
@@ -1467,7 +1467,7 @@ function privateCredential(a: string, ctx: Context): string | null {
   const info = classifyPath(homeSpelling(a), ctx);
   if (info.isTestFile) return null;
   const rel = info.homeRel ?? info.rel ?? info.abs;
-  const isPrivate = isPrivateFile(a) || (info.homeRel !== null && (sshPrivate(`/${info.homeRel}`) || isPrivateFile(`/${info.homeRel}`) || /^\.(npmrc|aws\/credentials)$/.test(info.homeRel)));
+  const isPrivate = isPrivateFile(a) || (info.homeRel !== null && (sshPrivate(`/${info.homeRel}`) || isPrivateFile(`/${info.homeRel}`) || isPrivateHomeFile(info.homeRel)));
   return isPrivate ? rel : null;
 }
 
@@ -2242,9 +2242,12 @@ function writeTargetsOf(s: Stage, deadline: number | undefined): string[] {
       break;
     }
     case "yq": {
-      if (!s.argv.some((a) => a === "-i" || a === "--inplace" || /^-[a-zA-Z]*i$/.test(a) && !a.startsWith("--"))) break;
-      const { positionals: files, values } = operands(s.argv, "oIpe", ["--output-format", "--indent", "--input-format", "--expression", "--front-matter"]);
-      append(targets, values.has("-e") || values.has("--expression") || s.argv.includes("--from-file") ? files : files.slice(1));
+      // mikefarah yq writes with `-i`/`--inplace`, kislyuk yq (a jq wrapper) with `-i`/`--in-place`; `-pi` is
+      // `-p i` (ini input). `-e` is --exit-status in both, not an expression.
+      if (!s.argv.some((a) => a === "--inplace" || a === "--in-place" || /^-[^-oIpfw]*i/.test(a))) break;
+      const { positionals: files, values } = operands(s.argv, "oIpfw", ["--output-format", "--indent", "--input-format", "--expression", "--front-matter", "--from-file", "--width", "--yaml-output-grammar-version", "--yml-out-ver"]);
+      // `-f` is a filter file in kislyuk yq and front matter in mikefarah's: every operand counts as a file, which covers both.
+      append(targets, values.has("--expression") || values.has("--from-file") || values.has("-f") ? files : files.slice(1));
       break;
     }
     case "sponge":

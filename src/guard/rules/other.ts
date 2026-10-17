@@ -1,5 +1,5 @@
 import { classifyPath } from "../classify.ts";
-import { inCredentialStore, isPrivateFile } from "../credentials.ts";
+import { inCredentialStore, isPrivateFile, isPrivateHomeFile, isPublicInStore } from "../credentials.ts";
 import { ALLOW, deny, strictest, type Context, type Decision, type OtherCall } from "../model.ts";
 import { findSecrets, redact } from "../secrets.ts";
 
@@ -22,7 +22,8 @@ export function otherRules(call: OtherCall, ctx: Context): Decision {
       if (typeof value !== "string") continue;
       const info = classifyPath(value, ctx);
       const rel = info.rel ?? info.homeRel ?? info.abs;
-      const isPrivate = isPrivateFile(rel) || (info.homeRel !== null && SSH_PRIVATE.test(info.homeRel.replace(/\\/g, "/")));
+      const home = info.homeRel?.replace(/\\/g, "/") ?? null;
+      const isPrivate = isPrivateFile(rel) || (home !== null && (SSH_PRIVATE.test(home) || isPrivateHomeFile(home)));
       if (isPrivate && !info.isTestFile) {
         out.push(deny("tool.read-private-key", `${rel} is a private key or credential store`, READ_KEY_FIX));
       }
@@ -34,7 +35,7 @@ export function otherRules(call: OtherCall, ctx: Context): Decision {
     const info = classifyPath(input.path, ctx);
     const rel = info.rel ?? info.homeRel ?? info.abs;
     const home = info.homeRel?.replace(/\\/g, "/") ?? null;
-    if (!info.isTestFile && (isPrivateFile(rel) || (home !== null && inCredentialStore(home)))) {
+    if (!info.isTestFile && (isPrivateFile(rel) || (home !== null && (isPrivateHomeFile(home) || (inCredentialStore(home) && !isPublicInStore(home)))))) {
       out.push(deny("tool.read-private-key", `Grep prints lines from ${rel}, which holds private keys or credentials`, READ_KEY_FIX));
     }
   }

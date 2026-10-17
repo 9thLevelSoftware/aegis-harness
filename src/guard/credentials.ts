@@ -18,6 +18,16 @@ export function isPublicPem(path: string): boolean {
   return PUBLIC_PEM.test(path);
 }
 
+/** Home-relative files that hold credentials by name alone: `~/.npmrc` (an npm token), unlike a project's `.npmrc`. */
+export function isPrivateHomeFile(homeRel: string): boolean {
+  return /^\.npmrc$/i.test(homeRel);
+}
+
+/** Files in a credential store that hold no secret: SSH public keys, config, known_hosts, authorized_keys, environment and rc, and `~/.aws/config`. */
+export function isPublicInStore(homeRel: string): boolean {
+  return /^\.ssh[\\/]([^\\/]+\.pub|config|known_hosts(\.old)?|authorized_keys2?|environment|rc)$|^\.aws[\\/]config$/i.test(homeRel);
+}
+
 /** A home-relative path (`.ssh`, `.aws/config`) inside a directory that holds keys or tokens: copying or searching it whole exposes them. */
 export function inCredentialStore(homeRel: string): boolean {
   return /^(\.(ssh|aws|gnupg|kube|azure)|\.config[\\/]gcloud)([\\/]|$)/i.test(homeRel);

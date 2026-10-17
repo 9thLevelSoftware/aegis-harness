@@ -1,0 +1,11 @@
+{
+  "name": "Read of ~/.npmrc (an npm token) is denied",
+  "payload": {
+    "tool_name": "Read",
+    "tool_input": {
+      "file_path": "/home/dev/.npmrc"
+    }
+  },
+  "rule": "tool.read-private-key",
+  "source": "BUG-2026-020"
+}

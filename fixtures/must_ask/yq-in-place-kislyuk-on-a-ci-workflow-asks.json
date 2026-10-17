@@ -1,0 +1,11 @@
+{
+  "name": "yq -y --in-place (the jq wrapper) on a CI workflow asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "yq -y --in-place '.on.push = null' .github/workflows/ci.yml"
+    }
+  },
+  "rule": "shell.write-ask-path",
+  "source": "BUG-2026-020"
+}

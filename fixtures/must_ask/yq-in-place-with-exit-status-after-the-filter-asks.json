@@ -1,0 +1,11 @@
+{
+  "name": "yq -i FILTER -e on a CI workflow asks (-e is --exit-status, not the filter)",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "yq -i '.on.push = null' -e .github/workflows/ci.yml"
+    }
+  },
+  "rule": "shell.write-ask-path",
+  "source": "BUG-2026-020"
+}

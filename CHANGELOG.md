@@ -17,9 +17,9 @@ The first npm release.
   stale paths, duplicates and Codex hook trust, then runs each hook the way its agent would with
   three canaries.
 - `ah test-hooks`, `ah bug add|list`, `ah rules`, `ah version`.
-- A fixture corpus of 427 `must_block`, 68 `must_ask` and 327 `must_allow` calls, replayed in CI
+- A fixture corpus of 428 `must_block`, 70 `must_ask` and 331 `must_allow` calls, replayed in CI
   on Linux and Windows within a p95 budget of 150 ms (400 ms on Windows). A probe pass before the
-  release added 139 of them (BUG-2026-020).
+  release added 146 of them (BUG-2026-020).
 
 Known limits: the guard reads the call text, not its effect, so a command built at run time, a
 script the agent wrote a moment ago or a symlink can get past it. See "What it is not" in the
