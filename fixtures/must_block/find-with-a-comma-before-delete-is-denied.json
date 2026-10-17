@@ -1,0 +1,11 @@
+{
+  "name": "find with a comma before -delete is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . -name foo , -delete"
+    }
+  },
+  "rule": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-019"
+}

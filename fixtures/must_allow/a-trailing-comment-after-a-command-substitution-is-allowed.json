@@ -1,0 +1,11 @@
+{
+  "name": "a trailing comment after a command substitution is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git log -1 $(git rev-parse HEAD) # (git reset --hard if needed"
+    }
+  },
+  "near": "shell.git-discard-changes",
+  "source": "BUG-2026-019"
+}

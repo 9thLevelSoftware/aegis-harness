@@ -177,7 +177,13 @@ impact: >-
   covered parsing only, while rules, option lists, find expressions and policy globs stayed
   quadratic (a `rm -rf *********Z` took seconds, 150 KB of `env -u x` seven); that a group sent
   to /dev/null inside a redirected group asked as a write to /dev/null; and that a `(` in a
-  comment or in a PowerShell here-string with an apostrophe was read as commands.
+  comment or in a PowerShell here-string with an apostrophe was read as commands. A ninth review
+  (and a bot review) found that comment fix taking a `#` as a comment where bash goes on with the
+  word (`$(date)#x; rm -rf .claude`, `${x:- #}`, after a line join, and first on the line), a
+  here-string run by `iex` no longer read, find's `,`, a second action, `-name '('` and `-L`
+  before the start missed, wrapper option clusters (`env -iu FOO`), `env -S` with `\_`, npm's
+  own options before `-c`, `>|`, `[[:alpha:]]` and a two-stage group piped into sh passing, and
+  brace chains, runs of `[` and long bracket classes taking seconds.
 countermeasure:
   kind: test
   ref:
@@ -265,6 +271,11 @@ countermeasure:
     text through its first and last stages; `-empty` takes no value; nested backticks unescape
     as bash does; the 2 s limit runs through the rules too; options, `env -S`, find expressions,
     wildcards and policy globs are matched in linear passes, and `env -S` past eight levels asks.
+    After the ninth review: a `#` starts a comment only at a word start as bash reads it; a
+    here-string word is its body; find reads its operators apart from values, splits at `,`, and
+    needs every action narrowed; wrapper and runner options parse as their tools do; bracket
+    expressions take POSIX classes; a group's every command is a pipe source and sink; a word
+    with more than 64 brace groups asks.
     A
     protected basename (`lefthook.yml`) inside a directory being removed is not seen,
     since the guard reads no filesystem. Still beyond any

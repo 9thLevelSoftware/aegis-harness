@@ -238,6 +238,73 @@ export function basename(p: string): string {
 
 type GlobToken = { kind: "star" } | { kind: "one" } | { kind: "class"; negate: boolean; test: (c: string) => boolean } | { kind: "lit"; ch: string };
 
+/** The POSIX character classes of a bracket expression; a name sh does not know counts as any character. */
+const POSIX_CLASSES: Record<string, RegExp> = {
+  alnum: /[\p{L}\p{N}]/u,
+  alpha: /\p{L}/u,
+  ascii: /[\x00-\x7f]/,
+  blank: /[ \t]/,
+  cntrl: /[\x00-\x1f\x7f]/,
+  digit: /[0-9]/,
+  graph: /[^\s\x00-\x1f\x7f]/,
+  lower: /\p{Ll}/u,
+  print: /[^\x00-\x1f\x7f]/,
+  punct: /[!-/:-@[-`{-~]/,
+  space: /\s/,
+  upper: /\p{Lu}/u,
+  word: /[\p{L}\p{N}_]/u,
+  xdigit: /[0-9A-Fa-f]/,
+};
+
+/**
+ * The bracket expressions of a sh glob segment: `bracketAt(i)` reads the one opening at `seg[i]`
+ * as bash does (`!` or `^` negates, a `]` first is a member, ranges, `[:alpha:]`, `[=c=]` and
+ * `[.c.]`) and gives where it closes and a membership test, or null when it never closes and the
+ * `[` is a plain character. Each search past the last `]` or `:]` is cut short, so a segment of
+ * thousands of `[` costs its length, and a test is worked out once per character.
+ */
+export function bracketReader(seg: string, platform: Platform): (i: number) => { end: number; negate: boolean; test: (c: string) => boolean } | null {
+  const lastClose = seg.lastIndexOf("]");
+  const last: Record<string, number> = { ":": seg.lastIndexOf(":]"), "=": seg.lastIndexOf("=]"), ".": seg.lastIndexOf(".]") };
+  const folds = platform === "windows";
+  return (i) => {
+    if (seg[i] !== "[" || lastClose <= i) return null;
+    let k = i + 1;
+    const negate = seg[k] === "!" || seg[k] === "^";
+    if (negate) k++;
+    const singles = new Set<string>();
+    const ranges: [string, string][] = [];
+    const classes: RegExp[] = [];
+    let anything = false;
+    for (let first = true; k < seg.length; k++, first = false) {
+      const c = seg[k];
+      if (c === "]" && !first) break;
+      const kind = seg[k + 1];
+      if (c === "[" && (kind === ":" || kind === "=" || kind === ".") && last[kind] > k + 1) {
+        const close = seg.indexOf(`${kind}]`, k + 2);
+        const name = seg.slice(k + 2, close);
+        if (kind !== ":") singles.add(name);
+        else if (POSIX_CLASSES[name] !== undefined) classes.push(POSIX_CLASSES[name]);
+        else anything = true;
+        k = close + 1;
+      } else if (kind === "-" && k + 2 < seg.length && seg[k + 2] !== "]") {
+        if (c <= seg[k + 2]) ranges.push([c, seg[k + 2]]);
+        k += 2;
+      } else singles.add(c);
+    }
+    if (k >= seg.length) return null;
+    const known = new Map<string, boolean>();
+    const member = (ch: string) =>
+      anything || singles.has(ch) || ranges.some(([a, b]) => ch >= a && ch <= b) || classes.some((re) => re.test(ch));
+    const test = (ch: string): boolean => {
+      let m = known.get(ch);
+      if (m === undefined) known.set(ch, (m = member(ch) || (folds && (member(ch.toLowerCase()) || member(ch.toUpperCase())))));
+      return m;
+    };
+    return { end: k, negate, test };
+  };
+}
+
 /**
  * One segment of a sh glob as a matcher. A wildcard does not match a leading dot unless the
  * pattern spells it (sh without dotglob, Git Bash included); with `dots` it does, as PowerShell
@@ -247,28 +314,17 @@ type GlobToken = { kind: "star" } | { kind: "one" } | { kind: "class"; negate: b
  */
 export function segmentMatcher(seg: string, platform: Platform, dots: boolean): (name: string) => boolean {
   const fold = platform === "windows" ? (c: string) => c.toLowerCase() : (c: string) => c;
+  const bracketAt = bracketReader(seg, platform);
   const toks: GlobToken[] = [];
   for (let i = 0; i < seg.length; i++) {
     const c = seg[i];
-    const close = c === "[" ? seg.indexOf("]", i + 2) : -1;
+    const bracket = c === "[" ? bracketAt(i) : null;
     if (c === "*") {
       if (toks[toks.length - 1]?.kind !== "star") toks.push({ kind: "star" });
     } else if (c === "?") toks.push({ kind: "one" });
-    else if (close > 0) {
-      let body = seg.slice(i + 1, close);
-      const negate = /^[!^]/.test(body);
-      if (negate) body = body.slice(1);
-      const singles = new Set<string>();
-      const ranges: [string, string][] = [];
-      for (let k = 0; k < body.length; k++) {
-        if (body[k + 1] === "-" && k + 2 < body.length) {
-          if (body[k] <= body[k + 2]) ranges.push([body[k], body[k + 2]]);
-          k += 2;
-        } else singles.add(fold(body[k]));
-      }
-      const member = (ch: string) => singles.has(fold(ch)) || ranges.some(([a, b]) => (ch >= a && ch <= b) || (platform === "windows" && [ch.toLowerCase(), ch.toUpperCase()].some((x) => x >= a && x <= b)));
-      toks.push({ kind: "class", negate, test: member });
-      i = close;
+    else if (bracket !== null) {
+      toks.push({ kind: "class", negate: bracket.negate, test: bracket.test });
+      i = bracket.end;
     } else toks.push({ kind: "lit", ch: fold(c) });
   }
   const one = (t: GlobToken, ch: string): boolean =>

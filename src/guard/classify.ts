@@ -15,6 +15,7 @@ import {
   relativeTo,
   relativeToHome,
   resolvePath,
+  bracketReader,
   segmentMatcher,
 } from "./paths.ts";
 
@@ -223,9 +224,16 @@ function isGitRel(r: string, platform: Platform): boolean {
 
 const WILDCARD = /[*?[]/;
 
-/** The literal text of a glob segment, its wildcards and bracket classes dropped: `.eslintrc` from `.eslintrc*`, `.js` from `*.js`. */
+/** The literal text of a glob segment, its wildcards and bracket expressions dropped: `.eslintrc` from `.eslintrc*`, `.js` from `*.js`. */
 function literalText(seg: string): string {
-  return seg.replace(/\[[^\]]*\]|[*?]/g, "");
+  const bracketAt = bracketReader(seg, "posix");
+  const out: string[] = [];
+  for (let i = 0; i < seg.length; i++) {
+    const bracket = seg[i] === "[" ? bracketAt(i) : null;
+    if (bracket !== null) i = bracket.end;
+    else if (seg[i] !== "*" && seg[i] !== "?") out.push(seg[i]);
+  }
+  return out.join("");
 }
 
 /**

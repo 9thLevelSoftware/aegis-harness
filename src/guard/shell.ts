@@ -80,13 +80,14 @@ const WRAPPERS = new Set([
 ]);
 /** Options that consume the following token, per wrapper. */
 const WRAPPER_OPTS_WITH_ARG: Record<string, Set<string>> = {
-  sudo: new Set(["-u", "-g", "-U", "-h", "-p", "-C", "-r", "-t", "-T", "-D", "-R"]),
+  sudo: new Set(["-u", "-g", "-U", "-h", "-p", "-C", "-r", "-t", "-T", "-D", "-R", "--user", "--group", "--other-user", "--host", "--prompt", "--close-from", "--role", "--type", "--command-timeout", "--chdir", "--chroot"]),
   doas: new Set(["-u", "-C"]),
   env: new Set(["-u", "-C", "-S", "--unset", "--chdir", "--split-string"]),
   timeout: new Set(["-s", "-k", "--signal", "--kill-after"]),
   nice: new Set(["-n", "--adjustment"]),
-  ionice: new Set(["-c", "-n", "-p", "-P", "-u"]),
-  xargs: new Set(["-a", "-d", "-E", "-I", "-i", "-L", "-n", "-P", "-s", "-S", "--arg-file", "--delimiter", "--eof", "--replace", "--max-lines", "--max-args", "--max-procs", "--max-chars"]),
+  ionice: new Set(["-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid", "--pgid", "--uid"]),
+  // `-i`, `-l` and `-e` take a value only glued to them (`-i{}`), so they are not here.
+  xargs: new Set(["-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s", "-S", "--arg-file", "--delimiter", "--eof", "--replace", "--max-lines", "--max-args", "--max-procs", "--max-chars"]),
   stdbuf: new Set(["-i", "-o", "-e", "--input", "--output", "--error"]),
   caffeinate: new Set(["-t", "-w"]),
   command: new Set(),
@@ -167,6 +168,7 @@ function parseInner(command: string, depth: number, nested: boolean, dialect: Sh
         append(extra, inner);
         const stage = buildStage(s.tail === undefined ? ":" : `: ${s.tail}`, dialect, budget);
         stage.group = inner.filter((p) => p.depth === depth + 1);
+        stage.raw = text;
         stages.push(stage);
         continue;
       }
@@ -276,7 +278,7 @@ export function hereDocsAsStrings(s: string, budget?: ParseBudget): string {
         pending = [];
         continue;
       }
-      const end = hereDocBodies(s, i + 1, pending, missing);
+      const end = hereDocBodies(s, i + 1, pending, missing, budget);
       if (end !== null) {
         for (const h of pending) edits.push({ start: h.op, end: h.opEnd, text: `<<< ${h.body}` });
         edits.push({ start: i + 1, end: Math.min(end, s.length), text: "" });
@@ -381,8 +383,9 @@ function hereDocOperator(s: string, i: number, level: string): HereDoc | null {
  * `missing` remembers, per delimiter, an offset from which a search already found no delimiter
  * line, so that a command full of here-documents that never end is read once, not once per line.
  */
-function hereDocBodies(s: string, from: number, docs: HereDoc[], missing: Map<string, number>): number | null {
+function hereDocBodies(s: string, from: number, docs: HereDoc[], missing: Map<string, number>, budget?: ParseBudget): number | null {
   let pos = from;
+  let lines = 0;
   for (const h of docs) {
     const key = `${h.quoted ? "q" : "u"}${h.strip ? "-" : ""}:${h.delim}`;
     if ((missing.get(key) ?? Infinity) <= pos) return null;
@@ -390,6 +393,8 @@ function hereDocBodies(s: string, from: number, docs: HereDoc[], missing: Map<st
     let found = false;
     let carry = "";
     while (pos <= s.length) {
+      // Each delimiter that never comes is a search to the end: thousands of them ask in time.
+      if (budget !== undefined && (++lines & 255) === 0) checkTime(budget);
       const nl = s.indexOf("\n", pos);
       const lineEnd = nl < 0 ? s.length : nl;
       const raw = s.slice(pos, lineEnd);
@@ -484,6 +489,11 @@ function splitTop(s: string, dialect: ShellDialect, budget?: ParseBudget): Split
   let running = 0;
   let braceDepth = 0;
   let braceStart = 0;
+  // Open `${ }` expansions, inside which `#` starts no comment (`${x:- #}`).
+  let param = 0;
+  // The stage's length when its last character went on a word rather than ending one: an
+  // escaped character (`a\ #b`), or the `)` of `$( )`, `$(( ))` or `<( )` (`$(date)#x`).
+  let goesOn = -1;
   // Inside a group that is recorded whole, whose text holds whatever is nested in it.
   const enclosed = () => running > 0 || braceDepth > 0;
 
@@ -497,6 +507,7 @@ function splitTop(s: string, dialect: ShellDialect, budget?: ParseBudget): Split
     cur = [];
     blank = true;
     opener = null;
+    goesOn = -1;
   };
   const endCommand = () => {
     endStage();
@@ -535,6 +546,7 @@ function splitTop(s: string, dialect: ShellDialect, budget?: ParseBudget): Split
       add(c, next ?? "");
       i++;
       lastEscape = i;
+      goesOn = cur.length;
       continue;
     }
     if (backtickStart >= 0) {
@@ -546,9 +558,23 @@ function splitTop(s: string, dialect: ShellDialect, budget?: ParseBudget): Split
       }
       continue;
     }
+    if (!inDouble && dialect !== "cmd" && c === "$" && next === "{") {
+      param++;
+      add(c, next);
+      i++;
+      continue;
+    }
+    if (!inDouble && c === "}" && param > 0) {
+      param--;
+      add(c);
+      continue;
+    }
     if (!inDouble) {
-      // A comment runs to the end of its line; a quote or bracket in it opens nothing.
-      const end = commentEnd(s, i, dialect, lastEscape);
+      // A comment runs to the end of its line; a quote or bracket in it opens nothing. What
+      // counts is the character before it as the shell reads it: a line continuation adds nothing.
+      const tail = cur[cur.length - 1];
+      const before = tail === undefined ? "" : cur.length === goesOn ? null : tail[tail.length - 1];
+      const end = param > 0 ? -1 : commentEnd(s, i, dialect, before);
       if (end > i) {
         i = end - 1;
         continue;
@@ -577,6 +603,7 @@ function splitTop(s: string, dialect: ShellDialect, budget?: ParseBudget): Split
         const sub = subs.pop();
         if (sub !== undefined && sub.start >= 0) {
           inDouble = sub.outerDouble;
+          goesOn = cur.length;
           // Only the outermost substitution is recorded; parsing it finds the inner ones once.
           if (subs.length === 0 && !enclosed()) substitutions.push(s.slice(sub.start, i));
         }
@@ -626,6 +653,8 @@ function splitTop(s: string, dialect: ShellDialect, budget?: ParseBudget): Split
       const group = groups.pop() as { start: number; runs: boolean; opens: boolean };
       if (group.runs) running--;
       add(c);
+      // After `<( )`, `>( )` or an array the word goes on; after a subshell a comment may start.
+      if (dialect === "posix" && (!group.runs || /[<>]/.test(s[group.start - 2] ?? ""))) goesOn = cur.length;
       // Only the outermost group that runs is recorded; parsing it finds the inner ones once.
       if (group.runs && running === 0 && braceDepth === 0) {
         substitutions.push(s.slice(group.start, i));
@@ -665,6 +694,11 @@ function splitTop(s: string, dialect: ShellDialect, budget?: ParseBudget): Split
     if (c === "&" && next === "&") { endCommand(); i++; continue; }
     if (c === "|" && next === "|") { endCommand(); i++; continue; }
     if (c === ";" || c === "\n") { endCommand(); continue; }
+    if (c === "|" && cur[cur.length - 1] === ">" && cur.length !== goesOn) {
+      // `>|` writes over a file even under noclobber: a redirection, not a pipe.
+      add(c);
+      continue;
+    }
     if (c === "|") {
       if (next === "&") i++;
       endStage();
@@ -701,14 +735,16 @@ function splitTop(s: string, dialect: ShellDialect, budget?: ParseBudget): Split
 /**
  * Where the comment starting at `i` ends (the newline after it, or the end of `s`), or -1 when
  * there is none: `#` at the start of a word, in sh and PowerShell, or PowerShell's `<# ... #>`.
+ * `before` is the character before it as the shell reads it, "" at the start of a stage, and null
+ * when the word goes on through it.
  */
-function commentEnd(s: string, i: number, dialect: ShellDialect, lastEscape: number): number {
+function commentEnd(s: string, i: number, dialect: ShellDialect, before: string | null): number {
   if (dialect === "cmd") return -1;
   if (dialect === "powershell" && s[i] === "<" && s[i + 1] === "#") {
     const close = s.indexOf("#>", i + 2);
     return close < 0 ? s.length : close + 2;
   }
-  if (s[i] !== "#" || lastEscape === i - 1 || !(i === 0 || /[\s;&|()]/.test(s[i - 1]) || (dialect === "powershell" && /[{}]/.test(s[i - 1])))) return -1;
+  if (s[i] !== "#" || before === null || !(before === "" || /[\s;&|()]/.test(before) || (dialect === "powershell" && /[{}]/.test(before)))) return -1;
   const nl = s.indexOf("\n", i);
   return nl < 0 ? s.length : nl;
 }
@@ -723,18 +759,32 @@ function hereStringEnd(s: string, i: number): number {
   return close < 0 ? -1 : close + 3;
 }
 
-/** The `$( ... )` subexpressions in an expandable PowerShell string, which run when it is read. */
+/**
+ * The `$( ... )` subexpressions in an expandable PowerShell string, which run when it is read, in
+ * one pass: a backtick escapes the next character (`` `$( `` is text), quotes inside one hold
+ * their parentheses, and the outermost holds any nested in it. One never closed runs nothing.
+ */
 function subexpressions(text: string): string[] {
   const out: string[] = [];
-  for (let i = text.indexOf("$("); i >= 0; i = text.indexOf("$(", i + 1)) {
-    let depth = 0;
-    for (let j = i + 1; j < text.length; j++) {
-      if (text[j] === "(") depth++;
-      else if (text[j] === ")" && --depth === 0) {
-        out.push(text.slice(i + 2, j));
-        i = j;
-        break;
+  let start = -1;
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "`") i++;
+    else if (start < 0) {
+      if (c === "$" && text[i + 1] === "(") {
+        start = i + 2;
+        depth = 1;
+        i++;
       }
+    } else if (c === "'" || c === '"') {
+      const close = text.indexOf(c, i + 1);
+      if (close < 0) break;
+      i = close;
+    } else if (c === "(") depth++;
+    else if (c === ")" && --depth === 0) {
+      out.push(text.slice(start, i));
+      start = -1;
     }
   }
   return out;
@@ -772,6 +822,8 @@ interface Token {
 export const BRACE_LIMIT = 1024;
 /** Characters one word's brace expansion may yield: a long word times many alternatives is too. */
 const BRACE_CHARS = 1 << 20;
+/** Brace groups one word may hold, nested ones included, before the guard asks instead. */
+const MAX_BRACE_GROUPS = 64;
 
 interface BraceGroup {
   start: number;
@@ -811,14 +863,13 @@ function sequence(body: string, limit: number): string[] | "overflow" | null {
 const SEQ_MAX_BODY = 64;
 
 /**
- * The first brace group sh expands in `word`, null when there is none, `"overflow"` when it alone
- * yields more than `limit` words. One pass with a stack, so that a word full of unclosed braces
- * costs no more than its length: each `{` meets its `}` as sh pairs them, `${` included so that
- * its commas stay its own, and the group that opens first wins.
+ * The brace groups sh expands in `word`, in the order they close. One pass with a stack, so that a
+ * word full of unclosed braces costs no more than its length: each `{` meets its `}` as sh pairs
+ * them, `${` included so that its commas stay its own.
  */
-function firstBraceGroup(word: string, live: readonly boolean[], limit: number): BraceGroup | "overflow" | null {
+function braceGroups(word: string, live: readonly boolean[]): { at: number; end: number; commas: number[] }[] {
   const open: { at: number; commas: number[]; param: boolean }[] = [];
-  let best: { at: number; end: number; commas: number[] } | undefined;
+  const out: { at: number; end: number; commas: number[] }[] = [];
   for (let j = 0; j < word.length; j++) {
     if (!live[j]) continue;
     const c = word[j];
@@ -826,12 +877,22 @@ function firstBraceGroup(word: string, live: readonly boolean[], limit: number):
     else if (c === "," && open.length > 0) open[open.length - 1].commas.push(j);
     else if (c === "}" && open.length > 0) {
       const f = open.pop()!;
-      if (f.param || (best !== undefined && best.at < f.at)) continue;
+      if (f.param) continue;
       if (f.commas.length > 0 || (j - f.at - 1 <= SEQ_MAX_BODY && SEQ_BODY.test(word.slice(f.at + 1, j)) && live.slice(f.at + 1, j).every(Boolean))) {
-        best = { at: f.at, end: j, commas: f.commas };
+        out.push({ at: f.at, end: j, commas: f.commas });
       }
     }
   }
+  return out;
+}
+
+/**
+ * The first brace group sh expands in `word` (the one that opens first), null when there is
+ * none, `"overflow"` when it alone yields more than `limit` words.
+ */
+function firstBraceGroup(word: string, live: readonly boolean[], limit: number): BraceGroup | "overflow" | null {
+  let best: { at: number; end: number; commas: number[] } | undefined;
+  for (const g of braceGroups(word, live)) if (best === undefined || g.at < best.at) best = g;
   if (best === undefined) return null;
   const { at, end, commas } = best;
   if (commas.length > 0) {
@@ -857,6 +918,10 @@ function firstBraceGroup(word: string, live: readonly boolean[], limit: number):
  * characters a million.
  */
 export function braceExpand(word: string, live: readonly boolean[] = Array.from(word, () => true), limit = BRACE_LIMIT): string[] | null {
+  // Each group is a level of copying the word, so a word with more groups than any real one is
+  // refused at once: `{a,b}` ten thousand times would otherwise copy a long word ten thousand times
+  // before its first word came out.
+  if (braceGroups(word, live).length > MAX_BRACE_GROUPS) return null;
   const out: string[] = [];
   let chars = 0;
   const expand = (w: string, l: readonly boolean[]): boolean => {
@@ -988,8 +1053,8 @@ function tokenize(stage: string, dialect: ShellDialect, budget?: ParseBudget): T
     }
     const hs = dialect === "powershell" ? hereStringEnd(stage, i) : -1;
     if (hs > i) {
-      // A PowerShell here-string is one word, quotes inside and all.
-      dead(stage.slice(i, hs));
+      // A PowerShell here-string is one word, its body: the lines between `@'` and `'@`, quotes and all.
+      dead(stage.slice(stage[i + 2] === "\r" ? i + 4 : i + 3, hs - 3).replace(/\r$/, ""));
       has = true;
       bare = false;
       i = hs - 1;
@@ -1136,17 +1201,23 @@ function buildStage(text: string, dialect: ShellDialect, budget: ParseBudget): S
         if (++splits > MAX_DEPTH) { tooDeep = true; break; }
         const rest = argv.splice(k + split.words);
         argv.length = k;
-        append(argv, tokenize(split.value, "posix").map((t) => t.text));
+        append(argv, tokenize(envSplitText(split.value), "posix").map((t) => t.text));
         append(argv, rest);
         continue;
       }
-      if (a.startsWith("-") && a.length > 1) {
+      if (a.startsWith("--")) {
         k++;
-        const key = a.includes("=") ? a.slice(0, a.indexOf("=")) : a;
-        if (withArg.has(key) && !a.includes("=")) {
-          k++;
-        } else if (!a.startsWith("--") && a.length > 2 && withArg.has(a.slice(0, 2))) {
-          // glued value, e.g. `-n1`, `-I{}`
+        if (!a.includes("=") && withArg.has(a)) k++;
+        continue;
+      }
+      if (a.startsWith("-") && a.length > 1) {
+        // A cluster of short options (`-iu FOO`, `-vk 5`): the first that takes a value takes the
+        // rest of the word (`-n1`, `-I{}`), or the next word when it ends the cluster.
+        k++;
+        for (let l = 1; l < a.length; l++) {
+          if (!withArg.has(`-${a[l]}`)) continue;
+          if (l === a.length - 1) k++;
+          break;
         }
         continue;
       }
@@ -1172,6 +1243,36 @@ function buildStage(text: string, dialect: ShellDialect, budget: ParseBudget): S
   if (unexpanded !== undefined) stage.unexpanded = unexpanded;
   if (tooDeep) stage.tooDeep = true;
   return stage;
+}
+
+/**
+ * An `env -S` string with env's own escapes made into what sh splitting reads the same way:
+ * `\_` separates words outside quotes and is a space inside double quotes, as are `\t`, `\n`,
+ * `\v`, `\f` and `\r` here, and `\c` ends the string. Single quotes keep their text.
+ */
+function envSplitText(v: string): string {
+  const out: string[] = [];
+  let sq = false;
+  let dq = false;
+  for (let i = 0; i < v.length; i++) {
+    const c = v[i];
+    if (sq) {
+      if (c === "'") sq = false;
+      out.push(c);
+    } else if (c === "\\" && /[_tnvfr]/.test(v[i + 1] ?? "")) {
+      out.push(" ");
+      i++;
+    } else if (c === "\\" && v[i + 1] === "c") break;
+    else if (c === "\\" && i + 1 < v.length) {
+      out.push(c, v[i + 1]);
+      i++;
+    } else {
+      if (c === "'" && !dq) sq = true;
+      else if (c === '"') dq = !dq;
+      out.push(c);
+    }
+  }
+  return out.join("");
 }
 
 /**
@@ -1202,7 +1303,11 @@ function makeStage(argv: string[], env: Record<string, string>, wrappers: string
 }
 
 /** Runner options that consume the next word. `-c`/`--call`/`--shell-mode` carry a command line and are read, not skipped. */
-const RUNNER_OPTS_WITH_ARG = new Set(["-p", "--package", "--shell", "--from", "--with", "--python", "-w", "--workspace", "--prefix", "-C", "--dir", "-F", "--filter", "--cwd"]);
+const RUNNER_OPTS_WITH_ARG = new Set([
+  "-p", "--package", "--shell", "--from", "--with", "--python", "-w", "--workspace", "--prefix", "-C", "--dir", "-F", "--filter", "--cwd",
+  // npm's own configuration, which npx and `npm exec` take before the package: `npx --loglevel silent -c '...'`.
+  "--loglevel", "--registry", "--cache", "--userconfig", "--globalconfig", "--node-options", "--reporter", "--script-shell",
+]);
 const TWO_WORD_RUNNERS: Record<string, Set<string>> = {
   npm: new Set(["exec", "x"]),
   pnpm: new Set(["dlx", "exec"]),
@@ -1383,11 +1488,11 @@ export function pwshRun(argv: readonly string[]): PwshRun | null {
     const m = /^-([a-z?]+)(?::(.*))?$/is.exec(a);
     if (m === null) continue;
     const key = m[1].toLowerCase();
-    const rest = argv.slice(i + 1);
-    if ("commandwithargs".startsWith(key) || key === "cwa") return { command: (m[2] === undefined ? rest : [m[2], ...rest]).join(" ") };
+    // The rest of the line is copied only for the option that takes it: one copy per option is quadratic.
+    if ("commandwithargs".startsWith(key) || key === "cwa") return { command: (m[2] === undefined ? argv.slice(i + 1) : [m[2], ...argv.slice(i + 1)]).join(" ") };
     if ("file".startsWith(key)) {
       const script = m[2] ?? argv[i + 1];
-      return script === undefined ? null : { script, args: m[2] === undefined ? rest.slice(1) : rest };
+      return script === undefined ? null : { script, args: argv.slice(m[2] === undefined ? i + 2 : i + 1) };
     }
     if ("encodedcommand".startsWith(key) || key === "ec") return null;
     if (m[2] === undefined && PWSH_VALUED.some(([name, min]) => key.length >= min && name.startsWith(key))) i++;

@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf .git/hooks after a parameter expansion holding a space and a # is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "pkg=${line%% #*}; rm -rf .git/hooks"
+    }
+  },
+  "rule": "shell.rm-git-dir",
+  "source": "BUG-2026-019"
+}

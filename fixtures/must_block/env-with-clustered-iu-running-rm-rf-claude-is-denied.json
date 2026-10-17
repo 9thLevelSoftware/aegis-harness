@@ -1,0 +1,11 @@
+{
+  "name": "env with clustered -iu running rm -rf .claude is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "env -iu FOO rm -rf .claude"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

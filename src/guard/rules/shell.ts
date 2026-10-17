@@ -86,7 +86,7 @@ function pipelineRules(p: Pipeline, ctx: Context): Decision[] {
   for (let i = p.stages.length - 1; i >= 0; i--) {
     onTime(ctx.deadline);
     const here: Decision[] = [];
-    for (const src of exits(p.stages[i])) {
+    for (const src of members(p.stages[i])) {
       const isDownloader = DOWNLOADERS.has(src.cmd);
       const isDecoder = DECODERS.has(src.cmd) && src.argv.some((a) => /^(-d|--decode|-D|-r|enc)$/.test(a));
       if ((isDownloader || isDecoder) && interpreter !== undefined) {
@@ -102,12 +102,21 @@ function pipelineRules(p: Pipeline, ctx: Context): Decision[] {
       }
     }
     found.push(here);
-    for (const sink of entries(p.stages[i])) {
+    for (const sink of members(p.stages[i])) {
       if (INTERPRETERS.has(sink.cmd) && readsStdinAsCode(sink)) interpreter = sink;
       if (NETWORK_SINKS.has(sink.cmd)) network = sink;
     }
   }
   return found.reverse().flat();
+}
+
+/**
+ * `s`, or every command in a `( )` or `{ }` group: what any of them prints may reach the pipe out of
+ * it (`( curl URL | cat ) | sh`), and any of them may read what the pipe into it carries, as in a
+ * pipeline without the group.
+ */
+function members(s: Stage): Stage[] {
+  return s.group === undefined ? [s] : s.group.flatMap((p) => p.stages.flatMap(members));
 }
 
 /** The commands a pipe into `s` feeds: `s` itself, or for a `( )` or `{ }` group the first command of each pipeline in it. */
@@ -292,7 +301,9 @@ function stageRules(s: Stage, ctx: Context): Decision[] {
   append(out, moveSourceRules(s, ctx));
   append(out, copySourceRules(s, ctx));
 
-  for (const target of writeTargetsOf(s)) append(out, writeRules(target, s, ctx));
+  // A redirected group is a `:` stand-in carrying the redirections; its reasons name the group.
+  const writer = s.group === undefined ? s : { ...s, cmd: /^\s*\{/.test(s.raw) ? "{ ... }" : "( ... )" };
+  for (const target of writeTargetsOf(s)) append(out, writeRules(target, writer, ctx));
   return out;
 }
 
@@ -545,9 +556,12 @@ const FIND_MATCH_ALL = /^(?:(?:\.\/)?(?:[*?]*\*[*?]*|\*\/\*)|\^?\.[*+]\$?)$/;
  * `\( -name a -o -type f \) -delete` deletes every file. Worked out for every word in three
  * passes: judging each filter on its own took time in the square of a long expression's length.
  */
-function narrowingFilters(argv: readonly string[], actionAt: number): boolean[] {
-  const negated = (j: number) => /^(!|-not)$/.test(argv[j - 1] ?? "");
-  const isOr = (j: number) => /^-or?$/.test(argv[j]);
+function narrowingFilters(argv: readonly string[], actionAt: number, value: readonly boolean[]): boolean[] {
+  // Only words find reads as its expression count: `-name '('` names a file called `(`.
+  const is = (j: number, re: RegExp) => !value[j] && re.test(argv[j] ?? "");
+  const negated = (j: number) => is(j - 1, /^(!|-not)$/);
+  // `,` runs both sides, so like `-o` it puts a filter and the action in different branches.
+  const isOr = (j: number) => is(j, /^(-o|-or|,)$/);
   // The depth before each word, and where each `(` closes; one still open at the action holds it too.
   const depth = new Array<number>(actionAt + 1);
   const closeAt = new Map<number, number>();
@@ -555,10 +569,10 @@ function narrowingFilters(argv: readonly string[], actionAt: number): boolean[] 
   let d = 0;
   for (let j = 0; j < actionAt; j++) {
     depth[j] = d;
-    if (argv[j] === "(") {
+    if (is(j, /^\($/)) {
       opens.push(j);
       d++;
-    } else if (argv[j] === ")") {
+    } else if (is(j, /^\)$/)) {
       d--;
       const o = opens.pop();
       if (o !== undefined) closeAt.set(o, j);
@@ -580,12 +594,12 @@ function narrowingFilters(argv: readonly string[], actionAt: number): boolean[] 
         branch = false;
         continue;
       }
-      if (argv[j] === "(") {
+      if (closeAt.has(j)) {
         if (groupNarrows.get(j) === true) branch = true;
         j = closeAt.get(j) ?? c;
-      } else if (argv[j] === "-empty") {
+      } else if (is(j, /^-empty$/)) {
         if (!negated(j)) branch = true;
-      } else if (FIND_FILTERS.test(argv[j])) {
+      } else if (is(j, FIND_FILTERS)) {
         if (!negated(j) && !FIND_MATCH_ALL.test(argv[j + 1] ?? "")) branch = true;
         j++;
       }
@@ -596,11 +610,11 @@ function narrowingFilters(argv: readonly string[], actionAt: number): boolean[] 
   // Down the stack of open groups, how many close before the action without narrowing.
   const failing = [0];
   for (let j = 0; j < actionAt; j++) {
-    if (argv[j] === "(") failing.push(failing[failing.length - 1] + (closeAt.has(j) && groupNarrows.get(j) !== true ? 1 : 0));
-    else if (argv[j] === ")") {
+    if (is(j, /^\($/)) failing.push(failing[failing.length - 1] + (closeAt.has(j) && groupNarrows.get(j) !== true ? 1 : 0));
+    else if (is(j, /^\)$/)) {
       if (failing.length > 1) failing.pop();
     } else {
-      out[j] = failing[failing.length - 1] === 0 && FIND_FILTERS.test(argv[j]) && !negated(j) && (argv[j] === "-empty" || !FIND_MATCH_ALL.test(argv[j + 1] ?? ""));
+      out[j] = failing[failing.length - 1] === 0 && is(j, FIND_FILTERS) && !negated(j) && (argv[j] === "-empty" || !FIND_MATCH_ALL.test(argv[j + 1] ?? ""));
     }
   }
   // The group that joins a filter to the action is the shallowest depth on the way; an `-o` at that depth splits them.
@@ -614,25 +628,57 @@ function narrowingFilters(argv: readonly string[], actionAt: number): boolean[] 
   return out;
 }
 
+/** Find words that take the next word as their value; -fprintf takes two, and -exec and its kin every word up to `;` or `{} +`. */
+const FIND_VALUED = /^-(i?name|i?path|i?regex|i?wholename|i?lname|newer|anewer|cnewer|newer[aBcmt][aBcmt]|[acm](time|min)|used|size|user|group|uid|gid|perm|samefile|x?type|maxdepth|mindepth|fstype|inum|links|printf|fprint0?|fls|context|regextype|files0-from)$/;
+
+/** Per word of find's arguments, true where it is another word's value rather than part of the expression. */
+function findValues(argv: readonly string[]): boolean[] {
+  const value = new Array<boolean>(argv.length).fill(false);
+  for (let j = 0; j < argv.length; j++) {
+    const a = argv[j];
+    if (/^-(exec|execdir|ok|okdir)$/.test(a)) {
+      let k = j + 1;
+      for (; k < argv.length && argv[k] !== ";" && !(argv[k] === "+" && argv[k - 1] === "{}"); k++) value[k] = true;
+      if (k < argv.length) value[k] = true;
+      j = k;
+    } else if (a === "-fprintf") {
+      value.fill(true, j + 1, Math.min(j + 3, argv.length));
+      j += 2;
+    } else if (FIND_VALUED.test(a) && j + 1 < argv.length) value[++j] = true;
+  }
+  return value;
+}
+
+/** Past this many actions in one find, the guard does not work out what each deletes and judges the starts whole. */
+const FIND_MAX_ACTIONS = 16;
+
 function findRules(s: Stage, ctx: Context): Decision[] {
   const argv = s.argv.slice(1);
-  const actionAt = argv.findIndex((a, i) => a === "-delete" || (/^-exec(dir)?$/.test(a) && REMOVERS.has((argv[i + 1] ?? "").replace(/^\\/, ""))));
-  if (actionAt < 0) return [];
+  const value = findValues(argv);
+  const actions: number[] = [];
+  argv.forEach((a, i) => {
+    if (!value[i] && (a === "-delete" || (/^-exec(dir)?$/.test(a) && REMOVERS.has((argv[i + 1] ?? "").replace(/^\\/, ""))))) actions.push(i);
+  });
+  if (actions.length === 0) return [];
+  // `-H`, `-L`, `-P`, `-D opts` and `-O3` come before the starting points.
+  let k = 0;
+  while (k < argv.length && /^-([HLP]|O\d*|D)$/.test(argv[k])) k += argv[k] === "-D" ? 2 : 1;
   const starts: string[] = [];
-  for (const a of argv) {
+  for (const a of argv.slice(k)) {
     if (a.startsWith("-") || a === "(" || a === "!") break;
     starts.push(a);
   }
   if (starts.length === 0) starts.push(".");
   const stage = { ...s, cmd: "find -delete" };
-  const narrowing = narrowingFilters(argv, actionAt);
-  if (narrowing.includes(true)) {
+  // Every action must be narrowed: `-name foo -delete -o -delete` deletes everything else too.
+  const narrowing = actions.length > FIND_MAX_ACTIONS ? [] : actions.map((at) => narrowingFilters(argv, at, value));
+  if (narrowing.length > 0 && narrowing.every((n) => n.includes(true))) {
     // A filter narrows what goes, but not where: a start inside a protected directory, or a filter
     // that names a protected file outright, still deletes it. A filter on the other side of `-o`
     // (`-path ./.git -prune -o ...`) keeps what it names.
     const named: string[] = [];
-    for (let i = 0; i < actionAt; i++) {
-      if (!narrowing[i]) continue;
+    for (let i = 0; i < argv.length; i++) {
+      if (!narrowing.some((n) => n[i])) continue;
       const v = argv[i + 1] ?? "";
       if (/^-i?name$/.test(argv[i]) && !/[*?[]/.test(v)) append(named, starts.map((st) => `${st.replace(/[\\/]+$/, "")}/${v}`));
       if (/^-i?(path|wholename)$/.test(argv[i]) && !/[*?[]/.test(v)) named.push(v);

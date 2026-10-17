@@ -1,0 +1,11 @@
+{
+  "name": "npx with --loglevel before -c running rm -rf .claude is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "npx --loglevel silent -c 'rm -rf .claude'"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

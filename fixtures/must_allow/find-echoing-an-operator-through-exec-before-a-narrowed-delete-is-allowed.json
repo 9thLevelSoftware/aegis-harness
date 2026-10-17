@@ -1,0 +1,11 @@
+{
+  "name": "find echoing an operator through -exec before a narrowed -delete is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . -name '*.log' -exec echo -o \\; -delete"
+    }
+  },
+  "near": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-019"
+}
