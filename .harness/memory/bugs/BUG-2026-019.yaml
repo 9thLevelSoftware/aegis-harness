@@ -44,6 +44,13 @@ source:
       <main>/sub/.codex/hooks.json, never the worktree's); Claude Code 2.1.302's Monitor tool runs
       tool_input.command in the background, "uses the same permission rules as Bash", and runs it
       through Git Bash on Windows.
+  - kind: session
+    date: 2026-10-17
+    note: >-
+      An adversarial review of that fix ran the second list under impact through dist/guard.mjs
+      and got allow for each. pwsh 7 treats its first positional word as -File and powershell.exe
+      as -Command, and both accept any unambiguous prefix of a parameter name; pnpm documents -c
+      and --shell-mode as one option of exec and dlx.
 root_cause: >-
   The README told people to paste JSON into settings files. Whether the hook then ran depended on
   rules the README did not know: which files each agent loads and from which directory, what makes
@@ -53,7 +60,13 @@ root_cause: >-
   agent could run to take the hook out through ah itself. The first fix for that knew three
   spellings of the CLI; the hook-config classifier measured paths from the session's start
   directory while ah init wires the git top level (and Codex reads a worktree's main checkout);
-  and normalize.ts routed Monitor, a shell tool, to the other-tools path.
+  and normalize.ts routed Monitor, a shell tool, to the other-tools path. The second fix still
+  read inline code only as one quoted string, pwsh only with an exact -File, and launcher options
+  only in their commonest spelling; and two parser gaps older than ah init hid any command from
+  every rule: the stage splitter cut `if ...; then cmd; fi` at `;` and left the command behind a
+  reserved word, and PowerShell statements (`$null = cmd`, `{ }` blocks, `( )` groups) were never
+  looked inside. Stripping `.ps1` from every command name, done to see `ah.ps1`, made project
+  scripts named after system commands (`scripts\shutdown.ps1`) read as those commands.
 impact: >-
   Found while building ah init, before ah was published: the README matcher missed Workflow; a
   Codex entry inserted at the top would have untrusted the user's own hooks; a settings file with
@@ -69,7 +82,25 @@ impact: >-
   `node -e "execSync(...)"`. From a session started in <top>/sub, `rm`, `rm -f` by absolute path,
   `mv`, `cp /dev/null`, `truncate -s0`, `: >`, `echo '{}' >` and `sed -i '/guard.mjs/d'` on
   ../.claude/settings.local.json all passed, and a Write or Edit of it only asked. A Monitor call
-  running `rm -rf ~/work` passed.
+  running `rm -rf ~/work` passed. The review of that fix found these still passed: inline Node
+  code with the command in a template literal (execSync and backticks) or the (file, [args]) form
+  (`spawnSync('ah', ['init', '--remove'])`, `execFileSync`); `pwsh ./ah.ps1 init --remove`,
+  `pwsh -NoProfile ./ah.ps1 ...` and `powershell -ExecutionPolicy Bypass .\ah.ps1 ...` without
+  -File, and -File:x or -Fi; `if true; then ah init --remove; fi`, `for ...; do ...; done`, `! cmd`,
+  case items, function bodies (also `if true; then rm -rf /home/dev; fi`, while the plain command
+  was denied); PowerShell `$null = ah init --remove`, `if ($true) { ... }`, `try { ... } catch {}`,
+  `1 | % { ... }`, `Invoke-Command -ScriptBlock { ... }`, `Start-Job { ... }`, `@(...)` (also
+  `$null = Remove-Item -Recurse -Force C:\Users\dev`); `pnpm exec --shell-mode '...'`;
+  `Start-Process ah -ArgumentList @('init','--remove')` or `('init','--remove')`; literal text piped
+  into a shell, `'ah init --remove' | iex`, `echo '...' | Invoke-Expression`, `echo '...' | sh`;
+  clustered or joined code flags, `node -pe`, `node --eval=`, `python3 -Ic`, `perl -le`, `ruby -we`
+  (also `node -pe` running `rm -rf`); `Invoke-Expression -Command:'...'` and `-Comm`, `env -iS`,
+  `bun --cwd . run ah`, `npm exec --workspace web -- ah`, `deno run npm:@9thlevel/aegis@0.0.1`,
+  `corepack pnpm ah`, `cmd /c call ah ...` and `cmd /c start /b ah ...` (and
+  `cmd /c start /b rmdir /s /q C:\Users\dev`); and from a session rooted inside a hook directory
+  (`<top>/.codex`, `<top>/.claude`, `<top>/.husky`) `rm hooks.json` or a Write of
+  settings.local.json. Meanwhile `.\scripts\shutdown.ps1`, `.\scripts\format.ps1 C:` and
+  `.\tools\git.ps1 push --force` were refused as if they were the system commands.
 countermeasure:
   kind: test
   ref:
@@ -87,8 +118,8 @@ countermeasure:
     through each hook command as its agent would run it. CI runs both from the installed package on
     Linux and with paths containing spaces on Windows. shell.hook-tamper now also denies
     `ah init --remove`, `--uninstall` and `--ask-fallback warn` run by the agent; `--dry-run` passes.
-    After the review: the rule knows ah by its bin names and bundle file (`ah`, `aegis`, `ah.mjs`,
-    with `.ps1` stripped like `.cmd`), run directly, by node, bun or deno, by `pwsh -File`, or by
+    After the review: the rule knows ah by its bin names, its `ah.ps1` shim and its bundle file
+    (`ah`, `aegis`, `ah.mjs`), run directly, by node, bun or deno, by pwsh or powershell, or by
     `pnpm`/`yarn [run]` as a local bin; the parser skips package-manager options before
     exec/dlx, drops npm's `--`, reads `npx -c`/`npm exec --call`/`pnpm exec -c` as a shell
     command line, splices `env -S` into the command, and reads `iex`, `Invoke-Expression` and
@@ -96,12 +127,32 @@ countermeasure:
     ah/aegis/ah.mjs `init` with a weakening flag is denied. The project-level hook files
     (hookConfigPaths, anchored at each directory) in every ancestor of the project root are hook
     configuration, compared lexically with no git call and case-insensitively on Windows; in a
-    linked worktree the guard reads the .git file once per process and protects the main
-    checkout's twin of the project root and its ancestors too. Monitor with a string command is a
-    shell call in the POSIX dialect. Still beyond any deny-list: variable indirection
-    (`A=ah; $A init --remove`, `$(which ah) init --remove`) and arbitrary interpreter programs
-    that build the command at run time; the hook wiring is the boundary, and changing it stays the
-    user's call.
+    linked worktree the guard reads the .git file once per process and protects the main checkout's
+    twin of the project root and its ancestors too. Monitor with a string command is a shell call in
+    the POSIX dialect. After the second review: the inline-code match takes backticks and an argv
+    array after the program; pwsh/powershell options are read as the host reads them (prefixes,
+    `-Name:value`, the values of valued options, the first positional word as the script or command,
+    with every word after it); the parser drops sh's reserved words, case patterns and function
+    headers before a command, PowerShell's `$x =` assignments, and parses PowerShell `( )`, `@( )`
+    and `{ }` blocks, cmd `( )` blocks, sh subshells, redirected `{ }` groups and process
+    substitutions wherever they stand; `--shell-mode` reads like `-c`; Start-Process unwraps an
+    `@( )`/`( )` argument array; echo/printf/Write-Output text, a bare PowerShell string, or a `<<<`
+    here-string fed to sh, bash, iex, Invoke-Expression or pwsh's stdin is parsed as a command line
+    in that shell's dialect; `-pe`, `-Ic`, `--eval=` and glued code count as inline code; iex takes
+    -Command by prefix and colon form, env splits `-iS`, runners skip
+    --workspace/--prefix/--dir/--filter/--cwd, bun skips --cwd and deno --config, an `npm:`
+    specifier loses its @version, corepack is a wrapper, and cmd's `call` and `start` (title and /b
+    /wait /min options) are unwrapped. `.ps1` is matched only in ah's own names (`ah.ps1`,
+    `aegis.ps1`); every other `.ps1` script keeps its name. The ancestor hook layers also apply to
+    paths inside the project, so a session rooted in `<top>/.codex` cannot remove hooks.json; for
+    those paths only layers below the home directory count, so a project inside ~/.codex (Codex's
+    worktrees) is not made of hook files. Rules now also see commands inside loops and blocks, so
+    `for d in dist/*; do rm -rf "$d"; done` asks like `rm -rf "$d"` does. Still beyond any
+    deny-list: variable indirection (`A=ah; $A init --remove`, `$(which ah) init --remove`,
+    `$s = '...'; iex $s`), arbitrary interpreter programs that build the command at run time, and
+    text that is transformed on its way into a shell (`echo ... | tee log | sh`, `| sed ... | sh`,
+    PowerShell here-strings); the hook wiring is the boundary, and changing it stays the user's
+    call.
 must_block_fixture: fixtures/must_block/ah-init-remove-run-by-the-agent-is-denied.json
 must_allow_fixture: fixtures/must_allow/ah-init-remove-dry-run-only-prints-the-plan-and-is-allowed.json
 expiry_policy: "re-check the facts in source whenever Claude Code or Codex changes its hook or settings documentation; ah doctor's checks follow them"
