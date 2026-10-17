@@ -1,0 +1,14 @@
+{
+  "name": "Edit adding a Playwright conditional skip is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "e2e/login.spec.ts",
+      "old_string": "test('login', async ({ page }) => {",
+      "new_string": "test.skip(({ browserName }) => browserName === 'webkit', 'no webkit');\n\ntest('login', async ({ page }) => {",
+      "replace_all": false
+    }
+  },
+  "near": "edit.test-skip",
+  "source": "BUG-2026-017"
+}

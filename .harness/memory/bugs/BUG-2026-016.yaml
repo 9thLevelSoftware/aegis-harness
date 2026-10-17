@@ -1,0 +1,46 @@
+incident_id: BUG-2026-016
+date_recorded: 2026-10-16
+status: mitigated
+title: The pre-publish review found one-token bypasses the fixture corpus did not cover
+observed_on: process (aegis-harness, review of commit 96a851c before the first npm publish)
+source:
+  - kind: session
+    note: >-
+      six independent review lenses (bypass, code correctness, false positives, hook contract,
+      packaging, docs) probed dist/guard.mjs with about 3,000 synthetic hook payloads; every
+      finding was reproduced through the built guard and verified by three further readers
+      before it was accepted
+  - kind: session
+    note: >-
+      a second pass against the fixed build, by the same method, found nine more one-token
+      variants around the changed code (a negated or trailing find filter, `bash -c --`, the
+      hidden-file globs `.[!.]*` and `.??*`, `--dry-run=none`, `if: false # comment`, `cp -r
+      ~/.ssh`, a command chained after a shell apply_patch) and two regressions the first round
+      had introduced; a third pass over those fixes found eight more siblings (`-name '?*'`,
+      `-prune -o -delete`, `.[!.]?*`, `$env:USERPROFILE\.ssh`, `env FOO=1 apply_patch`). All
+      were fixed in the same change, which is why the countermeasure is a probe pass and not a
+      longer fixture list
+root_cause: >-
+  The rules, the parser and the fixtures were written from the blueprint by the same hand, so
+  each fixture encoded the spelling the author had in mind and nothing probed the neighbours.
+  One-token variants slipped past: `find . -type f -delete` (any filter cancelled the check),
+  `rm -rf /home/dev/project/*` (the glob form of the root was not the root), `bash -euo pipefail
+  -c '...'` (the `-o` value ended the flag scan), a backslash line continuation (a phantom
+  newline token), `require("fs").rmSync(...)` (only `fs.` tokens counted), `mv .git /tmp/x`
+  (only the destination was classified), Git Bash `/c/Users/...` paths on Windows (never mapped
+  to the drive form), and a Codex `apply_patch` arriving through the shell tool.
+impact: >-
+  Published as it was, v0 would have let an agent wipe the project root, move hook
+  configuration away, or write under `.harness/` with ordinary spellings, while the README's
+  table said those calls were denied.
+countermeasure:
+  kind: process
+  ref: CONTRIBUTING.md#before-a-release
+  change: >-
+    Every bypass became a must_block or must_ask fixture before its fix, with a must_allow
+    neighbour for the spelling that must keep working. A release candidate gets an adversarial
+    probe pass (bypass, false positive, hook contract) against the built guard before
+    `npm publish`; its findings become fixtures first and code second.
+must_block_fixture: fixtures/must_block/find-type-f-delete-is-denied.json
+must_allow_fixture: fixtures/must_allow/find-type-d-empty-delete-is-allowed.json
+expiry_policy: "re-evaluate on the next major model upgrade"

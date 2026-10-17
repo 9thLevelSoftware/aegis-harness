@@ -1,0 +1,14 @@
+{
+  "name": "Edit of a test calling model.fit is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "src/model.test.ts",
+      "old_string": "const m = new Model();",
+      "new_string": "const m = new Model();\nm.fit(X, y);\nexpect(m.score(X, y)).toBeGreaterThan(0.9);",
+      "replace_all": false
+    }
+  },
+  "near": "edit.test-only",
+  "source": "BUG-2026-017"
+}

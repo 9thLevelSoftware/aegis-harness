@@ -1,0 +1,14 @@
+{
+  "name": "Edit adding a short-mode t.Skip is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "pkg/foo_test.go",
+      "old_string": "func TestIntegration(t *testing.T) {",
+      "new_string": "func TestIntegration(t *testing.T) {\n\tif testing.Short() {\n\t\tt.Skip(\"short mode\")\n\t}",
+      "replace_all": false
+    }
+  },
+  "near": "edit.test-skip",
+  "source": "BUG-2026-017"
+}

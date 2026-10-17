@@ -1,0 +1,13 @@
+{
+  "name": "shutdown /a (abort a pending shutdown) is allowed (Codex, Windows)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "shutdown /a"
+    }
+  },
+  "near": "shell.system-power",
+  "source": "BUG-2026-017"
+}

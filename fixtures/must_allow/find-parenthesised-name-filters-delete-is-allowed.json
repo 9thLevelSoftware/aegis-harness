@@ -1,0 +1,11 @@
+{
+  "name": "find . \\( -name '*.pyc' -o -name '*.pyo' \\) -delete is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . \\( -name '*.pyc' -o -name '*.pyo' \\) -delete"
+    }
+  },
+  "near": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-016"
+}

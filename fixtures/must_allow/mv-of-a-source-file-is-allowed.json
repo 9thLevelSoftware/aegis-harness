@@ -1,0 +1,11 @@
+{
+  "name": "mv src/old.ts src/new.ts is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mv src/old.ts src/new.ts"
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-016"
+}

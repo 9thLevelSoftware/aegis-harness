@@ -1,0 +1,13 @@
+{
+  "name": "rm -rf /c/Users/dev/project/dist is allowed (Claude Code, Windows Git Bash)",
+  "agent": "claude",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf /c/Users/dev/project/dist"
+    }
+  },
+  "near": "shell.rm-outside-project",
+  "source": "BUG-2026-017"
+}

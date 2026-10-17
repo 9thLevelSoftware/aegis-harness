@@ -1,0 +1,11 @@
+{
+  "name": "git switch -c feature/new is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git switch -c feature/new"
+    }
+  },
+  "near": "shell.git-discard-file",
+  "source": "BUG-2026-016"
+}

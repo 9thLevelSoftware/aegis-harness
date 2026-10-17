@@ -12,11 +12,12 @@ import {
   TEST_SKIPS,
   UNTARGETED_SUPPRESSIONS,
   added,
-  count,
   gateScripts,
+  occurrences,
+  stripComments,
 } from "./content.ts";
 
-const HARNESS_REMEDIATION = "`.harness/` is owned by ah. Record incidents with `ah bug add`, change phases with `ah phase set`, and change rules in a reviewed commit.";
+const HARNESS_REMEDIATION = "`.harness/` is owned by ah. Record incidents with `ah bug add --rule <rule> --title \"...\"`; rules change in a reviewed commit, not from a session.";
 const LINT_REMEDIATION = "Fix the violation in the source file instead. If the rule itself is wrong, say so to the user and record it with `ah bug add`; the config changes in a reviewed commit, not mid-task.";
 const TEST_CONFIG_REMEDIATION = "Fix the failing test or the code under test instead. If the runner configuration is really wrong, explain why to the user and change it in a reviewed commit.";
 const HOOK_REMEDIATION = "Hook wiring is how this project enforces its rules. Leave it as it is and tell the user if a hook is blocking legitimate work.";
@@ -58,7 +59,7 @@ function pathDecision(call: WriteCall | EditCall, info: PathInfo, before: string
     case "ci-config":
       if (added(CI_WEAKENERS, before, after).length > 0) {
         const what = added(CI_WEAKENERS, before, after).map((p) => p.id).join(", ");
-        return deny("edit.ci-gate-weakened", `${shown}: adds ${what}`, "A CI step that is allowed to fail is not a gate. Fix what fails, or ask the user before relaxing CI.");
+        return deny("edit.ci-gate-weakened", `${shown}: adds ${what}`, "A CI step that is allowed to fail, or that never runs, is not a gate. Fix what fails, or ask the user before relaxing CI.");
       }
       return ask("edit.ci-config", `${shown} is a CI definition`, "CI changes need a human to confirm they do not weaken a gate.");
     case "compiler-config":
@@ -83,8 +84,9 @@ function pathDecision(call: WriteCall | EditCall, info: PathInfo, before: string
 
 function manifestDecision(call: WriteCall | EditCall, info: PathInfo, before: string, after: string): Decision {
   const shown = info.rel ?? info.abs;
-  const touched = call.kind === "write" ? after : `${before}\n${after}`;
-  const sections = MANIFEST_LINT_SECTIONS.filter((p) => count(p.re, touched) > 0);
+  // Comments cannot configure a linter, so a comment that names a section does not count.
+  const touched = stripComments(call.kind === "write" ? after : `${before}\n${after}`);
+  const sections = MANIFEST_LINT_SECTIONS.filter((p) => occurrences(p, touched) > 0);
   if (sections.length > 0) {
     return deny("edit.manifest-lint-section", `${shown}: edit touches ${sections.map((s) => s.id).join(", ")}`, LINT_REMEDIATION);
   }
@@ -134,11 +136,14 @@ function contentDecisions(info: PathInfo, before: string, after: string): Decisi
   }
 
   if (info.isTestFile) {
-    const skips = added(TEST_SKIPS, before, after);
+    // A skip or focus named in a comment changes nothing; a skip under a visible condition is a platform guard, not a deleted test.
+    const beforeCode = stripComments(before);
+    const afterCode = stripComments(after);
+    const skips = added(TEST_SKIPS, beforeCode, afterCode);
     if (skips.length > 0) {
-      out.push(deny("edit.test-skip", `${shown}: adds ${skips.map((p) => p.id).join(", ")}`, "A skipped test is a deleted test. Fix it or delete it in a reviewed commit, and record why with `ah bug add`."));
+      out.push(deny("edit.test-skip", `${shown}: adds ${skips.map((p) => p.id).join(", ")}`, "An unconditional skip is a deleted test. Fix it or delete it in a reviewed commit, and record why with `ah bug add`. A skip that depends on the platform or environment belongs under a visible condition (`if testing.Short()`, `test.skip(condition, reason)`, `@pytest.mark.skipif`)."));
     }
-    const focus = added(TEST_FOCUS, before, after);
+    const focus = added(TEST_FOCUS, beforeCode, afterCode);
     if (focus.length > 0) {
       out.push(deny("edit.test-only", `${shown}: adds ${focus.map((p) => p.id).join(", ")}`, "`.only` silently disables every other test in the file. Run a single test from the command line instead (for example `vitest run -t <name>`)."));
     }

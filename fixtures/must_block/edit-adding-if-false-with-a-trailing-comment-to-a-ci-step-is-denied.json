@@ -1,0 +1,14 @@
+{
+  "name": "Edit adding if: false # temp to a CI test step is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": ".github/workflows/ci.yml",
+      "old_string": "      - run: npm test",
+      "new_string": "      - run: npm test\n        if: false # temp",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.ci-gate-weakened",
+  "source": "BUG-2026-016"
+}

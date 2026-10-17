@@ -1,0 +1,16 @@
+{
+  "name": "Edit of /c/Users/dev/project/src/foo.ts is allowed (Claude Code, Windows Git Bash)",
+  "agent": "claude",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "/c/Users/dev/project/src/foo.ts",
+      "old_string": "const retries = 1;",
+      "new_string": "const retries = 3;",
+      "replace_all": false
+    }
+  },
+  "near": "edit.outside-project",
+  "source": "BUG-2026-017"
+}

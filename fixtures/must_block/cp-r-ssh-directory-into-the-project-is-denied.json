@@ -1,0 +1,11 @@
+{
+  "name": "cp -r ~/.ssh . is denied (the whole key store is copied into the project)",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp -r ~/.ssh ."
+    }
+  },
+  "rule": "shell.credential-read",
+  "source": "BUG-2026-016"
+}

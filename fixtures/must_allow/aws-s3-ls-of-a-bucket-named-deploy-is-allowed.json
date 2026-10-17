@@ -1,0 +1,11 @@
+{
+  "name": "aws s3 ls s3://my-deploy-bucket/ is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "aws s3 ls s3://my-deploy-bucket/"
+    }
+  },
+  "near": "shell.deploy-or-publish",
+  "source": "BUG-2026-017"
+}

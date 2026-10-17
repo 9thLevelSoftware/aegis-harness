@@ -1,8 +1,8 @@
 /**
  * `ah guard`: the PreToolUse hook process. Reads one payload from stdin,
  * decides, prints the agent's response, exits 0. Malformed input exits 1 with
- * a message on stderr; agents treat that as a non-blocking hook error. Set the
- * hook's `onFailure: "block"` (Claude Code) to fail closed instead.
+ * a message on stderr; Claude Code treats that as a non-blocking hook error
+ * unless the hook sets `onFailure: "block"` (v2.1.295 or later), which fails closed.
  */
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -44,7 +44,10 @@ export function buildContext(event: HookEvent, o: GuardOptions, env: NodeJS.Proc
   const projectRoot = o.root ?? env.AH_PROJECT_ROOT ?? env.CLAUDE_PROJECT_DIR ?? event.cwd ?? process.cwd();
   const homeDir = o.home ?? env.AH_HOME ?? (platform === "windows" ? (env.USERPROFILE ?? homedir()) : (env.HOME ?? homedir()));
   const agent = o.agent ?? event.agent;
-  const shellDialect = platform === "windows" && agent === "codex" ? "powershell" : "posix";
+  // The dialect follows the tool: Claude Code's PowerShell tool is PowerShell on any
+  // platform; Codex on Windows runs commands through PowerShell; everything else
+  // (Bash, Claude Code on Windows under Git Bash) is POSIX sh.
+  const shellDialect = event.toolName === "PowerShell" || (platform === "windows" && agent === "codex") ? "powershell" : "posix";
   return { projectRoot, homeDir, platform, shellDialect, policy: DEFAULT_POLICY };
 }
 

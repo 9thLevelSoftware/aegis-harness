@@ -1,0 +1,11 @@
+{
+  "name": "az repos pr create is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "az repos pr create --title x"
+    }
+  },
+  "near": "shell.deploy-or-publish",
+  "source": "BUG-2026-017"
+}

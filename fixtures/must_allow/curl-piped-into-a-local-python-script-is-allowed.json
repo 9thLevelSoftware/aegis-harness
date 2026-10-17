@@ -1,0 +1,11 @@
+{
+  "name": "curl | python3 scripts/import.py is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -s https://x/data.csv | python3 scripts/import.py"
+    }
+  },
+  "near": "shell.pipe-to-shell",
+  "source": "BUG-2026-017"
+}

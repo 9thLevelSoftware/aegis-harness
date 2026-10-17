@@ -1,0 +1,6 @@
+{
+  "name": "rm -rf \"$(git rev-parse --show-toplevel)/.git\" is denied",
+  "payload": { "tool_name": "Bash", "tool_input": { "command": "rm -rf \"$(git rev-parse --show-toplevel)/.git\"" } },
+  "rule": "shell.rm-git-dir",
+  "source": "BUG-2026-016"
+}

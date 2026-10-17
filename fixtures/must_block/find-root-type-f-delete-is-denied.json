@@ -1,0 +1,11 @@
+{
+  "name": "find / -type f -delete is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find / -type f -delete"
+    }
+  },
+  "rule": "shell.rm-recursive-root",
+  "source": "BUG-2026-016"
+}

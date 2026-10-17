@@ -1,0 +1,17 @@
+{
+  "name": "Codex argv env FOO=1 apply_patch adding a file under .harness is denied",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "shell",
+    "tool_input": {
+      "command": [
+        "env",
+        "FOO=1",
+        "apply_patch",
+        "*** Begin Patch\n*** Add File: .harness/metrics.jsonl\n+{}\n*** End Patch"
+      ]
+    }
+  },
+  "rule": "edit.harness-dir",
+  "source": "BUG-2026-018"
+}

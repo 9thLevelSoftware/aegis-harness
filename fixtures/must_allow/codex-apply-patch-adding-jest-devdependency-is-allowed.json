@@ -1,0 +1,12 @@
+{
+  "name": "Codex apply_patch adding a jest devDependency is allowed",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "apply_patch",
+    "tool_input": {
+      "command": "*** Begin Patch\n*** Update File: package.json\n@@\n   \"devDependencies\": {\n+    \"jest\": \"^29.7.0\",\n     \"typescript\": \"^5.9.3\"\n*** End Patch"
+    }
+  },
+  "near": "edit.manifest-lint-section",
+  "source": "BUG-2026-017"
+}

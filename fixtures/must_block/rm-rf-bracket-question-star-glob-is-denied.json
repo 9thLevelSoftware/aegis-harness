@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf .[!.]?* is denied (the canonical hidden-file wipe)",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf .[!.]?*"
+    }
+  },
+  "rule": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-016"
+}

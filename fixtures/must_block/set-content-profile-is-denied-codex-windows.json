@@ -1,0 +1,13 @@
+{
+  "name": "Set-Content -Path $PROFILE is denied (Codex, Windows)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "Set-Content -Path $PROFILE -Value 'x'"
+    }
+  },
+  "rule": "shell.write-home-config",
+  "source": "BUG-2026-016"
+}

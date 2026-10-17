@@ -1,0 +1,14 @@
+{
+  "name": "Edit mentioning it.skip in a comment is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "src/foo.test.ts",
+      "old_string": "it('keeps order', () => {",
+      "new_string": "// it.skip( would be wrong here\nit('keeps order', () => {",
+      "replace_all": false
+    }
+  },
+  "near": "edit.test-skip",
+  "source": "BUG-2026-017"
+}

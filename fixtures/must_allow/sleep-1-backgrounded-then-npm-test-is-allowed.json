@@ -1,0 +1,13 @@
+{
+  "name": "sleep 1& npm test (backgrounded without a space) is allowed",
+  "agent": "claude",
+  "platform": "posix",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sleep 1& npm test"
+    }
+  },
+  "near": "shell.rm-recursive-root",
+  "source": "BUG-2026-016"
+}

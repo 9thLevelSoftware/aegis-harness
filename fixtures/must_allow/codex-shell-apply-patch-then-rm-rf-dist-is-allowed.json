@@ -1,0 +1,16 @@
+{
+  "name": "Codex apply_patch through the shell tool followed by rm -rf dist is allowed (the trailing command is inspected and passes)",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "shell",
+    "tool_input": {
+      "command": [
+        "bash",
+        "-lc",
+        "apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: src/new.ts\n+export const x = 1;\n*** End Patch\nEOF\nrm -rf dist"
+      ]
+    }
+  },
+  "near": "shell.rm-recursive-root",
+  "source": "BUG-2026-018"
+}

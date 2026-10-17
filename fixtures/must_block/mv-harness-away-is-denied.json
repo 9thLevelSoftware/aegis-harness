@@ -1,0 +1,11 @@
+{
+  "name": "mv .harness /tmp/x is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mv .harness /tmp/x"
+    }
+  },
+  "rule": "shell.write-harness",
+  "source": "BUG-2026-016"
+}

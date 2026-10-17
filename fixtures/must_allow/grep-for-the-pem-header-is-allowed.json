@@ -1,0 +1,11 @@
+{
+  "name": "Grep for the PEM header is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "grep -rn -- '-----BEGIN PRIVATE KEY-----' src/"
+    }
+  },
+  "near": "shell.secret-literal",
+  "source": "BUG-2026-017"
+}

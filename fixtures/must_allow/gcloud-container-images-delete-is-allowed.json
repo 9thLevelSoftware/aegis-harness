@@ -1,0 +1,11 @@
+{
+  "name": "gcloud container images delete of one tag is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gcloud container images delete gcr.io/x/web:old"
+    }
+  },
+  "near": "shell.remote-destroy",
+  "source": "BUG-2026-017"
+}

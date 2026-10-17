@@ -6,8 +6,11 @@ import { runTestHooks } from "./test-hooks.ts";
 const HELP = `ah ${VERSION}: a PreToolUse guard for Codex and Claude Code.
 
 Usage:
-  ah guard [--agent claude|codex] [--output claude|codex] [--root DIR] [--ask-fallback deny|warn]
+  ah guard [--agent claude|codex] [--output claude|codex] [--root DIR] [--home DIR] [--platform posix|windows]
+           [--ask-fallback deny|warn] [--no-log]
       Read one hook payload on stdin, print the agent's decision. Wire this as a PreToolUse hook.
+      --no-log skips the .harness/metrics.jsonl line. Env: AH_PROJECT_ROOT, AH_HOME, AH_PLATFORM override
+      the defaults; CLAUDE_PROJECT_DIR is honoured as the project root.
   ah test-hooks [--fixtures DIR] [--guard FILE] [--in-process] [--budget-ms N] [--filter TEXT] [--json]
       Run every must_block / must_allow / must_ask fixture through the guard. Exits 1 on any miss.
   ah bug add --rule RULE --title TEXT [--command TEXT] [--agent NAME] [--observed-on TEXT]
@@ -50,6 +53,11 @@ export async function main(argv: readonly string[]): Promise<number> {
 }
 
 export function cliEntry(): void {
+  // `ah rules | head -1`: the reader closes early; that is not an error worth a stack trace.
+  process.stdout.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EPIPE") process.exit(0);
+    throw err;
+  });
   main(process.argv.slice(2)).then(
     (code) => {
       process.exitCode = code;

@@ -20,8 +20,10 @@ function parseArgs(argv: readonly string[]): BugAddOptions {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const v = () => argv[++i] ?? "";
-    if (a === "--rule") o.rule = v();
-    else if (a === "--title") o.title = v();
+    if (a === "--rule") {
+      const r = v();
+      if (r !== "" && r !== "none") o.rule = r; // `--rule none`: no rule is close, record is kind: process
+    } else if (a === "--title") o.title = v();
     else if (a === "--command") o.command = v();
     else if (a === "--agent") o.agent = v();
     else if (a === "--observed-on") o.observedOn = v();

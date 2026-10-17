@@ -1,0 +1,11 @@
+{
+  "name": "cp ~/.gnupg/pubring.kbx . is allowed (public keys)",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp ~/.gnupg/pubring.kbx ."
+    }
+  },
+  "near": "shell.credential-read",
+  "source": "BUG-2026-016"
+}

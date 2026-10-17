@@ -1,0 +1,13 @@
+{
+  "name": "rm -rf ${TMPDIR:-/tmp}/ah-test is allowed",
+  "agent": "claude",
+  "platform": "posix",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf \"${TMPDIR:-/tmp}/ah-test\""
+    }
+  },
+  "near": "shell.rm-unresolved-variable",
+  "source": "BUG-2026-017"
+}

@@ -1,0 +1,14 @@
+{
+  "name": "Edit of a PEM detector naming the header is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "src/crypto.ts",
+      "old_string": "export function isPrivateKey(s: string) {",
+      "new_string": "const PEM_HEADER = '-----BEGIN RSA PRIVATE KEY-----';\n\nexport function isPrivateKey(s: string) {",
+      "replace_all": false
+    }
+  },
+  "near": "edit.secret-literal",
+  "source": "BUG-2026-017"
+}

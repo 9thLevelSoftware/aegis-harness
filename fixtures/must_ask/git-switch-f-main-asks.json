@@ -1,0 +1,11 @@
+{
+  "name": "git switch -f main asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git switch -f main"
+    }
+  },
+  "rule": "shell.git-discard-file",
+  "source": "BUG-2026-016"
+}

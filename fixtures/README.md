@@ -23,8 +23,16 @@ A fixture:
 }
 ```
 
-Defaults: `cwd` is `/home/dev/project` (or `C:\Users\dev\project`), `home` is `/home/dev`
-(or `C:\Users\dev`). Paths in fixtures are never a real person's machine; `npm run check:hygiene` enforces that.
+Optional fields:
+
+- `expect`: `"deny"`, `"allow"` or `"ask"`. Redundant with the directory and must agree with it;
+  a fixture whose `expect` contradicts its directory is rejected when the corpus loads.
+- `cwd`: the project root the guard is given (`--root`). Defaults to `/home/dev/project`
+  (or `C:\Users\dev\project` when `platform` is `windows`).
+- `home`: the home directory (`--home`). Defaults to `/home/dev` (or `C:\Users\dev`).
+
+Paths in fixtures are never a real person's machine: only `/home/dev`, `/Users/dev`,
+`C:\Users\dev` and `/tmp`; `npm run check:hygiene` enforces that.
 
 Rules of the corpus, enforced by `tests/fixtures.test.ts`:
 

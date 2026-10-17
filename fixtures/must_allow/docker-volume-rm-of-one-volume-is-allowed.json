@@ -1,0 +1,11 @@
+{
+  "name": "docker volume rm pgdata is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "docker volume rm pgdata"
+    }
+  },
+  "near": "shell.docker-destroy",
+  "source": "BUG-2026-017"
+}

@@ -12,8 +12,10 @@ const PATTERNS = [
   { re: /claude-0\//, why: "cloud session scratchpad" },
   { re: /\bD:[\\/](?!$)/, why: "maintainer drive letter" },
   { re: /C:[\\/]+Users[\\/]+(?![\\/])(?!dev\b|[^\\/"' ]+[\\/]+AppData|\$)/i, why: "a real Windows user profile (fixtures use C:\\Users\\dev)" },
-  { re: /\/Users\/(?!dev\b)[a-z][a-z0-9_.-]*[\\/]/, why: "a real macOS home directory (fixtures use /Users/dev)" },
-  { re: /\/home\/(?!dev\b|user\b|runner\b|[^\\/"' ]+\/\.(?:ssh|aws|npmrc|netrc|bashrc)\b)[a-z][a-z0-9_.-]*[\\/]/, why: "a real Linux home directory (fixtures use /home/dev)" },
+  // Case-insensitive: macOS homes are usually capitalised (`/Users/John`), and `dev`,
+  // `user` and `runner` stay allowed in any case.
+  { re: /\/Users\/(?!dev\b)[a-z][a-z0-9_.-]*[\\/]/i, why: "a real macOS home directory (fixtures use /Users/dev)" },
+  { re: /\/home\/(?!dev\b|user\b|runner\b|[^\\/"' ]+\/\.(?:ssh|aws|npmrc|netrc|bashrc)\b)[a-z][a-z0-9_.-]*[\\/]/i, why: "a real Linux home directory (fixtures use /home/dev)" },
 ];
 
 const SKIP = /^(node_modules|dist)\//;

@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf \"$(pwd)\"/dist is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf \"$(pwd)\"/dist"
+    }
+  },
+  "near": "shell.rm-unresolved-variable",
+  "source": "BUG-2026-016"
+}

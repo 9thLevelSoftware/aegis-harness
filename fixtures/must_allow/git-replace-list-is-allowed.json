@@ -1,0 +1,11 @@
+{
+  "name": "git replace --list is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git replace --list"
+    }
+  },
+  "near": "shell.git-rewrite-history",
+  "source": "BUG-2026-017"
+}

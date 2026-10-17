@@ -1,0 +1,11 @@
+{
+  "name": "aws deploy list-deployments is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "aws deploy list-deployments"
+    }
+  },
+  "near": "shell.deploy-or-publish",
+  "source": "BUG-2026-017"
+}

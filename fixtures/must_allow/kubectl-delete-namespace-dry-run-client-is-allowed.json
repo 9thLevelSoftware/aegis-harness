@@ -1,0 +1,6 @@
+{
+  "name": "kubectl delete namespace prod --dry-run=client is allowed (a real dry run)",
+  "payload": { "tool_name": "Bash", "tool_input": { "command": "kubectl delete namespace prod --dry-run=client" } },
+  "near": "shell.remote-destroy",
+  "source": "BUG-2026-017"
+}

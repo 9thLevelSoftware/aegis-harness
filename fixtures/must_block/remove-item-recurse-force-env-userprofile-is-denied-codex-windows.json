@@ -1,0 +1,13 @@
+{
+  "name": "Remove-Item -Recurse -Force $env:USERPROFILE is denied (Codex, Windows)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "Remove-Item -Recurse -Force $env:USERPROFILE"
+    }
+  },
+  "rule": "shell.rm-recursive-home",
+  "source": "BUG-2026-016"
+}

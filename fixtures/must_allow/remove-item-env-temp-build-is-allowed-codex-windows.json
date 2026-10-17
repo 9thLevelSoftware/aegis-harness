@@ -1,0 +1,13 @@
+{
+  "name": "Remove-Item -Recurse -Force $env:TEMP\\build is allowed (Codex, Windows)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "Remove-Item -Recurse -Force $env:TEMP\\build"
+    }
+  },
+  "near": "shell.rm-unresolved-variable",
+  "source": "BUG-2026-017"
+}

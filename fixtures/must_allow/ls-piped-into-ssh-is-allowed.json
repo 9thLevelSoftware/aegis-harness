@@ -1,0 +1,11 @@
+{
+  "name": "ls | ssh host cat is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ls | ssh host cat"
+    }
+  },
+  "near": "shell.credential-exfil",
+  "source": "BUG-2026-017"
+}

@@ -1,0 +1,14 @@
+{
+  "name": "Edit adding a bare t.Skip is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "pkg/foo_test.go",
+      "old_string": "func TestIntegration(t *testing.T) {",
+      "new_string": "func TestIntegration(t *testing.T) {\n\tt.Skip(\"flaky\")",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.test-skip",
+  "source": "BUG-2026-017"
+}

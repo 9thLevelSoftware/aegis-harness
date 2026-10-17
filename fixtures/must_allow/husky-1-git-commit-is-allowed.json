@@ -1,0 +1,11 @@
+{
+  "name": "HUSKY=1 git commit is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "HUSKY=1 git commit -m x"
+    }
+  },
+  "near": "shell.hook-bypass",
+  "source": "BUG-2026-017"
+}

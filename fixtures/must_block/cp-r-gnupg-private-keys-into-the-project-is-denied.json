@@ -1,0 +1,11 @@
+{
+  "name": "cp -r ~/.gnupg/private-keys-v1.d . is denied (the GnuPG secret-key directory)",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp -r ~/.gnupg/private-keys-v1.d ."
+    }
+  },
+  "rule": "shell.credential-read",
+  "source": "BUG-2026-016"
+}

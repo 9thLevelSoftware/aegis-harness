@@ -1,0 +1,11 @@
+{
+  "name": "mv .husky /tmp/x is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mv .husky /tmp/x"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-016"
+}

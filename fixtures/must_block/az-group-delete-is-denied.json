@@ -1,0 +1,11 @@
+{
+  "name": "az group delete is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "az group delete -n prod-rg"
+    }
+  },
+  "rule": "shell.remote-destroy",
+  "source": "BUG-2026-017"
+}

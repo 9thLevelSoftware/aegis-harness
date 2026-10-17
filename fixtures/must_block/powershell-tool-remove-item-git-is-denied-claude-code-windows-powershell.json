@@ -1,0 +1,13 @@
+{
+  "name": "PowerShell tool: Remove-Item -Recurse -Force on .git is denied (Claude Code, Windows)",
+  "agent": "claude",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Remove-Item -Recurse -Force C:\\Users\\dev\\project\\.git"
+    }
+  },
+  "rule": "shell.rm-git-dir",
+  "source": "BUG-2026-018"
+}

@@ -56,8 +56,8 @@ test("an always-allow guard binary fails the real corpus end to end", { skip: !b
   assert.match(r.stdout, /FAIL subprocess/);
 });
 
-test("the real corpus passes end to end", { skip: !built && "run npm run build first" }, () => {
-  const r = spawnSync(process.execPath, [cli, "test-hooks", "--fixtures", fixturesDir, "--json"], { encoding: "utf8" });
+test("the real corpus passes in-process (npm run test:hooks is the end-to-end run with the budget)", { skip: !built && "run npm run build first" }, () => {
+  const r = spawnSync(process.execPath, [cli, "test-hooks", "--fixtures", fixturesDir, "--in-process", "--json"], { encoding: "utf8" });
   assert.equal(r.status, 0, r.stdout);
   const j = JSON.parse(r.stdout);
   assert.equal(j.summary.failures, 0);

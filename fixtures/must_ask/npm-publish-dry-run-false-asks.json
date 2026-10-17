@@ -1,0 +1,6 @@
+{
+  "name": "npm publish --dry-run=false asks (an explicit false is a real publish)",
+  "payload": { "tool_name": "Bash", "tool_input": { "command": "npm publish --dry-run=false" } },
+  "rule": "shell.deploy-or-publish",
+  "source": "BUG-2026-016"
+}

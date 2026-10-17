@@ -1,0 +1,13 @@
+{
+  "name": "npm test after a quoted ) inside $( ) is allowed",
+  "agent": "claude",
+  "platform": "posix",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo $(echo ')') && npm test"
+    }
+  },
+  "near": "shell.rm-recursive-root",
+  "source": "BUG-2026-016"
+}

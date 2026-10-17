@@ -1,0 +1,6 @@
+{
+  "name": "rm -rf \"$(git rev-parse --show-toplevel)/dist\" is allowed (a literal sub-path follows the substitution)",
+  "payload": { "tool_name": "Bash", "tool_input": { "command": "rm -rf \"$(git rev-parse --show-toplevel)/dist\"" } },
+  "near": "shell.rm-unresolved-variable",
+  "source": "BUG-2026-017"
+}

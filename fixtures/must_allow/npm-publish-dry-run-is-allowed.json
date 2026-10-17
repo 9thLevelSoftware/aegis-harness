@@ -1,0 +1,11 @@
+{
+  "name": "npm publish --dry-run is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "npm publish --dry-run"
+    }
+  },
+  "near": "shell.deploy-or-publish",
+  "source": "BUG-2026-017"
+}

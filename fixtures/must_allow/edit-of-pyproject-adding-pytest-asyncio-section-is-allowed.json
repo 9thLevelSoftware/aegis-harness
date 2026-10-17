@@ -1,0 +1,14 @@
+{
+  "name": "Edit of pyproject.toml adding a pytest-asyncio section is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "pyproject.toml",
+      "old_string": "[tool.poetry]",
+      "new_string": "[tool.poetry]\n\n[tool.pytest-asyncio]\nmode = \"auto\"",
+      "replace_all": false
+    }
+  },
+  "near": "edit.manifest-lint-section",
+  "source": "BUG-2026-017"
+}

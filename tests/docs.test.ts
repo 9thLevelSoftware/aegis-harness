@@ -4,6 +4,7 @@
  * bug records and README point at exist.
  */
 import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,7 @@ import { test } from "node:test";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const readme = readFileSync(resolve(root, "README.md"), "utf8");
+const guard = resolve(root, "dist/guard.mjs");
 
 test("README is under 300 lines", () => {
   const lines = readme.split("\n").length;
@@ -33,6 +35,19 @@ test("local links in the README resolve", () => {
   }
 });
 
-test("there is no plans directory", () => {
-  for (const d of ["plans", ".planning", "docs/plans"]) assert.ok(!existsSync(resolve(root, d)), `${d}/ exists; design reasoning belongs in .harness/memory/bugs/ and commit messages`);
+test("there is no plans directory, under any name or nesting", () => {
+  const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8" }).split("\0").filter(Boolean);
+  const offenders = tracked.filter((p) => p.split("/").slice(0, -1).some((seg) => /^(plans|planning|\.planning|roadmaps?)$/i.test(seg)));
+  assert.deepEqual(offenders, [], `plans directory exists (${offenders.join(", ")}); design reasoning belongs in .harness/memory/bugs/ and commit messages`);
+});
+
+test("the README's sample deny is what the built guard prints for rm -rf /", { skip: !existsSync(guard) && "run npm run build first" }, () => {
+  const block = /^```\n(\[ah guard\] denied by [\s\S]*?)\n```$/m.exec(readme);
+  assert.ok(block, "README opens with a fenced [ah guard] denied by ... block");
+  const payload = { hook_event_name: "PreToolUse", session_id: "t", cwd: "/home/dev/project", tool_name: "Bash", tool_input: { command: "rm -rf /" } };
+  const r = spawnSync(process.execPath, [guard, "--agent", "claude", "--root", "/home/dev/project", "--home", "/home/dev", "--platform", "posix", "--no-log"], { input: JSON.stringify(payload), encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  const printed = JSON.parse(r.stdout).hookSpecificOutput.permissionDecisionReason as string;
+  const norm = (s: string) => s.split("\n").map((l) => l.trimEnd()).join("\n").trim();
+  assert.equal(norm(block![1]), norm(printed));
 });

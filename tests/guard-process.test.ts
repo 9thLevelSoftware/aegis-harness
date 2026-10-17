@@ -42,7 +42,7 @@ test("per-call latency budget", { skip: !built && "run npm run build first" }, (
   // BUG-2026-003: clodex declined tool hooks because "each hook starts a
   // process, which would slow every tool call". This is the measurement that
   // answers it. Budget is p95 over 25 calls on a representative payload.
-  const budget = Number(process.env.AH_LATENCY_BUDGET_MS ?? 150);
+  const budget = Number(process.env.AH_LATENCY_BUDGET_MS ?? (process.platform === "win32" ? 400 : 150));
   const payload = JSON.stringify({ hook_event_name: "PreToolUse", session_id: "t", cwd: "/home/dev/project", tool_name: "Bash", tool_input: { command: "git fetch origin && git rebase origin/main && npm test -- --reporter dot" } });
   const samples: number[] = [];
   run(JSON.parse(payload)); // warm the OS file cache once; the agent's second call sees this state too

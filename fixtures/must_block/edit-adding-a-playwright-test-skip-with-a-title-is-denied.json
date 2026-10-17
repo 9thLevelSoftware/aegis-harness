@@ -1,0 +1,14 @@
+{
+  "name": "Edit adding a Playwright test.skip with a title is denied",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "e2e/x.spec.ts",
+      "old_string": "test('login works', async () => {})",
+      "new_string": "test.skip('login works', async () => {})",
+      "replace_all": false
+    }
+  },
+  "rule": "edit.test-skip",
+  "source": "BUG-2026-017"
+}

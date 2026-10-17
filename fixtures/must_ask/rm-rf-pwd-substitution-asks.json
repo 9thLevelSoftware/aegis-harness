@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf $(pwd) asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf $(pwd)"
+    }
+  },
+  "rule": "shell.rm-unresolved-variable",
+  "source": "BUG-2026-016"
+}
