@@ -15,11 +15,16 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { delimiter, join, relative } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { upsertBlock } from "../src/wiring/text-block.ts";
 import { agentsBlockLines, AGENTS_BLOCK_BODY } from "../src/wiring/agents-md.ts";
 import { writeAtomic } from "../src/wiring/files.ts";
 import { claudeMdState, planInstructions, rootTextLinks, type InstructionEdit } from "../src/wiring/instructions.ts";
 import { excludeLocally, fromGitPath, gitTopLevel, mainCheckoutRoot, symlinkCheckedOutAsText } from "../src/wiring/project.ts";
+import { init } from "../src/cli/init.ts";
+import { doctor } from "../src/cli/doctor.ts";
+
+const guard = fileURLToPath(new URL("../dist/guard.mjs", import.meta.url));
 
 function git(cwd: string, ...args: string[]): string {
   const r = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -155,6 +160,41 @@ test("with AGENTS.md a text link, Claude Code gets the block in a CLAUDE.local.m
     assert.equal(claudeMdState(imported.root, imported.home).target, join(imported.root, "CLAUDE.md"), "the import brings in the link's one line, not a block");
   } finally {
     imported.done();
+  }
+});
+
+test("ah init keeps the instruction files it makes for a text link out of git, --remove takes them out again, and doctor names the link", { skip: !existsSync(guard) && "run npm run build first" }, () => {
+  const c = checkout({ "CLAUDE.md": "# Team\n" }, { "AGENTS.md": "CLAUDE.md" });
+  try {
+    mkdirSync(c.home);
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: c.home, USERPROFILE: c.home, CODEX_HOME: join(c.home, ".codex") };
+    delete env.CLAUDE_CONFIG_DIR;
+    delete env.CLAUDE_PROJECT_DIR;
+    const o = { agents: ["claude", "codex"] as ("claude" | "codex")[], root: c.root, scope: "local" as const, remove: false, dryRun: false, failClosed: false, noLog: false, instructions: true, json: false, guard };
+    const exclude = join(c.root, ".git", "info", "exclude");
+    const r = init(o, env);
+    assert.ok(r.ok, r.error);
+    const git_ = r.changes.filter((ch) => ch.agent === "git");
+    assert.deepEqual(git_.map((ch) => [relative(c.root, ch.file), ch.action]), [[join(".claude", "settings.local.json"), "excluded"], [join(".codex", "hooks.json"), "excluded"], ["AGENTS.override.md", "excluded"]]);
+    assert.match(git_[2].detail, /stands in for a symlink this checkout has as plain text/);
+    assert.ok(readFileSync(exclude, "utf8").split("\n").includes("/AGENTS.override.md"));
+    assert.equal(git(c.root, "status", "--porcelain", "--", "AGENTS.override.md"), "", "git does not offer the override for a commit");
+    assert.ok(init(o, env).changes.every((ch) => ch.agent !== "git"), "a second run leaves the exclude file alone");
+
+    const d = doctor({ agents: ["claude", "codex"], root: c.root, json: false }, env, { probe: (name) => ({ found: true, stdout: name === "claude" ? "2.1.302 (Claude Code)\n" : "codex-cli 0.163.0\n" }), featuresList: () => "hooks stable true\n" });
+    const link = d.checks.find((ch) => ch.agent === "project" && ch.level === "warn");
+    assert.match(link?.title ?? "", /^AGENTS\.md is a symlink to "CLAUDE\.md" checked out as a plain file holding its target/);
+    assert.match(link?.fix ?? "", /git config core\.symlinks true/);
+    assert.ok(d.checks.some((ch) => ch.agent === "codex" && ch.level === "ok" && /AGENTS\.override\.md carries the guard's instructions/.test(ch.title)), JSON.stringify(d.checks));
+
+    const off = init({ ...o, remove: true }, env);
+    assert.ok(off.ok, off.error);
+    assert.equal(existsSync(join(c.root, "AGENTS.override.md")), false);
+    assert.ok(off.changes.some((ch) => ch.agent === "git" && ch.action === "removed" && ch.file === join(c.root, "AGENTS.override.md")));
+    assert.ok(!readFileSync(exclude, "utf8").includes("ah init"), "every line ah added is gone");
+    assert.equal(readFileSync(join(c.root, "AGENTS.md"), "utf8"), "CLAUDE.md");
+  } finally {
+    c.done();
   }
 });
 

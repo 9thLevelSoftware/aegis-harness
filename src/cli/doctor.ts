@@ -17,7 +17,7 @@ import { atLeast, CLAUDE_MIN, CLAUDE_OPTIONAL_TOOLS, CLAUDE_REQUIRED_TOOLS, clau
 import { canaries, runCanary, type Launch } from "../wiring/canary.ts";
 import { canonical, CODEX_REQUIRED_TOOLS, codexConfigFiles, codexFileProblem, codexHome, codexHooksFiles, codexHooksList, codexLayers, codexMatcherCovers, codexRequirementsFile, parseCodexVersion, parseFeaturesHooks, type CodexListedHook, type CodexListing } from "../wiring/codex.ts";
 import { readJson, readText } from "../wiring/files.ts";
-import { blockIsCurrent, claudeMdState, CODEX_DOC_BUDGET } from "../wiring/instructions.ts";
+import { blockIsCurrent, claudeMdState, CODEX_DOC_BUDGET, rootTextLinks } from "../wiring/instructions.ts";
 import { entryWords, GUARD_FILE, guardArgs, isOwnedEntry, looksLikeGuard, splitWords } from "../wiring/owned.ts";
 import { defaultMachine, gitTopLevel, mainCheckoutRoot, readJsonQuiet, sharedAcrossWsl, type Machine } from "../wiring/project.ts";
 import { defaultGuardPath } from "./test-hooks.ts";
@@ -392,6 +392,7 @@ export function doctorClaude(m: Machine, probe: CliProbe, registry: PolicySource
     state = `unreadable (${(err as Error).message})`;
   }
   if (state === "current") add("ok", `${rel(m, target)} carries the guard's instructions for Claude Code`);
+  else if (s.target === null && (rootTextLinks(m.root).some((l) => l.path === target) || (s.present.length > 0 && s.present.every((p) => s.textLinks.some((l) => l.path === p))))) add("warn", `Claude Code gets none of the guard's instructions: ${s.reason}`, symlinkFix(m, s.textLinks[0]?.path ?? target));
   else add("warn", `${rel(m, target)}: the guard's instructions are ${state}${s.target !== null && s.present.length === 0 ? ` (${s.reason})` : ""}`, "re-run `ah init`");
   if (s.suppressing.length === 0 && atLeast(version, CLAUDE_MIN.agentsMd) === false) add("warn", `Claude Code reads AGENTS.md from ${CLAUDE_MIN.agentsMd}; this version does not`, "update Claude Code");
   return out;
@@ -506,7 +507,9 @@ export function doctorCodex(m: Machine, probe: CliProbe, featuresList: string | 
     const where = rel(m, o.file);
     const e = o.entry;
     const cmd = m.os === "win32" && typeof e.commandWindows === "string" ? e.commandWindows : (e.command as string);
-    const words = splitWords(cmd);
+    // Read commandWindows the way ah wrote it (PowerShell quoting), as isOwnedEntry does.
+    const forms = entryWords(e);
+    const words = (cmd === e.commandWindows ? forms.at(-1) : forms[0]) ?? splitWords(cmd);
     const args = guardArgs(words) ?? [];
     const agentAt = args.indexOf("--agent");
     if (agentAt >= 0 && args[agentAt + 1] !== "codex") add("fail", `${where}: the ah entry runs the guard with --agent ${args[agentAt + 1]}; Codex payloads need --agent codex`, "re-run `ah init --agents codex`");
@@ -606,10 +609,17 @@ function codexInstructions(m: Machine, projectTrust: unknown): Check[] {
   }
   if (out.length === 0) {
     const file = readText(join(m.root, "AGENTS.override.md")).text !== null ? join(m.root, "AGENTS.override.md") : join(m.root, "AGENTS.md");
-    out.push({ agent: "codex", level: "warn", title: stale ?? `${rel(m, file)}: the guard's instructions are missing`, fix: "re-run `ah init`" });
+    // ah writes nothing into a text link, so re-running it cannot fix one Codex reads.
+    if (file.endsWith("AGENTS.override.md") && rootTextLinks(m.root).some((l) => l.path === file)) out.push({ agent: "codex", level: "warn", title: `${rel(m, file)} is a symlink checked out as plain text, and Codex reads its one line in place of AGENTS.md, so Codex gets none of the guard's instructions`, fix: symlinkFix(m, file) });
+    else out.push({ agent: "codex", level: "warn", title: stale ?? `${rel(m, file)}: the guard's instructions are missing`, fix: "re-run `ah init`" });
   }
   if (projectTrust === "untrusted") out.push({ agent: "codex", level: "warn", title: "Codex does not read a project's AGENTS.md while the project is marked untrusted" });
   return out;
+}
+
+/** How to turn a symlink that git checked out as a plain file back into a link. */
+function symlinkFix(m: Machine, file: string): string {
+  return `check it out as a real symlink: \`git config core.symlinks true\` (Windows allows symlinks in Developer Mode), then \`git checkout -- ${rel(m, file)}\`, and re-run \`ah init\``;
 }
 
 // ---------------------------------------------------------------------------
@@ -646,6 +656,10 @@ export function doctor(o: DoctorOptions, env: NodeJS.ProcessEnv = process.env, d
     checks.push(...doctorCodex(m, p, p.found ? deps.featuresList(m.root) : null, p.found ? (deps.codexListing?.(m.root) ?? null) : null));
   }
   if (!existsSync(join(m.root, ".harness"))) checks.push({ agent: "project", level: "info", title: "no .harness/ directory, so denies and asks are not logged to .harness/metrics.jsonl", fix: "`ah init` creates it" });
+  for (const l of rootTextLinks(m.root)) {
+    const target = l.target.trim();
+    checks.push({ agent: "project", level: "warn", title: `${rel(m, l.path)} is a symlink${target === "" || target.length > 120 ? "" : ` to ${JSON.stringify(target)}`} checked out as a plain file holding its target, so agents read that one line instead of the file it names, and ah writes nothing into it`, fix: symlinkFix(m, l.path) });
+  }
   return { ok: !checks.some((c) => c.level === "fail"), root: m.root, checks };
 }
 

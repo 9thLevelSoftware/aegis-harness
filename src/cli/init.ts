@@ -158,7 +158,8 @@ export function init(o: InitOptions, env: NodeJS.ProcessEnv = process.env): Init
   const changes: Change[] = [];
   const next: string[] = [];
   const writes: Write[] = [];
-  const localFiles: string[] = [];
+  /** Files for this checkout alone, kept out of git: hook files hold this machine's paths, and an instruction file can stand in for a text link. */
+  const localFiles: { path: string; kind: "hook" | "instructions" }[] = [];
   let failed = false;
   const fail = (agent: Change["agent"], file: string, detail: string) => {
     changes.push({ agent, file, action: "error", detail });
@@ -224,13 +225,15 @@ export function init(o: InitOptions, env: NodeJS.ProcessEnv = process.env): Init
         const text = empty && !keep ? null : editJson(source, plan.value, style);
         writes.push({ path: t.path, text, original: read.exists ? read.text : null });
       }
-      if (!o.remove && t.local) localFiles.push(t.path);
+      if (!o.remove && t.local) localFiles.push({ path: t.path, kind: "hook" });
     } catch (err) {
       if (!(err instanceof HookShapeError)) throw err;
       fail(t.agent, t.path, err.message);
     }
   }
 
+  /** Instruction files --remove deletes that ah kept out of git. */
+  const unexcluded: string[] = [];
   if (o.instructions) {
     try {
       // On --remove, an agent that stays wired keeps the instructions it reads.
@@ -238,6 +241,8 @@ export function init(o: InitOptions, env: NodeJS.ProcessEnv = process.env): Init
       for (const e of planInstructions(root, o.agents, o.remove, keep)) {
         if (o.remove && e.edit.action === "absent") continue;
         changes.push({ agent: "instructions", file: e.path, action: e.edit.action === "absent" ? "unchanged" : e.edit.action, detail: e.why });
+        if (e.local && !o.remove) localFiles.push({ path: e.path, kind: "instructions" });
+        if (e.local && o.remove && e.edit.text === null) unexcluded.push(e.path);
         if (e.edit.action === "unchanged" || e.edit.action === "absent") continue;
         const keep = e.edit.text === null && (isSymlink(e.path) || gitStatusOf(e.path) === "tracked");
         writes.push({ path: e.path, text: keep ? "" : e.edit.text, original: e.original });
@@ -265,14 +270,16 @@ export function init(o: InitOptions, env: NodeJS.ProcessEnv = process.env): Init
       }
     }
     for (const f of localFiles) {
-      const r = excludeLocally(f, o.dryRun);
-      if (r === "excluded") changes.push({ agent: "git", file: f, action: "excluded", detail: "added to .git/info/exclude: it holds this machine's paths" });
-      if (r === "tracked") changes.push({ agent: "git", file: f, action: "skipped", detail: "tracked by git, so the next commit carries this machine's node and guard paths; use --scope user or untrack it" });
+      const r = excludeLocally(f.path, o.dryRun);
+      const hook = f.kind === "hook";
+      if (r === "excluded") changes.push({ agent: "git", file: f.path, action: "excluded", detail: hook ? "added to .git/info/exclude: it holds this machine's paths" : "added to .git/info/exclude: it stands in for a symlink this checkout has as plain text, so it is for this checkout alone" });
+      if (r === "tracked") changes.push({ agent: "git", file: f.path, action: "skipped", detail: hook ? "tracked by git, so the next commit carries this machine's node and guard paths; use --scope user or untrack it" : "tracked by git, so the next commit carries the block ah wrote for this checkout alone; untrack it, or check the symlinks out as real ones (git config core.symlinks true, which Windows allows in Developer Mode) and re-run `ah init`" });
+      if (r === "unmapped") changes.push({ agent: "git", file: f.path, action: "skipped", detail: "git named its .git/info/exclude by a path ah cannot place (an MSYS2 or Cygwin git without cygpath), so this file is not kept out of commits; add it to that file by hand" });
     }
     if (o.remove) {
       // The exclude lines go once the file they cover is gone; a file that keeps your own settings stays excluded.
       const local = [...(o.agents.includes("claude") ? [claudeFileFor(m, "local")] : []), ...(o.agents.includes("codex") ? [codexHooksFile(m, "local")] : [])];
-      for (const f of local) {
+      for (const f of [...local, ...unexcluded]) {
         const gone = writes.some((w) => w.path === f && w.text === null) || (!existsSync(f) && !writes.some((w) => w.path === f));
         if (gone && unexcludeLocally(f, o.dryRun)) changes.push({ agent: "git", file: f, action: "removed", detail: "took its line out of .git/info/exclude" });
       }

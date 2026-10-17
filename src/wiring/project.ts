@@ -139,7 +139,9 @@ function existingDir(d: string): string | null {
   return null;
 }
 
-const EXCLUDE_NOTE = "# machine-local hook wiring written by ah init";
+const EXCLUDE_NOTE = "# machine-local file written by ah init";
+/** What the note said before ah kept instruction files out of git too. */
+const OLD_EXCLUDE_NOTE = "# machine-local hook wiring written by ah init";
 
 interface InRepo {
   /** The nearest existing directory above the file; git runs there. */
@@ -213,7 +215,8 @@ export function unexcludeLocally(file: string, dryRun: boolean): boolean {
   const out: string[] = [];
   let found = false;
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].replace(/\r$/, "") === EXCLUDE_NOTE && lines[i + 1]?.replace(/\r$/, "") === line) {
+    const note = lines[i].replace(/\r$/, "");
+    if ((note === EXCLUDE_NOTE || note === OLD_EXCLUDE_NOTE) && lines[i + 1]?.replace(/\r$/, "") === line) {
       found = true;
       i++;
       continue;
