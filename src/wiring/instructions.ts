@@ -21,7 +21,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { agentsBlockLines, AGENTS_BLOCK_BODY } from "./agents-md.ts";
 import { readText } from "./files.ts";
-import { symlinkCheckedOutAsText } from "./project.ts";
+import { excludedByAh, symlinkCheckedOutAsText } from "./project.ts";
 import { blockEndByte, readBlock, removeBlock, upsertBlock, type BlockEdit } from "./text-block.ts";
 
 export interface InstructionEdit {
@@ -369,15 +369,32 @@ export function rootTextLinks(root: string): TextLink[] {
   });
 }
 
-/** `home` is the user's home directory, whose .claude/CLAUDE.md is user memory and does not count. */
-export function claudeMdState(root: string, home: string = homedir()): ClaudeMdState {
+/**
+ * The stand-ins ah made for text links (AGENTS.override.md, CLAUDE.local.md
+ * holding only ah's block and kept out of git by ah's own exclude line) once
+ * no instruction file at the root is a text link any more: each now hides
+ * AGENTS.md from the agent that reads it in its place.
+ */
+export function staleStandIns(root: string, links: TextLink[] = rootTextLinks(root)): string[] {
+  if (links.length > 0) return [];
+  return [join(root, "AGENTS.override.md"), join(root, "CLAUDE.local.md")].filter((p) => {
+    const t = readText(p).text;
+    return t !== null && ahsOwn(t, p) && excludedByAh(p);
+  });
+}
+
+/**
+ * `home` is the user's home directory, whose .claude/CLAUDE.md is user memory
+ * and does not count. `gone` names files to treat as already deleted.
+ */
+export function claudeMdState(root: string, home: string = homedir(), gone: readonly string[] = []): ClaudeMdState {
   const agents = join(root, "AGENTS.md");
   const memory = join(resolve(home), ".claude", "CLAUDE.md");
   const suppressing: ClaudeMdFile[] = [];
   for (let dir = resolve(root); ; dir = dirname(dir)) {
     for (const c of CLAUDE_MD_CANDIDATES) {
       const path = join(dir, c);
-      if (isFile(path) && path !== memory && !same(path, memory)) suppressing.push({ dir, path });
+      if (isFile(path) && path !== memory && !same(path, memory) && !gone.includes(path)) suppressing.push({ dir, path });
     }
     if (dirname(dir) === dir) break;
   }
@@ -437,6 +454,7 @@ function placeBlock(original: string | null, file: string, codex: boolean): { ed
 }
 
 const UNLINKED = "a symlink checked out as plain text: ah's block comes out, so it holds just the link's target again";
+const STALE_STAND_IN = "ah made this file while a symlink was checked out as plain text, and none is any more; it holds only ah's block, and left in place it would hide AGENTS.md from the agent that reads it instead, so it goes";
 
 /**
  * Take a block an older ah wrote out of a text link. When the rest is the
@@ -467,6 +485,11 @@ export function planInstructions(root: string, agents: readonly string[], remove
   const links = rootTextLinks(root);
   const agentsLink = links.find((l) => l.path === agentsPath);
   const overrideLink = links.find((l) => l.path === overridePath);
+  const stale = staleStandIns(root, links);
+  for (const p of stale) {
+    const t = readText(p).text;
+    out.push({ path: p, original: t, edit: removeBlock(t, p), why: STALE_STAND_IN, local: true });
+  }
   if (agentsLink === undefined) {
     const a = readText(agentsPath).text;
     const placed = placeBlock(a, agentsPath, codex);
@@ -484,7 +507,7 @@ export function planInstructions(root: string, agents: readonly string[], remove
     const why = "AGENTS.override.md is a symlink checked out as plain text, which ah does not write into, and Codex reads it in place of AGENTS.md, so Codex gets no block here; check it out as a real symlink (git config core.symlinks true, which Windows allows in Developer Mode, then git checkout -- AGENTS.override.md) and re-run `ah init`";
     out.push({ path: overridePath, original: o, edit: removed ? edit : { text: o, action: "unchanged" }, why: removed ? `${UNLINKED}; ${why}` : why });
   } else if (codex && !same(overridePath, agentsPath)) {
-    const o = readText(overridePath).text;
+    const o = stale.includes(overridePath) ? null : readText(overridePath).text;
     if (o !== null || agentsLink !== undefined) {
       const placed = placeBlock(o, overridePath, true);
       const why =
@@ -496,7 +519,7 @@ export function planInstructions(root: string, agents: readonly string[], remove
     }
   }
   if (agents.includes("claude")) {
-    const s = claudeMdState(root);
+    const s = claudeMdState(root, homedir(), stale);
     if (s.target !== null) {
       const t = readText(s.target).text;
       // A CLAUDE.local.md that stands in for a text link; one of the user's own is theirs to keep or commit.

@@ -17,7 +17,7 @@ import { atLeast, CLAUDE_MIN, CLAUDE_OPTIONAL_TOOLS, CLAUDE_REQUIRED_TOOLS, clau
 import { canaries, runCanary, type Launch } from "../wiring/canary.ts";
 import { canonical, CODEX_REQUIRED_TOOLS, codexConfigFiles, codexFileProblem, codexHome, codexHooksFiles, codexHooksList, codexLayers, codexMatcherCovers, codexRequirementsFile, parseCodexVersion, parseFeaturesHooks, type CodexListedHook, type CodexListing } from "../wiring/codex.ts";
 import { readJson, readText } from "../wiring/files.ts";
-import { blockIsCurrent, claudeMdState, CODEX_DOC_BUDGET, rootTextLinks } from "../wiring/instructions.ts";
+import { blockIsCurrent, claudeMdState, CODEX_DOC_BUDGET, rootTextLinks, staleStandIns } from "../wiring/instructions.ts";
 import { entryWords, GUARD_FILE, guardArgs, isOwnedEntry, looksLikeGuard, splitWords } from "../wiring/owned.ts";
 import { defaultMachine, gitTopLevel, mainCheckoutRoot, readJsonQuiet, sharedAcrossWsl, type Machine } from "../wiring/project.ts";
 import { defaultGuardPath } from "./test-hooks.ts";
@@ -656,6 +656,9 @@ export function doctor(o: DoctorOptions, env: NodeJS.ProcessEnv = process.env, d
     checks.push(...doctorCodex(m, p, p.found ? deps.featuresList(m.root) : null, p.found ? (deps.codexListing?.(m.root) ?? null) : null));
   }
   if (!existsSync(join(m.root, ".harness"))) checks.push({ agent: "project", level: "info", title: "no .harness/ directory, so denies and asks are not logged to .harness/metrics.jsonl", fix: "`ah init` creates it" });
+  for (const p of staleStandIns(m.root)) {
+    checks.push({ agent: "project", level: "warn", title: `${rel(m, p)} is the stand-in ah made while a symlink was checked out as plain text; none is now, and it hides AGENTS.md from ${p.endsWith("AGENTS.override.md") ? "Codex" : "Claude Code"}`, fix: "re-run `ah init`, which removes it" });
+  }
   for (const l of rootTextLinks(m.root)) {
     const target = l.target.trim();
     checks.push({ agent: "project", level: "warn", title: `${rel(m, l.path)} is a symlink${target === "" || target.length > 120 ? "" : ` to ${JSON.stringify(target)}`} checked out as a plain file holding its target, so agents read that one line instead of the file it names, and ah writes nothing into it`, fix: symlinkFix(m, l.path) });

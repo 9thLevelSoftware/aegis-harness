@@ -198,6 +198,83 @@ test("ah init keeps the instruction files it makes for a text link out of git, -
   }
 });
 
+function initEnv(home: string): NodeJS.ProcessEnv {
+  mkdirSync(home, { recursive: true });
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home, CODEX_HOME: join(home, ".codex") };
+  delete env.CLAUDE_CONFIG_DIR;
+  delete env.CLAUDE_PROJECT_DIR;
+  return env;
+}
+const initOpts = (root: string, more: { agents?: ("claude" | "codex")[]; remove?: boolean } = {}) => ({ agents: more.agents ?? (["claude", "codex"] as ("claude" | "codex")[]), root, scope: "local" as const, remove: more.remove ?? false, dryRun: false, failClosed: false, noLog: false, instructions: true, json: false, guard });
+
+test("once the text link is a real file again, ah init takes its stand-ins out, and doctor says they hide AGENTS.md until then", { skip: !existsSync(guard) && "run npm run build first" }, () => {
+  const c = checkout({}, { "AGENTS.md": "CLAUDE.md" });
+  try {
+    const env = initEnv(c.home);
+    const exclude = join(c.root, ".git", "info", "exclude");
+    assert.ok(init(initOpts(c.root), env).ok);
+    const standIns = ["AGENTS.override.md", "CLAUDE.local.md"].map((p) => join(c.root, p));
+    for (const p of standIns) assert.ok(existsSync(p), p);
+    // The checkout is fixed: AGENTS.md is the team's real file now.
+    git(c.root, "rm", "-q", "--cached", "--", "AGENTS.md");
+    writeFileSync(join(c.root, "AGENTS.md"), "# Team\n");
+    git(c.root, "add", "--", "AGENTS.md");
+    const deps = { probe: (name: string) => ({ found: true, stdout: name === "claude" ? "2.1.302 (Claude Code)\n" : "codex-cli 0.163.0\n" }), featuresList: () => "hooks stable true\n" };
+    const before = doctor({ agents: ["claude", "codex"], root: c.root, json: false }, env, deps);
+    const warned = before.checks.filter((ch) => ch.agent === "project" && /is the stand-in ah made/.test(ch.title)).map((ch) => ch.title);
+    assert.equal(warned.length, 2, JSON.stringify(before.checks));
+    assert.match(warned.join("\n"), /AGENTS\.override\.md .* hides AGENTS\.md from Codex/);
+
+    const r = init(initOpts(c.root), env);
+    assert.ok(r.ok, r.error);
+    for (const p of standIns) assert.equal(existsSync(p), false, `${p} goes`);
+    assert.ok(readFileSync(join(c.root, "AGENTS.md"), "utf8").startsWith("# Team\n"), "the block goes in the real AGENTS.md");
+    assert.match(readFileSync(join(c.root, "AGENTS.md"), "utf8"), /ah:begin/);
+    const lines = readFileSync(exclude, "utf8").split("\n");
+    assert.ok(!lines.includes("/AGENTS.override.md") && !lines.includes("/CLAUDE.local.md"), "their exclude lines go with them");
+    assert.ok(lines.includes("/.codex/hooks.json"), "the hook file stays excluded");
+    assert.ok(!doctor({ agents: ["claude", "codex"], root: c.root, json: false }, env, deps).checks.some((ch) => /stand-in/.test(ch.title)));
+  } finally {
+    c.done();
+  }
+});
+
+test("--remove takes out the exclude line of a stand-in you already deleted", { skip: !existsSync(guard) && "run npm run build first" }, () => {
+  const c = checkout({ "CLAUDE.md": "# Team\n" }, { "AGENTS.md": "CLAUDE.md" });
+  try {
+    const env = initEnv(c.home);
+    assert.ok(init(initOpts(c.root, { agents: ["codex"] }), env).ok);
+    rmSync(join(c.root, "AGENTS.override.md"));
+    const off = init(initOpts(c.root, { agents: ["codex"], remove: true }), env);
+    assert.ok(off.ok, off.error);
+    assert.ok(off.changes.some((ch) => ch.agent === "git" && ch.action === "removed" && ch.file === join(c.root, "AGENTS.override.md")));
+    assert.ok(!readFileSync(join(c.root, ".git", "info", "exclude"), "utf8").includes("ah init"));
+  } finally {
+    c.done();
+  }
+});
+
+test("in a linked worktree, --remove keeps an exclude line another worktree's stand-in still needs", { skip: !existsSync(guard) && "run npm run build first" }, () => {
+  const c = checkout({ "CLAUDE.md": "# Team\n" }, { "AGENTS.md": "CLAUDE.md" });
+  try {
+    const env = initEnv(c.home);
+    git(c.root, "-c", "user.email=dev@example.com", "-c", "user.name=dev", "commit", "-q", "-m", "init");
+    const wt = join(c.root, "..", "wt");
+    git(c.root, "worktree", "add", "-q", wt);
+    git(wt, "config", "core.symlinks", "false");
+    assert.ok(init(initOpts(c.root, { agents: ["codex"] }), env).ok);
+    assert.ok(init(initOpts(wt, { agents: ["codex"] }), env).ok);
+    assert.ok(existsSync(join(wt, "AGENTS.override.md")) && existsSync(join(c.root, "AGENTS.override.md")));
+    const off = init(initOpts(wt, { agents: ["codex"], remove: true }), env);
+    assert.ok(off.ok, off.error);
+    assert.equal(existsSync(join(wt, "AGENTS.override.md")), false);
+    assert.ok(off.changes.some((ch) => ch.agent === "git" && ch.action === "unchanged" && /another worktree still has this file/.test(ch.detail)), JSON.stringify(off.changes));
+    assert.equal(git(c.root, "status", "--porcelain", "--", "AGENTS.override.md"), "", "the main checkout's stand-in is still out of git");
+  } finally {
+    c.done();
+  }
+});
+
 test("an AGENTS.override.md symlink checked out as text is left alone, and the plan says Codex gets no block", () => {
   const cases: Record<string, string>[] = [{ "AGENTS.override.md": "AGENTS.md" }, { "AGENTS.override.md": "AGENTS.md", "AGENTS.md": "CLAUDE.md" }];
   for (const links of cases) {

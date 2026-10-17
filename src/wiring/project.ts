@@ -200,16 +200,52 @@ export function excludeLocally(file: string, dryRun: boolean): "excluded" | "alr
   return "excluded";
 }
 
+/** True when `file` is kept out of git by a line excludeLocally wrote, so ah put it there. */
+export function excludedByAh(file: string): boolean {
+  const r = inRepo(file);
+  const current = r === null || r.excludePath === null ? null : readText(r.excludePath).text;
+  if (r === null || current === null) return false;
+  const line = excludeLine(r.fromTop);
+  const lines = current.split("\n").map((l) => l.replace(/\r$/, ""));
+  return lines.some((l, i) => (l === EXCLUDE_NOTE || l === OLD_EXCLUDE_NOTE) && lines[i + 1] === line);
+}
+
+/**
+ * True when another worktree of the repository has a file at `fromTop`. Every
+ * worktree reads the same .git/info/exclude, so a line one of them still
+ * needs stays.
+ */
+function otherWorktreeHas(r: InRepo, fromTop: string): boolean {
+  const top = gitTopLevel(r.dir);
+  const list = git(r.dir, ["worktree", "list", "--porcelain"]);
+  if (top === null || !list.ok) return false;
+  const here = canonical(top);
+  return list.raw
+    .split(/\r?\n/)
+    .filter((l) => l.startsWith("worktree "))
+    .map((l) => gitPath(r.dir, l.slice("worktree ".length)))
+    .some((wt) => wt !== null && canonical(wt) !== here && existsSync(join(wt, ...fromTop.split("/"))));
+}
+
+function canonical(p: string): string {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    return resolve(p);
+  }
+}
+
 /**
  * Take out the lines excludeLocally added for `file`, with the line break
  * after each, or, last in the file and without one, the break before them.
- * Returns true when there were some.
+ * Returns "removed" when there were some, "shared" when another worktree has
+ * the same file and so still needs them, else "none".
  */
-export function unexcludeLocally(file: string, dryRun: boolean): boolean {
+export function unexcludeLocally(file: string, dryRun: boolean): "removed" | "shared" | "none" {
   const r = inRepo(file);
-  if (r === null || r.excludePath === null) return false;
+  if (r === null || r.excludePath === null) return "none";
   const current = readText(r.excludePath).text;
-  if (current === null) return false;
+  if (current === null) return "none";
   const line = excludeLine(r.fromTop);
   const lines = current.split("\n");
   const out: string[] = [];
@@ -223,8 +259,10 @@ export function unexcludeLocally(file: string, dryRun: boolean): boolean {
     }
     out.push(lines[i]);
   }
-  if (found && !dryRun) writeAtomic(r.excludePath, out.join("\n"));
-  return found;
+  if (!found) return "none";
+  if (otherWorktreeHas(r, r.fromTop)) return "shared";
+  if (!dryRun) writeAtomic(r.excludePath, out.join("\n"));
+  return "removed";
 }
 
 /** Read a small JSON file, or undefined when it is missing or unreadable. Never throws. */

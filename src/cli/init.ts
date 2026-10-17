@@ -241,8 +241,8 @@ export function init(o: InitOptions, env: NodeJS.ProcessEnv = process.env): Init
       for (const e of planInstructions(root, o.agents, o.remove, keep)) {
         if (o.remove && e.edit.action === "absent") continue;
         changes.push({ agent: "instructions", file: e.path, action: e.edit.action === "absent" ? "unchanged" : e.edit.action, detail: e.why });
-        if (e.local && !o.remove) localFiles.push({ path: e.path, kind: "instructions" });
-        if (e.local && o.remove && e.edit.text === null) unexcluded.push(e.path);
+        if (e.local && e.edit.text !== null && !o.remove) localFiles.push({ path: e.path, kind: "instructions" });
+        if (e.local && e.edit.text === null) unexcluded.push(e.path);
         if (e.edit.action === "unchanged" || e.edit.action === "absent") continue;
         const keep = e.edit.text === null && (isSymlink(e.path) || gitStatusOf(e.path) === "tracked");
         writes.push({ path: e.path, text: keep ? "" : e.edit.text, original: e.original });
@@ -273,16 +273,24 @@ export function init(o: InitOptions, env: NodeJS.ProcessEnv = process.env): Init
       const r = excludeLocally(f.path, o.dryRun);
       const hook = f.kind === "hook";
       if (r === "excluded") changes.push({ agent: "git", file: f.path, action: "excluded", detail: hook ? "added to .git/info/exclude: it holds this machine's paths" : "added to .git/info/exclude: it stands in for a symlink this checkout has as plain text, so it is for this checkout alone" });
-      if (r === "tracked") changes.push({ agent: "git", file: f.path, action: "skipped", detail: hook ? "tracked by git, so the next commit carries this machine's node and guard paths; use --scope user or untrack it" : "tracked by git, so the next commit carries the block ah wrote for this checkout alone; untrack it, or check the symlinks out as real ones (git config core.symlinks true, which Windows allows in Developer Mode) and re-run `ah init`" });
+      if (r === "tracked") changes.push({ agent: "git", file: f.path, action: "skipped", detail: hook ? "tracked by git, so the next commit carries this machine's node and guard paths; use --scope user or untrack it" : "tracked by git, so the block ah wrote for this checkout alone goes into commits, and checkouts whose symlink works get it too; untrack it (`git rm --cached`)" });
       if (r === "unmapped") changes.push({ agent: "git", file: f.path, action: "skipped", detail: "git named its .git/info/exclude by a path ah cannot place (an MSYS2 or Cygwin git without cygpath), so this file is not kept out of commits; add it to that file by hand" });
     }
+    // The exclude lines go once the file they cover is gone; a file that keeps your own settings stays excluded.
+    // Instruction stand-ins count too, also when you deleted one yourself before --remove.
+    const local = !o.remove
+      ? []
+      : [
+          ...(o.agents.includes("claude") ? [claudeFileFor(m, "local"), join(root, "CLAUDE.local.md")] : []),
+          ...(o.agents.includes("codex") ? [codexHooksFile(m, "local"), join(root, "AGENTS.override.md")] : []),
+        ];
+    for (const f of new Set([...local, ...unexcluded])) {
+      const gone = writes.some((w) => w.path === f && w.text === null) || (!existsSync(f) && !writes.some((w) => w.path === f));
+      const r = gone ? unexcludeLocally(f, o.dryRun) : "none";
+      if (r === "removed") changes.push({ agent: "git", file: f, action: "removed", detail: "took its line out of .git/info/exclude" });
+      if (r === "shared") changes.push({ agent: "git", file: f, action: "unchanged", detail: "kept its line in .git/info/exclude, which every worktree shares: another worktree still has this file" });
+    }
     if (o.remove) {
-      // The exclude lines go once the file they cover is gone; a file that keeps your own settings stays excluded.
-      const local = [...(o.agents.includes("claude") ? [claudeFileFor(m, "local")] : []), ...(o.agents.includes("codex") ? [codexHooksFile(m, "local")] : [])];
-      for (const f of [...local, ...unexcluded]) {
-        const gone = writes.some((w) => w.path === f && w.text === null) || (!existsSync(f) && !writes.some((w) => w.path === f));
-        if (gone && unexcludeLocally(f, o.dryRun)) changes.push({ agent: "git", file: f, action: "removed", detail: "took its line out of .git/info/exclude" });
-      }
       if (!o.dryRun) removeEmptyDirs([...writes.filter((w) => w.text === null).map((w) => dirname(w.path)), join(root, ".harness")]);
     } else if (!o.dryRun) mkdirSync(join(root, ".harness"), { recursive: true });
   } catch (err) {

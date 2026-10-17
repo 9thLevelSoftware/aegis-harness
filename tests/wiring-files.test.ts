@@ -362,7 +362,7 @@ test("unexcludeLocally takes out exactly what excludeLocally put in, final newli
       for (const order of [files, [...files].reverse()]) {
         for (const f of files) assert.equal(excludeLocally(f, false), "excluded", JSON.stringify(before));
         for (const f of [".claude/settings.local.json", ".codex/hooks.json"]) assert.equal(spawnSync("git", ["check-ignore", "-q", "--no-index", f], { cwd: d }).status, 0, `${f} is ignored`);
-        for (const f of order) assert.equal(unexcludeLocally(f, false), true);
+        for (const f of order) assert.equal(unexcludeLocally(f, false), "removed");
         assert.equal(readFileSync(exclude, "utf8"), before, JSON.stringify(before));
       }
     } finally {
