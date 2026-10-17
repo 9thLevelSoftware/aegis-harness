@@ -93,7 +93,7 @@ jobs:
           node dist/ah.mjs doctor --root $proj --agents claude
           if ($LASTEXITCODE) { exit 1 }
           node dist/ah.mjs doctor --root $proj --agents codex --json > codex.json
-          node scripts/ci-doctor-codex.mjs codex.json --both-shells
+          node scripts/ci-doctor-codex.mjs codex.json --both-shells --form bare/quoted --hooks (Join-Path $proj ".codex/hooks.json")
           if ($LASTEXITCODE) { exit 1 }
           # Claude Code: node.exe itself under a spaced path, run in exec form.
           $proj2 = Join-Path $env:RUNNER_TEMP "ah proj 2"
@@ -102,4 +102,14 @@ jobs:
           node dist/ah.mjs init --root $proj2 --agents claude --node (Join-Path $dir "node.exe") --guard (Join-Path $dir "dist/guard.mjs")
           if ($LASTEXITCODE) { exit 1 }
           node dist/ah.mjs doctor --root $proj2 --agents claude
+          if ($LASTEXITCODE) { exit 1 }
+          # Codex: node.exe under the spaced path too, so commandWindows quotes the node
+          # path after its drive letter; both cmd.exe and PowerShell must run it.
+          $proj3 = Join-Path $env:RUNNER_TEMP "ah proj 3"
+          New-Item -ItemType Directory -Force $proj3 | Out-Null
+          git -C $proj3 init -q
+          node dist/ah.mjs init --root $proj3 --agents codex --node (Join-Path $dir "node.exe") --guard (Join-Path $dir "dist/guard.mjs")
+          if ($LASTEXITCODE) { exit 1 }
+          node dist/ah.mjs doctor --root $proj3 --agents codex --json > codex3.json
+          node scripts/ci-doctor-codex.mjs codex3.json --both-shells --form quoted/quoted --hooks (Join-Path $proj3 ".codex/hooks.json")
           if ($LASTEXITCODE) { exit 1 }
