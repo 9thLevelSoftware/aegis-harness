@@ -22,11 +22,13 @@ export interface ContentPattern {
 
 export const BLANKET_SUPPRESSIONS: readonly ContentPattern[] = [
   { id: "eslint-disable (file-wide)", re: /\/\*\s*eslint-disable\s*\*\/|\/\/\s*eslint-disable[ \t\r]*$/gm },
-  { id: "@ts-nocheck", re: /@ts-nocheck\b/g },
+  // TypeScript reads its directives in any case: `// @TS-NOCHECK` turns checking off too.
+  { id: "@ts-nocheck", re: /@ts-nocheck\b/gi },
   { id: "biome-ignore-all", re: /biome-ignore-all\b/g },
   { id: "pylint disable=all", re: /#\s*pylint:\s*(disable=all|skip-file)/gi },
   { id: "mypy ignore-errors", re: /#\s*mypy:\s*ignore-errors/g },
-  { id: "file-level noqa", re: /^[ \t]*#[ \t]*(ruff|flake8):[ \t]*noqa[ \t\r]*$/gim },
+  // ruff also honours `# ruff : noqa`, with a space before the colon.
+  { id: "file-level noqa", re: /^[ \t]*#[ \t]*(ruff|flake8)[ \t]*:[ \t]*noqa[ \t\r]*$/gim },
   { id: "crate-level allow", re: /#!\[allow\((clippy::all|warnings|unused)\)\]/g },
   { id: "allow(clippy::all)", re: /#\[allow\(clippy::all\)\]/g },
   { id: "SuppressWarnings(all)", re: /@SuppressWarnings\(\s*"all"\s*\)/g },
@@ -37,7 +39,7 @@ export const BLANKET_SUPPRESSIONS: readonly ContentPattern[] = [
 export const UNTARGETED_SUPPRESSIONS: readonly ContentPattern[] = [
   { id: "eslint-disable-line without a rule", re: /\/\/\s*eslint-disable-(next-)?line[ \t\r]*$/gm },
   { id: "eslint-disable for a whole file (one rule)", re: /\/\*\s*eslint-disable\s+[\w@/-]+/g },
-  { id: "@ts-ignore", re: /@ts-ignore\b/g },
+  { id: "@ts-ignore", re: /@ts-ignore\b/gi },
   { id: "bare noqa", re: /#\s*noqa[ \t\r]*$/gm },
   { id: "bare type: ignore", re: /#\s*type:\s*ignore[ \t\r]*$/gm },
   { id: "biome-ignore for a whole category", re: /biome-ignore\s+lint\s*:/g },
@@ -87,7 +89,8 @@ function guarded(id: string, re: RegExp): ContentPattern {
 }
 
 export const TEST_SKIPS: readonly ContentPattern[] = [
-  { id: ".skip(", re: new RegExp(String.raw`\b(it|test|describe|suite|context|bench)\.skip\s*\(` + UNCONDITIONAL_FIRST_ARG, "g") },
+  // `it.skip.each(table)` skips every row; `it.concurrent.skip(...)` is the same skip.
+  { id: ".skip(", re: new RegExp(String.raw`\b(it|test|describe|suite|context|bench)(?:\.(?:concurrent|sequential))?\.skip(?:\.each\s*[(\x60]|\s*\(` + UNCONDITIONAL_FIRST_ARG + ")", "g") },
   { id: "xit/xtest/xdescribe", re: /\bx(it|test|describe|context)\s*\(/g },
   { id: "test.fixme", re: new RegExp(String.raw`\btest\.fixme\s*\(` + UNCONDITIONAL_FIRST_ARG, "g") },
   { id: "@pytest.mark.skip", re: /@pytest\.mark\.skip\b(?!if)/g },
@@ -101,7 +104,7 @@ export const TEST_SKIPS: readonly ContentPattern[] = [
 ];
 
 export const TEST_FOCUS: readonly ContentPattern[] = [
-  { id: ".only(", re: /\b(it|test|describe|suite|context)\.only\s*\(/g },
+  { id: ".only(", re: /\b(it|test|describe|suite|context|bench)(?:\.(?:concurrent|sequential))?\.only(?:\.each\s*[(`]|\s*\()/g },
   // A bare call with a string title: `fit('name', ...)`. `model.fit(X, y)` and `fit(points)` are ordinary code.
   { id: "fit/fdescribe/ftest", re: /(?<![.\w$])f(it|describe|test)\s*\(\s*['"`]/g },
 ];
@@ -159,6 +162,38 @@ export function count(re: RegExp, text: string): number {
 /** How often a pattern occurs in a text, honouring the pattern's own counter when it has one. */
 export function occurrences(p: ContentPattern, text: string): number {
   return p.countIn ? p.countIn(text) : count(p.re, text);
+}
+
+/**
+ * The text of each section `p` finds: from its header to the next table header (TOML, setup.cfg,
+ * Cargo) or, for a package.json key, to the bracket that closes its value; to the end of the text
+ * when the section runs past it, as a patch hunk's context does.
+ */
+export function sectionBodies(p: ContentPattern, text: string): string[] {
+  const out: string[] = [];
+  p.re.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = p.re.exec(text)) !== null) {
+    const start = m.index;
+    let end = text.length;
+    if (/[[{]\s*$/.test(m[0]) && m[0].includes(":")) {
+      // A JSON value: walk to its closing bracket. Brackets inside strings are rare enough in these keys to ignore.
+      let level = 0;
+      for (let i = start + m[0].length - 1; i < text.length; i++) {
+        const c = text[i];
+        if (c === "{" || c === "[") level++;
+        else if ((c === "}" || c === "]") && --level === 0) { end = i + 1; break; }
+      }
+    } else {
+      const next = /^[ \t]*\[/gm;
+      next.lastIndex = start + m[0].length;
+      const n = next.exec(text);
+      if (n !== null) end = n.index;
+    }
+    out.push(text.slice(start, end).trim());
+    if (p.re.lastIndex === 0) break;
+  }
+  return out;
 }
 
 /** Patterns that occur more often in `after` than in `before`. */

@@ -1,0 +1,11 @@
+{
+  "name": "docker system prune --help is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "docker system prune --help"
+    }
+  },
+  "near": "shell.docker-destroy",
+  "source": "BUG-2026-020"
+}

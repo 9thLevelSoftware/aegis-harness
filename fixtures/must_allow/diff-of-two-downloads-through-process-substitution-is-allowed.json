@@ -1,0 +1,11 @@
+{
+  "name": "diff of two downloads through process substitution is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "diff <(curl -s https://example.com/a.json) <(curl -s https://example.com/b.json)"
+    }
+  },
+  "near": "shell.pipe-to-shell",
+  "source": "BUG-2026-020"
+}

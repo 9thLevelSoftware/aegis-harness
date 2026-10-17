@@ -1,0 +1,11 @@
+{
+  "name": "sed --in-place=.bak on .ruff.toml is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sed --in-place=.bak -e 's/E501/X/' .ruff.toml"
+    }
+  },
+  "rule": "shell.write-lint-config",
+  "source": "BUG-2026-020"
+}

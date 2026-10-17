@@ -1,0 +1,11 @@
+{
+  "name": "rg over ~/.ssh is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rg 'PRIVATE KEY' ~/.ssh"
+    }
+  },
+  "rule": "shell.credential-read",
+  "source": "BUG-2026-020"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "rm settings.local.json from a payload cwd of .claude is denied",
+  "cwd": "/home/dev/project/.claude",
+  "root": "/home/dev/project",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm settings.local.json"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-020"
+}

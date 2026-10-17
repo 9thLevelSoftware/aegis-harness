@@ -1,0 +1,11 @@
+{
+  "name": "tee /dev/stderr in a pipeline is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "npm test 2>&1 | tee /dev/stderr | tail -1"
+    }
+  },
+  "near": "shell.write-system-path",
+  "source": "BUG-2026-020"
+}

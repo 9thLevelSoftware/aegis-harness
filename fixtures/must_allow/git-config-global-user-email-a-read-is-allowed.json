@@ -1,0 +1,11 @@
+{
+  "name": "git config --global user.email (a read) is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git config --global user.email"
+    }
+  },
+  "near": "shell.git-global-config",
+  "source": "BUG-2026-020"
+}

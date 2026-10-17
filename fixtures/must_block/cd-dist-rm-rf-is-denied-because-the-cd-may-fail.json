@@ -1,0 +1,11 @@
+{
+  "name": "cd dist; rm -rf * is denied because the cd may fail",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd dist; rm -rf *"
+    }
+  },
+  "rule": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-020"
+}

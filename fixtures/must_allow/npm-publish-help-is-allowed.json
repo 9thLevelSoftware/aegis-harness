@@ -1,0 +1,11 @@
+{
+  "name": "npm publish --help is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "npm publish --help"
+    }
+  },
+  "near": "shell.deploy-or-publish",
+  "source": "BUG-2026-020"
+}

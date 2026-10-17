@@ -1,0 +1,11 @@
+{
+  "name": "echo to /dev/stderr is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo \"error: missing arg\" > /dev/stderr"
+    }
+  },
+  "near": "shell.write-system-path",
+  "source": "BUG-2026-020"
+}

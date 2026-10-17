@@ -1,0 +1,11 @@
+{
+  "name": "pnpm run deploy --help still runs the deploy script and asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "pnpm run deploy --help"
+    }
+  },
+  "rule": "shell.deploy-or-publish",
+  "source": "BUG-2026-020"
+}

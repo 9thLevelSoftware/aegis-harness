@@ -1,0 +1,11 @@
+{
+  "name": "terraform destroy -help is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "terraform destroy -help"
+    }
+  },
+  "near": "shell.remote-destroy",
+  "source": "BUG-2026-020"
+}

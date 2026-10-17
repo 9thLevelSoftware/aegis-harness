@@ -80,7 +80,7 @@ canary proves the command; the last check is the agent: ask it to run `rm -rf /`
 What `ah init` writes, if you wire by hand (Claude Code, exec form, no shell):
 
 ```json
-{"matcher": "^(Bash|PowerShell|Monitor|Edit|Write|MultiEdit|NotebookEdit|Read|Agent|WebFetch|Workflow|mcp__.*)$",
+{"matcher": "^(Bash|PowerShell|Monitor|Edit|Write|MultiEdit|NotebookEdit|Read|Grep|Agent|WebFetch|Workflow|mcp__.*)$",
  "hooks": [{"type": "command", "command": "/abs/node", "args": ["/abs/dist/guard.mjs", "--agent", "claude"], "timeout": 5}]}
 ```
 
@@ -94,7 +94,7 @@ and Codex (`command` runs under `bash -c`; `commandWindows` is for Windows):
 `PowerShell` is in the Claude Code matcher because on Windows Claude Code routes shell commands
 through that tool (without Git Bash it does not register `Bash` at all); the guard parses it as
 PowerShell on any platform. `Monitor` runs a shell command in the background, so it gets the
-same checks as `Bash`. `mcp__.*` sends MCP tool calls through the guard for the credential-literal
+same checks as `Bash`. `Grep` prints the lines it finds, so a search of `~/.ssh` gets the private-key rule that `Read` gets. `mcp__.*` sends MCP tool calls through the guard for the credential-literal
 and private-key rules; the matchers are anchored because both agents read them as regexes. Git Bash and Cygwin drive spellings (`/c/Users/...`) are resolved against
 the Windows project root and home; WSL `/mnt/c/...` is a Linux path. `MultiEdit` is a legacy entry for older installs. An allow prints
 nothing, so the per-call cost of a matched tool is one short-lived `node` process.
@@ -109,21 +109,28 @@ apply on top.
 | family | deny | ask |
 | --- | --- | --- |
 | shell: destruction | `rm -rf` of `/`, `~`, the project root (also spelled `<root>/*` or `.[!.]*`), `.git`, or anything outside the project (temp directories excepted); `find … -delete` unless a filter narrows it (`-type`, a negated filter, `-name '*'` or a filter placed after `-delete` do not); `mv` (or `Rename-Item`, `ren`, `rename`) of `.git/`, `.harness/` or a hook config away, or of a directory that holds one (`.claude`, `~/.claude`); `dd`/`mkfs` on devices; shutdown; fork bombs; `kill -9 -1` (any signal to pid -1); `chmod -R` on system paths | `rm -rf "$VAR"` and `rm -rf $(pwd)` (temp variables such as `$TMPDIR`, `${TMPDIR:-/tmp}`, `$env:TEMP`, and `${VAR:?unset}/sub` or `$PWD/sub` forms pass), `chmod -R 777 .` or any mode granting write to others, `sudo`, `docker system prune`, `docker volume prune`, `docker compose down -v`, `DROP DATABASE`, `prisma migrate reset` |
-| shell: remote code and credentials | `curl \| sh`, `iwr \| iex`, `curl \| python3 -` (an interpreter that runs stdin as code; `curl \| python3 -m json.tool` passes); printing or copying private keys and credential stores, `~/.ssh` or `~/.aws` as a whole included (`~/.ssh/config`, `known_hosts` and `authorized_keys` are not secrets); piping `.env`, keys or `env` to the network; credential literals in a command | `-EncodedCommand`, inline `python`/`node`/`deno`/`perl`/`ruby` code that deletes a tree or shells out to `rm -rf` |
-| shell: git | force-push to `main`/`master`/`develop`/`release*`; `--mirror`; `reset --hard`; `checkout .`; `clean -f` with no path (`git clean -f -- dist/` and `git clean -fdX` pass); `stash drop`; `filter-branch`, `replace -d`; `git rm`, `git mv` and `git clean -f -- <path>` on the paths `rm` and `mv` may not touch (`git rm --cached` passes); `--no-verify`, `HUSKY=0`, `SKIP=`, setting `core.hooksPath` (reading it passes) | force-push to a feature branch, `branch -D`, `checkout -- file`, `checkout -f <branch>`, `switch --discard-changes`, setting `config --global` (`--global --list` passes) |
-| shell: writes | redirects, `tee`, `sed -i`, `cp`, `mv`, `rm` aimed at `.harness/`, `.git/` (a stale `*.lock` under `.git/` may be removed), hook configs, linter and test configs, shell rc files and the PowerShell `$PROFILE`, `~/.claude`, `~/.codex`, `~/.ssh`; writing a lockfile by hand (removing one, so the package manager regenerates it, passes) | the same aimed at `.env`, CI files, baselines and snapshots, `/etc` |
-| shell: deploy | `terraform destroy`, `gh repo delete`, `aws s3 rb`, `kubectl delete namespace`, and the `az`/`gcloud` deletes of a resource group, project, cluster, database (Firestore included), bucket, storage account, VM or app (one blob, image tag or secret passes) | `npm publish`, `wrangler deploy`, `terraform apply`, `gh pr merge`, `supabase functions deploy`, `az deployment create` (`--dry-run`, `--what-if` and `list`/`get`/`history` forms pass; `--dry-run=none` or `=false` is the real thing) |
+| shell: remote code and credentials | `curl \| sh`, `iwr \| iex`, `curl \| python3 -` (an interpreter that runs stdin as code; `curl \| python3 -m json.tool` passes), and the same without a pipe: `bash <(curl …)`, `source <(curl …)`, `bash -c "$(curl …)"`, `eval "$(curl …)"`, `iex (iwr …)` (`diff <(curl a) <(curl b)` passes); printing or copying private keys and credential stores, `~/.ssh` or `~/.aws` as a whole included, with `cat`, `grep`, `sed`, `awk`, `jq`, `sort`, `diff`, `dd if=`, `openssl` (not `-pubout`), an archive or a `<` redirect (`~/.ssh/config`, `known_hosts`, `authorized_keys`, public keys and certificates such as `ca.pem` are not secrets); piping `.env`, keys or `env` to the network; credential literals in a command; starting a nested agent with hooks off (`claude --bare`, `--safe-mode`, `--setting-sources` without every source, `--settings '{"disableAllHooks":true}'`, `codex --disable hooks`, `-c features.hooks=false`, a fresh `CODEX_HOME`) | `-EncodedCommand`, inline `python`/`node`/`deno`/`perl`/`ruby` code that deletes a tree or shells out to `rm -rf` |
+| shell: git | force-push to `main`/`master`/`develop`/`release*`; `--mirror`; `reset --hard`; `checkout .`; `clean -f` with no path (`git clean -f -- dist/` and `git clean -fdX` pass); `stash drop`; `filter-branch`, `replace -d`; `git rm`, `git mv` and `git clean -f -- <path>` on the paths `rm` and `mv` may not touch (`git rm --cached` passes); `--no-verify` on a command that runs hooks (`git grep -e --no-verify` passes), `HUSKY=0`, `SKIP=`, setting or unsetting `core.hooksPath` (reading it passes) | force-push to a feature branch, `branch -D`, `checkout -- file`, `checkout -f <branch>`, `switch --discard-changes`, setting `config --global` (reading a key or `--global --list` passes) |
+| shell: writes | redirects (`>&file` included), `tee`, `sed -i` in any spelling, `perl -i`, `awk -i inplace`, `yq -i`, `sponge`, `dd of=`, `curl -o`, `wget -O`, `rsync`, `git --output`, and `cp`, `mv`, `install`, `ln` (into a directory too) and `rm` aimed at `.harness/`, `.git/` (a stale `*.lock` under `.git/` may be removed), hook configs, linter and test configs, shell rc files and the PowerShell `$PROFILE`, `~/.claude`, `~/.codex`, `~/.ssh`; writing a lockfile by hand (removing one, so the package manager regenerates it, passes) | the same aimed at `.env`, CI files, baselines and snapshots, `/etc` (`/dev/stderr`, `/dev/tty` and `/dev/fd/N` pass) |
+| shell: deploy | `terraform destroy`, `gh repo delete`, `aws s3 rb`, `kubectl delete namespace` (or `ns/x`), and the `az`/`gcloud` deletes (`gcloud beta` and `alpha` included) of a resource group, project, cluster, database (Firestore included), bucket, storage account, VM or app (one blob, image tag or secret passes) | `npm publish`, `wrangler deploy`, `terraform apply`, `gh pr merge`, `supabase functions deploy`, `az deployment create` (`--dry-run`, `--what-if`, `--help` and `list`/`get`/`history` forms pass, as does `aws s3 sync` from a bucket to a local folder; `--dry-run=none` or `=false` is the real thing) |
 | edit: paths | `.harness/`, `.git/`, `.claude/settings*.json`, `.codex/`, `.husky/`, pre-commit and lefthook configs, `biome.json`, eslint and ruff configs, vitest/jest/playwright/pytest configs, lockfiles, home dotfiles, system paths | baselines and snapshots, `tsconfig*.json`, CI workflows, `.env*` (not `.env.example`), key files, files outside the project |
-| edit: content | credential literals; file-wide `eslint-disable`, `@ts-nocheck`, `pylint: disable=all`; `.only`, `fit('...')`; `.skip`/`test.fixme` with a title, `@pytest.mark.skip`, `#[ignore]`, `@Disabled`, and an unconditional `t.Skip(`, `pytest.skip(` or `self.skipTest(` (a skip under a visible condition such as `if testing.Short()` or `test.skip(condition, reason)` passes); `"test": "echo ..."` or `\|\| true` in a gate script; `continue-on-error` or `if: false` in CI; `"strict": false` | `@ts-ignore`, bare `# noqa`, `istanbul ignore`, `pragma: no cover`, a changed gate script, any other workflow edit (`if: always()` included), a real-looking token in a test fixture |
-| other tools | `Read` of a private key or credential store; a credential literal in any argument of a matched tool | |
+| edit: content | credential literals; file-wide `eslint-disable`, `@ts-nocheck` (in any case), `pylint: disable=all`, `# ruff: noqa`; `.only` (`.only.each` and `it.concurrent.only` too), `fit('...')`; `.skip`/`test.fixme` with a title (`.skip.each` too), `@pytest.mark.skip`, `#[ignore]`, `@Disabled`, and an unconditional `t.Skip(`, `pytest.skip(` or `self.skipTest(` (a skip under a visible condition such as `if testing.Short()` or `test.skip(condition, reason)` passes); `"test": "echo ..."` or `\|\| true` in a gate script; `continue-on-error` or `if: false` in CI; `"strict": false` | `@ts-ignore`, bare `# noqa`, `istanbul ignore`, `pragma: no cover`, a changed gate script, any other workflow edit (`if: always()` included), a real-looking token in a test fixture. A suppression or skip written in prose (`.md`, `.txt`, `.rst`, such as a rule in `CLAUDE.md`) is text and passes |
+| other tools | `Read` of a private key or credential store, and `Grep` printing lines from one; a credential literal in any argument of a matched tool | |
 
 Hook files and `.git/` count wherever the agents load them from: in every directory above the
 folder a session started in, and in a linked worktree's main checkout, so a session in `sub/`
 cannot remove `../.claude/settings.local.json` or `../.git/hooks/pre-commit` either.
 
+Relative paths are read from the directory the command runs in: the agent's working directory
+(Claude Code reports it after a `cd`; Codex names a `workdir`), then any `cd`, `pushd`,
+`Set-Location`, `env -C` or `sudo -D` earlier in the same command line. After `&&` only the new
+directory counts; after `;`, `||` or `&` the `cd` may have failed, so both count, which is why
+`cd dist && rm -rf *` passes and `cd dist; rm -rf *` does not. When the session moves to another
+project (`/cd`), that project's hook files are the ones protected.
+
 `ah rules` prints the full list with each rule's provenance. The authoritative definition is the
-fixture corpus: [`fixtures/`](fixtures/README.md) holds about 350 calls that must be denied,
-60 that must ask and 270 legitimate neighbours that must pass, and CI runs all of them through the
+fixture corpus: [`fixtures/`](fixtures/README.md) holds about 430 calls that must be denied,
+70 that must ask and 330 legitimate neighbours that must pass, and CI runs all of them through the
 built guard on Linux and Windows. Commands inside loops, `if` blocks, functions and PowerShell
 `{ }` blocks meet every rule, so a `for` loop that runs `rm -rf "$d"` asks like the bare command.
 sh brace expansion is applied first, as bash does it (`mv .ruff.toml{,.bak}`, `.claud{e..e}`,
@@ -142,7 +149,10 @@ A guardrail, not a boundary. The agent runs as you; the guard sees the call text
 Codex's own documentation says the same of its hooks: "a useful guardrail, not a complete
 enforcement boundary." It cannot see through a script the agent wrote a moment ago, a binary it
 compiled, or an interpreter one-liner (a one-liner that visibly deletes a tree or touches hook files
-is caught; everything else passes). It does not resolve symlinks. If you need a boundary, use a
+is caught; everything else passes). It does not resolve symlinks, follow a `cd` to a directory
+held in a variable, or read a settings file a nested agent is pointed at (`claude --settings
+file.json`). On Codex, a shell the agent opens without a command (`bash`) takes later input
+through `write_stdin`, which runs no hook. If you need a boundary, use a
 container or a separate user; the guard then stops the mistakes, and the boundary stops the rest.
 
 It fails open by default. Malformed input exits 1, which Claude Code treats as a non-blocking hook

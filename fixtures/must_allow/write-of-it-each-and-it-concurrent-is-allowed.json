@@ -1,0 +1,12 @@
+{
+  "name": "Write of it.each and it.concurrent is allowed",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/home/dev/project/src/math.test.ts",
+      "content": "it.each([[1]])('adds %i', (n) => {});\nit.concurrent('adds', async () => {});\n"
+    }
+  },
+  "near": "edit.test-only",
+  "source": "BUG-2026-020"
+}

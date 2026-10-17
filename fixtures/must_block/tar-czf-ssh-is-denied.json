@@ -1,0 +1,11 @@
+{
+  "name": "tar czf - ~/.ssh is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tar czf - ~/.ssh"
+    }
+  },
+  "rule": "shell.credential-read",
+  "source": "BUG-2026-020"
+}

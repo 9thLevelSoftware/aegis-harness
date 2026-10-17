@@ -72,11 +72,14 @@ export function hasVariable(p: string): boolean {
  * `$env:TEMP` and cmd `%TEMP%`, alone or followed by a separator.
  */
 const TEMP_VARS = /^(\$\{?(TMPDIR|TMP|TEMP|RUNNER_TEMP)(:[-=?][^}]*)?\}?|\$env:(TMP|TEMP|RUNNER_TEMP)|%(TMP|TEMP|RUNNER_TEMP)%)(\/|$)/i;
-const TEMP_DIRS = /^(\/tmp|\/var\/tmp|\/private\/tmp|\/private\/var\/tmp|\/dev\/shm|[A-Za-z]:\/Users\/[^/]+\/AppData\/Local\/Temp|[A-Za-z]:\/Windows\/Temp|[A-Za-z]:\/Temp)(\/|$)/i;
+/** macOS keeps each user's temp directory (mktemp, os.tmpdir()) at /var/folders/<xx>/<hash>/T. */
+const TEMP_DIRS = /^(\/tmp|\/var\/tmp|\/private\/tmp|\/private\/var\/tmp|\/dev\/shm|\/(?:private\/)?var\/folders\/[^/]+\/[^/]+\/T|[A-Za-z]:\/Users\/[^/]+\/AppData\/Local\/Temp|[A-Za-z]:\/Windows\/Temp|[A-Za-z]:\/Temp)(\/|$)/i;
 
 /** A location that is understood to be scratch space on any OS. */
 export function isTempPath(p: string): boolean {
   const s = toPosix(p);
+  // `/tmp/../etc` is /etc: a temp prefix counts only when no `..` climbs back out of it.
+  if (/(^|\/)\.\.(\/|$)/.test(s)) return false;
   return TEMP_VARS.test(s) || TEMP_DIRS.test(s);
 }
 

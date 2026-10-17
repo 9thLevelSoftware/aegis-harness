@@ -38,6 +38,24 @@ test("malformed input is a non-blocking error (exit 1), never a crash", { skip: 
   assert.equal(empty.status, 1);
 });
 
+test("the project root follows a session moved out of it (/cd), not a cd inside it", { skip: !built && "run npm run build first" }, () => {
+  // No --root: the guard takes CLAUDE_PROJECT_DIR, which stays where the session started, and the payload's cwd.
+  const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_PROJECT_DIR: "/home/dev/project" };
+  delete env.AH_PROJECT_ROOT;
+  const verdict = (cwd: string, command: string) => {
+    const payload = { hook_event_name: "PreToolUse", session_id: "t", cwd, tool_name: "Bash", tool_input: { command } };
+    const r = spawnSync(process.execPath, [guard, "--no-log", "--agent", "claude", "--home", "/home/dev", "--platform", "posix"], { input: JSON.stringify(payload), encoding: "utf8", env });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout === "" ? "allow" : (JSON.parse(r.stdout) as { hookSpecificOutput: { permissionDecision: string } }).hookSpecificOutput.permissionDecision;
+  };
+  // Moved to another project: its hook files are the ones in force now.
+  assert.equal(verdict("/home/dev/other", "rm .claude/settings.json"), "deny");
+  assert.equal(verdict("/home/dev/other", "rm -rf node_modules"), "allow");
+  // A cd inside the project keeps the project as the root.
+  assert.equal(verdict("/home/dev/project/packages/web", "rm -rf ../../dist"), "allow");
+  assert.equal(verdict("/home/dev/project/packages/web", "rm -rf ../../../other"), "deny");
+});
+
 test("per-call latency budget", { skip: !built && "run npm run build first" }, () => {
   // BUG-2026-003: clodex declined tool hooks because "each hook starts a
   // process, which would slow every tool call". This is the measurement that

@@ -12,6 +12,8 @@ export type Verdict = "allow" | "deny" | "ask";
 export interface ShellCall {
   kind: "shell";
   command: string;
+  /** The directory Codex runs it in (its `workdir`), absolute or relative to the agent's working directory. */
+  cwd?: string;
 }
 
 /** A whole-file write (create or overwrite). */
@@ -73,8 +75,13 @@ export interface Policy {
 }
 
 export interface Context {
-  /** Absolute project root. Relative tool paths resolve against it. */
+  /** Absolute project root: what counts as inside the project, and where hook files are looked for. */
   projectRoot: string;
+  /**
+   * Absolute directory the call runs in, which relative paths resolve against: the agent's working
+   * directory (Claude Code's moves with `cd`), or a `cd` earlier in the same command. projectRoot when unset.
+   */
+  cwd?: string;
   /** Absolute home directory, used to expand `~` and `$HOME` in paths and commands. */
   homeDir?: string;
   platform: Platform;

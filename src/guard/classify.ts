@@ -66,7 +66,7 @@ export function classifyPath(input: string, ctx: Context): PathInfo {
   onTime(ctx.deadline);
   const { policy, platform } = ctx;
   const stripped = stripQuotes(input);
-  const abs = resolvePath(stripped, ctx.projectRoot, ctx.homeDir, platform);
+  const abs = resolvePath(stripped, ctx.cwd ?? ctx.projectRoot, ctx.homeDir, platform);
   const rel = relativeTo(ctx.projectRoot, abs, platform);
   const homeRel = relativeToHome(abs, ctx.homeDir, platform);
   const variable = hasVariable(stripped);
@@ -118,8 +118,9 @@ export function classifyPath(input: string, ctx: Context): PathInfo {
   if (gitRel !== undefined) return { ...base("git-internals", ".git/**"), gitRel };
   const hook = hookConfigAbove(abs, ctx, false);
   if (hook !== undefined) return base("hook-config", hook);
-  if (isSystemPath(abs)) return base("system");
+  // Temp first: /var/tmp, /dev/shm and C:\Windows\Temp sit inside system directories.
   if (isTempPath(abs) || isTempPath(stripped)) return base("temp");
+  if (isSystemPath(abs)) return base("system");
   return base("outside-project");
 }
 
@@ -271,7 +272,7 @@ export function wildcardReach(input: string, ctx: Context, whole: boolean): Path
   const { platform } = ctx;
   const stripped = stripQuotes(input);
   if (!WILDCARD.test(stripped) || hasVariable(stripped)) return undefined;
-  const pattern = resolvePath(stripped, ctx.projectRoot, ctx.homeDir, platform).split("/");
+  const pattern = resolvePath(stripped, ctx.cwd ?? ctx.projectRoot, ctx.homeDir, platform).split("/");
   const compiled = new Map<string, (name: string) => boolean>();
   const dots = (ctx.shellDialect ?? (platform === "windows" ? "powershell" : "posix")) !== "posix";
   const same = (p: string, seg: string): boolean => {

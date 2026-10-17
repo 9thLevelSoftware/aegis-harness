@@ -1,8 +1,9 @@
 import { classifyPath, isBlockDevice, protectedInside, wildcardReach, type PathInfo } from "../classify.ts";
+import { isPrivateFile, isPublicPem } from "../credentials.ts";
 import { ALLOW, ask, deny, onTime, strictest, TimeLimit, type Context, type Decision, type ShellCall } from "../model.ts";
-import { globToRegExp, hasVariable, isTempPath, normalize, stripQuotes, trimSeparators } from "../paths.ts";
+import { globToRegExp, hasVariable, isTempPath, normalize, resolvePath, stripQuotes, trimSeparators } from "../paths.ts";
 import { findSecrets, redact } from "../secrets.ts";
-import { allStages, append, BRACE_LIMIT, flagsOf, MAX_DEPTH, normalizeCmd, parseBudget, parseShell, pwshRun, subcommandIndex, type ParseBudget, type Pipeline, type ShellDialect, type Stage } from "../shell.ts";
+import { append, BRACE_LIMIT, flagsOf, MAX_DEPTH, normalizeCmd, parseBudget, parseShell, pwshRun, subcommandIndex, type ParseBudget, type Pipeline, type ShellDialect, type Stage } from "../shell.ts";
 import { AH_INIT_VALUED_OPTIONS } from "../../wiring/init-options.ts";
 
 const FORK_BOMB = /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/;
@@ -24,7 +25,6 @@ const POWER = new Set(["shutdown", "reboot", "halt", "poweroff", "telinit", "sto
 const GIT_HOOKED = new Set(["commit", "push", "merge", "rebase", "cherry-pick", "revert", "am", "apply", "checkout", "switch"]);
 
 const CRED_FILE = /(^|[\\/])(\.env(\.(?!example$|sample$|template$|dist$|defaults$)[^\\/]*)?|\.netrc|\.npmrc|\.pypirc|\.git-credentials|credentials|id_rsa|id_ed25519|id_ecdsa|id_dsa|secrets?\.(json|ya?ml|toml|env)|[^\\/]+\.(pem|key|p12|pfx|jks|keystore))$/i;
-const PRIVATE_FILE = /(^|[\\/])(id_rsa|id_ed25519|id_ecdsa|id_dsa)$|\.(pem|key|p12|pfx)$|(^|[\\/])\.(netrc|git-credentials|pypirc)$|(^|[\\/])\.aws[\\/]credentials$|(^|[\\/])\.docker[\\/]config\.json$|(^|[\\/])\.kube[\\/]config$/i;
 /** Files under ~/.ssh that hold private material: everything except public keys, config, known_hosts, authorized_keys, environment and rc. */
 /**
  * A file directly inside a `.ssh` directory that is not a public key or one of ssh's own
@@ -74,16 +74,123 @@ export function shellRules(call: ShellCall, ctx: Context): Decision {
 
   const budget = parseBudget(ctx.deadline ?? Infinity);
   const pipelines = parseShell(raw, { dialect: ctx.shellDialect ?? "posix", budget });
+  const at = directories(ctx);
+  const where = workingDirs(pipelines, call.cwd === undefined ? ctx : at(ctx, call.cwd), at);
+  // Text piped into a shell (`echo 'rm x' | sh`) runs where the pipeline feeding it ran; it is
+  // listed after the whole command line, so it is judged from every directory the line visits.
+  const everywhere = [...new Set([...where.values()].flat())];
   append(pipelines, pipedCommands(pipelines, budget));
   for (const p of pipelines) {
-    onTime(ctx.deadline);
-    append(decisions, pipelineRules(p, ctx));
+    for (const c of where.get(p) ?? everywhere) {
+      onTime(ctx.deadline);
+      append(decisions, pipelineRules(p, c));
+    }
   }
-  for (const s of allStages(pipelines)) {
-    onTime(ctx.deadline);
-    append(decisions, stageRules(s, ctx));
+  for (const p of pipelines) {
+    for (const c of where.get(p) ?? everywhere) {
+      for (const s of p.stages) {
+        onTime(ctx.deadline);
+        append(decisions, stageRules(s, s.chdir === undefined ? c : at(c, s.chdir)));
+      }
+    }
   }
   return strictest(decisions);
+}
+
+// ---------------------------------------------------------------------------
+// Working directory
+
+/** Commands that move the rest of the command line to another directory. */
+const CHDIR = new Set(["cd", "chdir", "pushd", "set-location", "sl", "push-location"]);
+/** Commands that move it back to where a `pushd` left, which the text does not say. */
+const CHDIR_BACK = new Set(["popd", "pop-location"]);
+/** Past this many directories one command could be in, the guard asks rather than judge it from each. */
+const MAX_DIRS = 32;
+
+/**
+ * Contexts for the directories a command line visits, each made once: `at(c, dir)` is `c` moved to
+ * `dir`, which is absolute or relative to where `c` is.
+ */
+function directories(root: Context): (c: Context, dir: string) => Context {
+  const made = new Map<string, Context>();
+  return (c, dir) => {
+    const abs = resolvePath(stripQuotes(dir), c.cwd ?? c.projectRoot, c.homeDir, c.platform);
+    let moved = made.get(abs);
+    if (moved === undefined) made.set(abs, (moved = { ...root, cwd: abs }));
+    return moved;
+  };
+}
+
+/**
+ * Where `cd` sends the rest of the command line: the directory, `~` for a bare `cd` (POSIX sh, and
+ * PowerShell 7 too), or undefined when the text does not say (`cd "$dir"`, `cd -`).
+ */
+function chdirTarget(s: Stage): string | undefined {
+  const args = s.argv.slice(1);
+  const pwsh = s.cmd === "set-location" || s.cmd === "sl" || s.cmd === "push-location";
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--") return args[i + 1] ?? "~";
+    // `-Path x`, `-LiteralPath x`, `-Path:x` (PowerShell names, any case, any unique prefix).
+    const named = /^-(p(?:a(?:t(?:h)?)?)?|l(?:i(?:t(?:e(?:r(?:a(?:l(?:p(?:a(?:t(?:h)?)?)?)?)?)?)?)?)?)?|lp|pspath)(?::(.*))?$/i.exec(a);
+    if (named !== null && (pwsh || s.cmd === "cd" || s.cmd === "chdir" || s.cmd === "pushd")) return named[2] ?? args[i + 1];
+    if (/^-stackname$/i.test(a)) { i++; continue; }
+    if (a === "-") return undefined;
+    // sh's `-L`, `-P`, `-e`, `-@`; PowerShell's `-PassThru`; cmd's `/d`.
+    if (/^-[LPe@]+$/.test(a) || /^-passthru$/i.test(a) || /^\/d$/i.test(a)) continue;
+    return a;
+  }
+  return "~";
+}
+
+/**
+ * The directories each pipeline of a command line may run in, following `cd`, `pushd` and
+ * `Set-Location` as the shell would: a `cd` moves what follows it in the same list, inside the
+ * subshell, group or `sh -c` string it is in. After `&&` the rest runs only where the `cd` led;
+ * after `;`, `||` or `&` it may run where the line was, since the `cd` may have failed. A `cd` the
+ * text does not resolve leaves every directory the line has been in possible, and a substitution,
+ * which the parser lists after the line it sits in, is judged from each of them.
+ */
+function workingDirs(pipelines: readonly Pipeline[], start: Context, at: (c: Context, dir: string) => Context): Map<Pipeline, Context[]> {
+  interface Scope { depth: number; now: Context[]; failed: Context[]; seen: Context[]; last: Context[] }
+  const out = new Map<Pipeline, Context[]>();
+  const union = (a: readonly Context[], b: readonly Context[]): Context[] => {
+    const u = [...new Set([...a, ...b])];
+    if (u.length > MAX_DIRS) throw new TimeLimit(`the command moves between more than ${MAX_DIRS} directories, too many to check from each`);
+    return u;
+  };
+  const scopes: Scope[] = [{ depth: pipelines[0]?.depth ?? 0, now: [start], failed: [], seen: [start], last: [start] }];
+  for (const p of pipelines) {
+    while (scopes.length > 1 && scopes[scopes.length - 1].depth > p.depth) scopes.pop();
+    let top = scopes[scopes.length - 1];
+    if (p.depth > top.depth) {
+      // A group or `sh -c` string follows the command it belongs to; a substitution may sit anywhere in the line.
+      const from = p.substitution ? top.seen : top.last;
+      scopes.push((top = { depth: p.depth, now: from, failed: [], seen: from, last: from }));
+    }
+    if (p.after !== "&&") {
+      top.now = union(top.now, top.failed);
+      top.failed = [];
+    }
+    out.set(p, top.now);
+    top.last = top.now;
+    const s = p.stages.length === 1 ? p.stages[0] : undefined;
+    if (s === undefined) continue;
+    if (CHDIR.has(s.cmd)) {
+      const target = chdirTarget(s);
+      if (target === undefined || hasVariable(target)) {
+        top.now = union(top.now, top.seen);
+        continue;
+      }
+      const next = [...new Set(top.now.map((c) => at(c, target)))];
+      top.failed = union(top.failed, top.now);
+      top.now = next;
+      top.seen = union(top.seen, next);
+    } else if (CHDIR_BACK.has(s.cmd)) {
+      top.now = union(top.now, top.seen);
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -101,7 +208,7 @@ function pipelineRules(p: Pipeline, ctx: Context): Decision[] {
       const isDownloader = DOWNLOADERS.has(src.cmd);
       const isDecoder = DECODERS.has(src.cmd) && src.argv.some((a) => /^(-d|--decode|-D|-r|enc)$/.test(a));
       if ((isDownloader || isDecoder) && interpreter !== undefined) {
-        here.push(deny("shell.pipe-to-shell", `${src.cmd} output is piped into ${interpreter.cmd}, which runs it as code`, "Download to a file, read it, then run it: `curl -fsSL URL -o install.sh && cat install.sh` first. Piping remote content into an interpreter runs code nobody reviewed."));
+        here.push(deny("shell.pipe-to-shell", `${src.cmd} output is piped into ${interpreter.cmd}, which runs it as code`, PIPE_TO_SHELL_FIX));
       }
       if (network === undefined) continue;
       const readsCredential = credentialSourceOf(src, ctx) !== null;
@@ -272,6 +379,131 @@ function readsStdinAsCode(sink: Stage): boolean {
   return true;
 }
 
+const PIPE_TO_SHELL_FIX = "Download to a file, read it, then run it: `curl -fsSL URL -o install.sh && cat install.sh` first. Running remote content as code runs code nobody reviewed.";
+
+/**
+ * Downloaded code run without a pipe: as the command word (`bash -c "$(curl URL)"` and
+ * `eval "$(curl URL)"` leave `$(curl URL)` as the command of the code they run), as the script a
+ * shell or interpreter is given (`bash <(curl URL)`, `source <(curl URL)`), on its stdin
+ * (`bash < <(curl URL)`), and PowerShell's `iex (iwr URL)` and `[scriptblock]::Create((irm URL))`.
+ */
+function downloadRunRules(s: Stage, ctx: Context): Decision[] {
+  let found = DOWNLOAD_RUNS.get(s);
+  if (found === undefined) {
+    found = downloadRun(s, ctx.deadline);
+    DOWNLOAD_RUNS.set(s, found);
+  }
+  return found === null ? [] : [deny("shell.pipe-to-shell", `${found.source} output is run as code by ${found.runner}`, PIPE_TO_SHELL_FIX)];
+}
+
+/** Per stage, not per directory: the answer does not depend on where the command runs. */
+const DOWNLOAD_RUNS = new WeakMap<Stage, { runner: string; source: string } | null>();
+
+function downloadRun(s: Stage, deadline: number | undefined): { runner: string; source: string } | null {
+  const head = s.argv[0] ?? "";
+  if (head.startsWith("$(") || head.startsWith("`")) {
+    // A backtick pair is split into words (`` `curl URL` `` reads as "`curl" and "URL`"); `$( )` is one word.
+    const source = fetchedIn(head.startsWith("`") ? s.argv.join(" ") : head, "posix", deadline, true);
+    if (source !== null) return { runner: "the shell, as the command", source };
+  }
+  if (s.cmd === "iex" || s.cmd === "invoke-expression" || /\[scriptblock\]::create\s*\(/i.test(s.raw)) {
+    const source = fetchedIn(s.cmd === "iex" || s.cmd === "invoke-expression" ? s.argv.slice(1).join(" ") : s.raw, "powershell", deadline);
+    if (source !== null) return { runner: s.cmd === "iex" || s.cmd === "invoke-expression" ? s.argv[0] : "[scriptblock]::Create", source };
+    return null;
+  }
+  if (!INTERPRETERS.has(s.cmd)) return null;
+  const script = scriptOperand(s);
+  if (script !== undefined && script.startsWith("<(")) {
+    const source = fetchedIn(script, "posix", deadline);
+    if (source !== null) return { runner: s.cmd, source };
+  }
+  if (readsStdinAsCode(s)) {
+    for (const r of s.reads) {
+      const source = r.startsWith("<(") ? fetchedIn(r, "posix", deadline) : null;
+      if (source !== null) return { runner: s.cmd, source };
+    }
+  }
+  return null;
+}
+
+/**
+ * The downloader (or decoder) whose output one of `text`'s substitutions prints: `$(curl URL)`,
+ * `` `wget -qO- URL` ``, `<(curl URL)`, and in PowerShell `(iwr URL)` and `.DownloadString(URL)`.
+ */
+function fetchedIn(text: string, dialect: ShellDialect, deadline: number | undefined, firstOnly = false): string | null {
+  if (dialect === "powershell" && /\.Download(?:String|Data)\s*\(/i.test(text)) return "WebClient.DownloadString";
+  const found = substitutionsIn(text, dialect);
+  for (const inner of firstOnly ? found.slice(0, 1) : found) {
+    // At any depth: what a substitution inside it prints may be what it prints (`<(echo "$(curl URL)")`).
+    for (const p of parseShell(inner, { dialect, budget: parseBudget(deadline ?? Infinity) })) {
+      for (const src of p.stages) {
+        if (DOWNLOADERS.has(src.cmd)) return src.cmd;
+        if (DECODERS.has(src.cmd) && src.argv.some((a) => /^(-d|--decode|-D|-r|enc)$/.test(a))) return src.cmd;
+      }
+    }
+  }
+  return null;
+}
+
+/** The text inside each top-level `$( )`, `<( )` and backtick pair in `text`, and each `( )` in PowerShell. Quotes are not tracked. */
+function substitutionsIn(text: string, dialect: ShellDialect): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "`" && dialect === "posix") {
+      const end = text.indexOf("`", i + 1);
+      if (end < 0) break;
+      out.push(text.slice(i + 1, end));
+      i = end;
+      continue;
+    }
+    const open = text.startsWith("$(", i) || text.startsWith("<(", i) ? i + 2 : dialect === "powershell" && text[i] === "(" ? i + 1 : -1;
+    if (open < 0) continue;
+    let level = 1;
+    let j = open;
+    for (; j < text.length && level > 0; j++) {
+      if (text[j] === "(") level++;
+      else if (text[j] === ")") level--;
+    }
+    out.push(text.slice(open, level === 0 ? j - 1 : j));
+    i = j - 1;
+  }
+  return out;
+}
+
+/** The script a shell or interpreter runs, when the command names one: `bash x.sh`, `source x`, `python3 x.py`; not `-c` code or stdin. */
+function scriptOperand(s: Stage): string | undefined {
+  const args = s.argv.slice(1);
+  if (s.cmd === "source" || s.cmd === ".") return args.find((a) => a !== "--");
+  if (s.cmd === "pwsh" || s.cmd === "powershell") {
+    const run = pwshRun(s.argv);
+    return run !== null && "script" in run ? run.script : undefined;
+  }
+  if (s.cmd === "deno" || s.cmd === "bun") {
+    if (args.some((a) => a === "-e" || a === "--eval" || a === "eval")) return undefined;
+    const p = args.filter((a) => !a.startsWith("-"));
+    return p[0] === "run" ? p[1] : p[0];
+  }
+  const sh = SH_SINKS.has(s.cmd);
+  const codeFlags = INLINE_CODE_FLAGS[s.cmd] ?? [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--") return args[i + 1];
+    if (sh && (a === "--rcfile" || a === "--init-file")) { i++; continue; }
+    if (sh && /^[-+][A-Za-z]+$/.test(a)) {
+      if (a.includes("c")) return undefined;
+      if (/[oO]$/.test(a)) i++;
+      continue;
+    }
+    if (codeFlags.some((flag) => a === flag || (flag.length === 2 && a.startsWith(flag) && a.length > 2))) return undefined;
+    if (a.startsWith("-") && a !== "-") {
+      if (!sh && INTERPRETER_VALUED_FLAGS.has(a)) i++;
+      continue;
+    }
+    return a;
+  }
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Stages
 
@@ -298,27 +530,37 @@ function stageRules(s: Stage, ctx: Context): Decision[] {
   else if (POWER.has(s.cmd) || s.cmd === "init" || s.cmd === "systemctl") append(out, powerRules(s));
   else if (s.cmd === "kill" || s.cmd === "killall5") append(out, killRules(s));
   else if (DOWNLOADERS.has(s.cmd) || ["scp", "rsync", "sftp", "nc", "ncat", "netcat", "socat"].includes(s.cmd)) append(out, uploadRules(s, ctx));
-  else if (FILE_READERS.has(s.cmd)) append(out, credentialReadRules(s, ctx));
   else if (s.cmd === "docker" || s.cmd === "podman" || s.cmd === "docker-compose") append(out, dockerRules(s));
   else if (["pwsh", "powershell"].includes(s.cmd) && s.opaque) {
     out.push(ask("shell.encoded-command", "PowerShell is given an encoded command", "Pass the command as plain text so it can be reviewed."));
   }
 
+  append(out, credentialReadRules(s, ctx));
   append(out, databaseRules(s));
   append(out, publishRules(s));
   append(out, baselineRefreshRules(s));
   append(out, interpreterRules(s));
+  append(out, downloadRunRules(s, ctx));
   append(out, ahCliRules(s));
+  append(out, nestedAgentRules(s));
   append(out, moveSourceRules(s, ctx));
   append(out, copySourceRules(s, ctx));
 
   // A redirected group is a `:` stand-in carrying the redirections; its reasons name the group.
   const writer = s.group === undefined ? s : { ...s, cmd: /^\s*\{/.test(s.raw) ? "{ ... }" : "( ... )" };
+  const whole = recursiveCopy(s);
   for (const target of writeTargetsOf(s, ctx.deadline)) {
     onTime(ctx.deadline);
-    append(out, writeRules(target, writer, ctx));
+    append(out, writeRules(target, writer, ctx, whole));
   }
   return out;
+}
+
+/** A copy or move that takes directories whole: `cp -r`, `cp -a`, `Copy-Item -Recurse`, `rsync -a`, and every `mv`. */
+function recursiveCopy(s: Stage): boolean {
+  if (MOVERS.has(s.cmd)) return true;
+  if (!COPIERS.has(s.cmd) && s.cmd !== "rsync") return false;
+  return s.argv.slice(1).some((a) => /^-[a-zA-Z]*[rRa]/.test(a) && !a.startsWith("--") || /^--(recursive|archive)$/.test(a) || /^-rec(u(r(s(e)?)?)?)?$/i.test(a));
 }
 
 /**
@@ -348,6 +590,8 @@ interface RemoveSpec {
   recursive: boolean;
   targets: string[];
   noPreserveRoot: boolean;
+  /** Remove-Item's `-Include` and `-Filter` patterns, which narrow what the targets remove. */
+  filters?: string[];
 }
 
 /**
@@ -370,24 +614,55 @@ function pwshValuedParam(a: string): boolean {
   return PWSH_VALUED_ALIASES.has(p) || PWSH_VALUED_PARAMS.some(([name, min]) => p.length >= min && name.startsWith(p));
 }
 
-function removeSpec(s: Stage): RemoveSpec {
+/**
+ * Remove-Item's words with each `( )` subexpression put back together: `(Join-Path . 'dist')`
+ * arrives as three words. A `Join-Path base child` becomes the path it builds; any other
+ * subexpression becomes `$( )`, a value that cannot be checked.
+ */
+function pwshWords(argv: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a.startsWith("(") && !a.startsWith("$(")) { out.push(a); continue; }
+    let group = a;
+    let level = 0;
+    for (const c of a) level += c === "(" ? 1 : c === ")" ? -1 : 0;
+    while (level > 0 && i + 1 < argv.length) {
+      const next = argv[++i];
+      group += ` ${next}`;
+      for (const c of next) level += c === "(" ? 1 : c === ")" ? -1 : 0;
+    }
+    const join = /^\(\s*join-path\s+(?:-path\s+)?([^\s()]+)\s+(?:-childpath\s+)?([^\s()]+)\s*\)$/i.exec(group);
+    out.push(join !== null ? `${join[1]}\\${join[2]}` : group.startsWith("$(") ? group : `$${group}`);
+  }
+  return out;
+}
+
+function removeSpec(s: Stage, dialect: ShellDialect | undefined): RemoveSpec {
   const argv = s.argv.slice(1);
-  const pwshStyle = s.cmd === "remove-item" || s.cmd === "ri" || argv.some((a) => /^-(Recurse|Force|Path|LiteralPath|WhatIf|Confirm|Include|Exclude|Filter)$/i.test(a));
+  // An alias (`rm`, `del`) given PowerShell parameters, or in a PowerShell command line a `( )` subexpression.
+  const pwshStyle = s.cmd === "remove-item" || s.cmd === "ri" || argv.some((a) => /^-(Recurse|Force|fo|Path|LiteralPath|WhatIf|Confirm|Include|Exclude|Filter)$/i.test(a) || (dialect === "powershell" && a.startsWith("(")));
   if (pwshStyle) {
     const targets: string[] = [];
+    const filters: string[] = [];
     let recursive = false;
-    for (let i = 0; i < argv.length; i++) {
-      const a = argv[i];
-      if (/^-(recurse|rec|r)$/i.test(a)) recursive = true;
-      else if (pwshValuedParam(a)) i++;
+    const words = pwshWords(argv);
+    for (let i = 0; i < words.length; i++) {
+      const a = words[i];
+      // `-rf` is no PowerShell parameter, but an `rm -rf` that reached here is recursive.
+      if (/^-(recurse|rec|r)$/i.test(a) || /^-(?=[rRfidv]*[rR])[rRfidv]{2,5}$/.test(a)) recursive = true;
+      else if (/^-(inc|incl|inclu|includ|include|fi|fil|filt|filte|filter)$/i.test(a)) {
+        if (words[i + 1] !== undefined) append(filters, words[i + 1].split(",").map((f) => f.trim()).filter((f) => f !== ""));
+        i++;
+      } else if (pwshValuedParam(a)) i++;
       else if (/^-(path|literalpath|lp|p)$/i.test(a)) {
         const v = argv[i + 1];
         if (v !== undefined) append(targets, v.split(","));
         i++;
       } else if (/^-(path|literalpath):(.+)$/i.test(a)) append(targets, a.replace(/^-[a-z]+:/i, "").split(","));
-      else if (!a.startsWith("-")) append(targets, a.split(","));
+      else if (!a.startsWith("-")) append(targets, a.startsWith("$(") ? [a] : a.split(","));
     }
-    return { recursive, targets, noPreserveRoot: false };
+    return { recursive, targets, noPreserveRoot: false, filters };
   }
   if (s.cmd === "rmdir" || s.cmd === "rd" || s.cmd === "del" || s.cmd === "erase") {
     const recursive = argv.some((a) => /^\/s$/i.test(a));
@@ -400,13 +675,19 @@ function removeSpec(s: Stage): RemoveSpec {
 }
 
 function removeRules(s: Stage, ctx: Context): Decision[] {
-  const spec = removeSpec(s);
+  const spec = removeSpec(s, ctx.shellDialect);
   const out: Decision[] = [];
   if (spec.noPreserveRoot) {
     out.push(deny("shell.rm-recursive-root", `${s.cmd} --no-preserve-root`, "Nothing in a project needs the filesystem root deleted."));
   }
   const destructive = spec.recursive || s.cmd === "del" || s.cmd === "erase" || s.cmd === "shred";
-  for (const t of spec.targets) out.push(judgeRemoveTarget(t, destructive, spec.recursive, s, ctx));
+  // `Remove-Item * -Include *.log` removes the matching files in the working directory, not all of
+  // it: without -Recurse each pattern is judged as the path it names there. With -Recurse the
+  // patterns apply at every depth, where a protected file may match them, so the wipe is judged.
+  const filters = spec.filters ?? [];
+  const narrowed = !spec.recursive && filters.length > 0 && filters.every((f) => !/^\*(\.\*)?$/.test(f));
+  const targets = narrowed ? spec.targets.flatMap((t) => (CWD_WIPE_LITERAL.test(stripQuotes(t)) ? filters : [t])) : spec.targets;
+  for (const t of targets) out.push(judgeRemoveTarget(t, destructive, spec.recursive, s, ctx));
   return out;
 }
 
@@ -417,7 +698,8 @@ const CWD_WIPE_LITERAL = /^(\.|\.\/|\.\\|\.\/\*|\.\\\*|\*|\*\.\*|\.\*|\*\*|\.\.|
 /** A leading expansion that names the home directory. Rewritten to `~` so the rest of the path is classified. */
 const HOME_PREFIX = /^(?:\$\{HOME(?::[?-][^}]*)?\}|\$HOME|\$\{?env:USERPROFILE\}?|%USERPROFILE%)(?=[\\/])/i;
 /** A leading expansion that names the working directory. Rewritten to `.` so the rest of the path is classified. */
-const CWD_PREFIX = /^(?:\$\{PWD(?::[?-][^}]*)?\}|\$PWD|\$\(\s*pwd\s*\)|`\s*pwd\s*`)(?=[\\/])/;
+const CWD_PREFIX = /^(?:\$\{PWD(?::[?-][^}]*)?\}|\$PWD|\$\(\s*pwd\s*\)|`\s*pwd\s*`|%CD%)(?=[\\/])/;
+const CWD_PREFIX_ANY_CASE = new RegExp(CWD_PREFIX.source, "i");
 /** A guarded expansion (`VAR:?unset` in braces) or a command substitution: unverifiable, but safe once a literal sub-path follows. */
 const GUARDED_PREFIX = /^(?:\$\{[A-Za-z_][A-Za-z0-9_]*:\?[^}]*\}|\$\([^()]*(?:\([^()]*\)[^()]*)*\)|`[^`]*`)(?=[\\/])/;
 const SUBSTITUTION = /\$\(|`/;
@@ -486,7 +768,8 @@ function judgeRemoveTarget(target: string, destructive: boolean, recursive: bool
 
   // `$HOME/x`, `$env:USERPROFILE\x`, `$PWD/x`, `$(pwd)/x`: the prefix is known, so classify the rest like `~/x` or `./x`.
   const home = HOME_PREFIX.exec(t);
-  const cwd = home ? null : CWD_PREFIX.exec(t);
+  // PowerShell's variable names ignore case (`$pwd\dist`); bash's do not, where `$pwd` is another, likely empty, variable.
+  const cwd = home ? null : (ctx.shellDialect === "powershell" ? CWD_PREFIX_ANY_CASE : CWD_PREFIX).exec(t);
   if (home) t = `~${t.slice(home[0].length)}`;
   else if (cwd) t = `.${t.slice(cwd[0].length)}`;
 
@@ -497,10 +780,13 @@ function judgeRemoveTarget(target: string, destructive: boolean, recursive: bool
     return deny("shell.rm-recursive-home", `${s.cmd} targets the home directory (${shownTarget(t)})`, "Deleting the home directory destroys the user's machine state. Name the specific directory inside the project.");
   }
   if (CWD_WIPE_LITERAL.test(t) && !rename) {
-    if (recursive || /\*/.test(t) || s.cmd === "del" || s.cmd === "erase") {
-      return deny("shell.rm-recursive-cwd", `${s.cmd} ${t} wipes the working directory`, "Delete specific paths (for example `rm -rf dist node_modules`). If the whole tree must go, the user does that.");
+    if (!(recursive || /\*/.test(t) || s.cmd === "del" || s.cmd === "erase")) return ALLOW;
+    // Where the agent's working directory is known and is not the project root (`cd dist && rm -rf *`),
+    // what goes is that directory's contents, judged like the directory itself below.
+    if (ctx.cwd === undefined || classifyPath(ctx.cwd, ctx).category === "project-root") {
+      return deny("shell.rm-recursive-cwd", `${s.cmd} ${t} wipes the working directory`, "Delete specific paths (for example `rm -rf dist node_modules`), or join the cd with && (`cd dist && rm -rf *`) so nothing is deleted if the cd fails. If the whole tree must go, the user does that.");
     }
-    return ALLOW;
+    t = ctx.cwd;
   }
   // `"${VAR:?unset}/sub"` or `"$(git rev-parse --show-toplevel)/sub"`: an empty value aborts, so the
   // sub-path is what gets deleted. Classify it as if it were under the working directory, so
@@ -811,7 +1097,8 @@ function gitRules(s: Stage, ctx: Context): Decision[] {
     }
   };
 
-  if (rest.includes("--no-verify")) {
+  // Only the commands that run hooks take --no-verify; elsewhere (`git grep -e --no-verify`, `git log -S`) it is a search term.
+  if (HOOK_RUNNERS.has(sub) && rest.includes("--no-verify")) {
     out.push(deny("shell.hook-bypass", `git ${sub} --no-verify skips the project's hooks`, HOOK_BYPASS_REMEDIATION));
   }
   const bypass = hookBypassEnv(s.env);
@@ -908,9 +1195,15 @@ function gitRules(s: Stage, ctx: Context): Decision[] {
       break;
     case "config": {
       const f = flagsOf(rest, 0, ["-f", "--file", "--blob", "--type", "--default", "--get-color"]);
-      const readOnly = ["get", "get-all", "get-regexp", "get-urlmatch", "list", "show-origin", "show-scope"].some((flag) => f.long.has(flag)) || f.short.has("l");
+      // git 2.46 spells the actions as subcommands (`git config get|list|set|unset KEY`); before that,
+      // a key alone reads it and a mutating flag or a value changes it.
+      const p = f.positionals;
+      const action = ["get", "list", "set", "unset", "rename-section", "remove-section", "edit"].includes(p[0] ?? "") ? p[0] : undefined;
+      const mutates = ["unset", "unset-all", "add", "replace-all", "edit", "rename-section", "remove-section"].some((flag) => f.long.has(flag)) || f.short.has("e");
+      const readOnly = ["get", "get-all", "get-regexp", "get-urlmatch", "list", "show-origin", "show-scope"].some((flag) => f.long.has(flag)) || f.short.has("l")
+        || action === "get" || action === "list" || (action === undefined && p.length === 1 && !mutates);
       if (readOnly) break;
-      const key = f.positionals[0] ?? "";
+      const key = (action === undefined ? p[0] : p[1]) ?? "";
       if (HOOK_CONFIG_KEY.test(key)) {
         out.push(deny("shell.hook-bypass", `git config ${key} redirects or disables hooks`, HOOK_BYPASS_REMEDIATION));
       } else if (f.long.has("global") || f.long.has("system")) {
@@ -923,6 +1216,9 @@ function gitRules(s: Stage, ctx: Context): Decision[] {
   }
   return out;
 }
+
+/** git commands that run hooks and take --no-verify to skip them. */
+const HOOK_RUNNERS = new Set(["commit", "push", "merge", "am", "rebase", "pull", "cherry-pick", "revert", "switch", "checkout"]);
 
 const HOOK_BYPASS_REMEDIATION = "Hooks are this project's gates. Let them run. If a hook fails, fix what it reports, or tell the user which hook blocks you and why.";
 
@@ -1147,14 +1443,16 @@ function killRules(s: Stage): Decision[] {
 // ---------------------------------------------------------------------------
 // credentials on the move
 
+const PUBLIC_KEY = /\.pub$/i;
+
 function credentialSourceOf(s: Stage, ctx: Context): string | null {
   const candidates = [...s.argv.slice(1), ...s.reads];
   if (!FILE_READERS.has(s.cmd) && s.reads.length === 0 && !NETWORK_SINKS.has(s.cmd)) return null;
   for (const a of candidates) {
-    if (a.startsWith("-")) continue;
+    if (a.startsWith("-") || PUBLIC_KEY.test(a)) continue;
     const info = classifyPath(a, ctx);
     if (info.isTestFile) continue;
-    if (CRED_FILE.test(a) || info.category === "home-config" || info.category === "env-file") return a;
+    if ((CRED_FILE.test(a) && !isPublicPem(a)) || info.category === "home-config" || info.category === "env-file") return a;
   }
   return null;
 }
@@ -1164,7 +1462,7 @@ function privateCredential(a: string, ctx: Context): string | null {
   const info = classifyPath(homeSpelling(a), ctx);
   if (info.isTestFile) return null;
   const rel = info.homeRel ?? info.rel ?? info.abs;
-  const isPrivate = PRIVATE_FILE.test(a) || (info.homeRel !== null && (sshPrivate(`/${info.homeRel}`) || PRIVATE_FILE.test(`/${info.homeRel}`) || /^\.(npmrc|aws\/credentials)$/.test(info.homeRel)));
+  const isPrivate = isPrivateFile(a) || (info.homeRel !== null && (sshPrivate(`/${info.homeRel}`) || isPrivateFile(`/${info.homeRel}`) || /^\.(npmrc|aws\/credentials)$/.test(info.homeRel)));
   return isPrivate ? rel : null;
 }
 
@@ -1180,38 +1478,132 @@ function credentialStoreDir(a: string, ctx: Context): string | null {
   const info = classifyPath(homeSpelling(a), ctx);
   if (info.homeRel === null) return null;
   const rel = info.homeRel.replace(/[\\/]+\.?$/, "");
-  return /^\.(ssh|aws|gnupg|kube)$|^\.gnupg[\\/]private-keys-v1\.d$/i.test(rel) ? rel : null;
+  return /^\.(ssh|aws|gnupg|kube|azure)$|^\.config[\\/]gcloud$|^\.gnupg[\\/]private-keys-v1\.d$/i.test(rel) ? rel : null;
 }
 
+/** Filters, sorters and comparers that print the files they are given, beyond FILE_READERS. */
+const CONTENT_READERS = new Set(["cut", "sort", "uniq", "diff", "comm", "join", "paste", "fold", "rev", "column", "fmt", "pr", "expand", "unexpand", "shuf", "iconv", "base32", "basenc", "zcat", "zless", "zmore", "sdiff"]);
+/**
+ * Readers whose first operand is a pattern or program, not a file: `grep PATTERN FILE`,
+ * `sed SCRIPT FILE`, `awk PROGRAM FILE`, `jq FILTER FILE`. A flag that gives the pattern
+ * another way (`grep -e`, `sed -f`, `awk -f`) makes every operand a file.
+ */
+const PATTERN_READERS: Record<string, RegExp> = {
+  grep: /^(-[a-zA-Z]*[ef]|--regexp|--file)(=|$)/, egrep: /^(-[a-zA-Z]*[ef]|--regexp|--file)(=|$)/, fgrep: /^(-[a-zA-Z]*[ef]|--regexp|--file)(=|$)/,
+  rg: /^(-[a-zA-Z]*[ef]|--regexp|--file)(=|$)/, ag: /^(-[a-zA-Z]*f|--file-search-regex)(=|$)/, ack: /^(--match)(=|$)/,
+  sed: /^(-[a-zA-Z]*[ef]|--expression|--file)(=|$)/, awk: /^(-f|--file)(=|$)/, gawk: /^(-f|--file)(=|$)/, mawk: /^-f$/, nawk: /^-f$/,
+  jq: /^(-f|--from-file)(=|$)/, "select-string": /^-pattern$/i, sls: /^-pattern$/i, findstr: /^\/[cg]:/i,
+};
+/** Searchers that walk a directory they are given: grep only with -r, the others always. */
+const RECURSIVE_SEARCHERS = new Set(["rg", "ag", "ack", "select-string", "sls"]);
+/** Searchers, and the flags after which they print file names, counts or nothing, not the lines they found. */
+const SEARCHERS = new Set(["grep", "egrep", "fgrep", "rg", "ag", "ack", "select-string", "sls"]);
+const LISTS_ONLY = /^(-[a-z]*[lcq][a-z]*|--files-with(out)?-match(es)?|--count|--quiet|--silent|--files)$/;
+/** Commands that take a key on stdin to load or import it, not to print it. */
+const KEY_CONSUMERS = new Set(["ssh-add", "ssh-keygen", "gpg", "gpg2", "ssh"]);
+
+const CREDENTIAL_READ_FIX = "Private keys stay out of the transcript. Refer to the file by path; if a value is needed, the user supplies it through an environment variable.";
+
+/**
+ * `cat ~/.ssh/id_rsa`, and every other way to print a key: a filter or comparer given it,
+ * `grep`/`sed`/`awk`/`jq` over it, a recursive search of a store such as `~/.ssh`,
+ * `dd if=`, `openssl ... -in`, an archive of it, or any command with it on stdin (`sort < key`).
+ */
 function credentialReadRules(s: Stage, ctx: Context): Decision[] {
   const out: Decision[] = [];
-  for (const a of s.argv.slice(1)) {
-    if (a.startsWith("-")) continue;
-    const rel = privateCredential(a, ctx);
-    if (rel !== null) {
-      out.push(deny("shell.credential-read", `${s.cmd} ${a} prints a private key or credential store (${rel})`, "Private keys stay out of the transcript. Refer to the file by path; if a value is needed, the user supplies it through an environment variable."));
+  const hit = (a: string, rel: string, verb = "prints") => out.push(deny("shell.credential-read", `${s.cmd} ${a} ${verb} a private key or credential store (${rel})`, CREDENTIAL_READ_FIX));
+  if (!KEY_CONSUMERS.has(s.cmd)) {
+    for (const r of s.reads) {
+      const rel = privateCredential(r, ctx);
+      if (rel !== null) hit(`< ${r}`, rel);
+    }
+  }
+  const args = s.argv.slice(1);
+  if (FILE_READERS.has(s.cmd) || CONTENT_READERS.has(s.cmd)) {
+    for (const a of args) {
+      if (a.startsWith("-")) continue;
+      const rel = privateCredential(a, ctx);
+      if (rel !== null) hit(a, rel);
+    }
+    return out;
+  }
+  const pattern = PATTERN_READERS[s.cmd];
+  if (pattern !== undefined) {
+    const pwsh = s.cmd === "select-string" || s.cmd === "sls";
+    if (SEARCHERS.has(s.cmd) && args.some((a) => (pwsh ? /^-(list|quiet)$/i : LISTS_ONLY).test(a))) return out;
+    const recursive = RECURSIVE_SEARCHERS.has(s.cmd) || args.some((a) => /^(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive|--dereference-recursive|-Recurse)$/.test(a));
+    const operands: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (a === "--") { append(operands, args.slice(i + 1)); break; }
+      // Select-String's -Path names a file wherever it stands.
+      if (pwsh && /^-(path|literalpath)$/i.test(a)) { if (args[i + 1] !== undefined) operands.push(args[++i]); continue; }
+      if (a.startsWith("-") || (s.cmd === "findstr" && /^\//.test(a))) continue;
+      operands.push(a);
+    }
+    const files = args.some((a) => pattern.test(a)) ? operands : operands.slice(1);
+    for (const a of files) {
+      const rel = privateCredential(a, ctx) ?? (recursive ? credentialStoreDir(a, ctx) : null);
+      if (rel !== null) hit(a, rel);
+    }
+    return out;
+  }
+  if (s.cmd === "dd") {
+    for (const a of args) {
+      const rel = a.startsWith("if=") ? privateCredential(a.slice(3), ctx) : null;
+      if (rel !== null) hit(a, rel);
+    }
+    return out;
+  }
+  if (s.cmd === "openssl") {
+    // `-pubout` and `-noout` print the public half or nothing.
+    if (args.some((a) => a === "-pubout" || a === "-noout")) return out;
+    for (const a of args) {
+      if (a.startsWith("-")) continue;
+      const rel = privateCredential(a, ctx);
+      if (rel !== null) hit(a, rel);
+    }
+    return out;
+  }
+  if (["tar", "zip", "7z", "7za", "compress-archive", "jar"].includes(s.cmd)) {
+    for (const a of args) {
+      const v = a.startsWith("-") ? null : a;
+      if (v === null) continue;
+      const rel = privateCredential(v, ctx) ?? credentialStoreDir(v, ctx);
+      if (rel !== null) hit(v, rel, "packs");
     }
   }
   return out;
 }
 
 /** Sources and destination of cp/mv and their Windows forms: `-t DIR`, `--target-directory=DIR`, `-Path`/`-Destination`, or positionals with the last as destination. */
-function copyOperands(s: Stage): { sources: string[]; dest: string | undefined } {
+function copyOperands(s: Stage): { sources: string[]; dest: string | undefined; intoDir: boolean } {
   const argv = s.argv.slice(1);
   const pwsh = s.cmd === "copy-item" || s.cmd === "move-item" || s.cmd === "cpi" || s.cmd === "mi";
   const sources: string[] = [];
   const positionals: string[] = [];
   let dest: string | undefined;
+  let intoDir = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (/^-(path|literalpath|lp|p)$/i.test(a)) {
       for (const v of (argv[++i] ?? "").split(",")) if (v !== "") sources.push(v);
     } else if (pwsh && /^-(destination|d)$/i.test(a)) {
       dest = argv[++i];
+    } else if (pwsh && /^-(exclude|include|filter|credential|tosession|fromsession)$/i.test(a)) {
+      // Copy-Item's filters and sessions take a value that is not a path to copy.
+      i++;
+    } else if (!pwsh && (/^(-S|--suffix)$/.test(a) || (s.cmd === "install" && /^(-m|--mode|-o|--owner|-g|--group)$/.test(a)))) {
+      // A backup suffix, and install's mode and ownership.
+      i++;
+    } else if ((s.cmd === "move" || s.cmd === "copy" || s.cmd === "xcopy") && /^\/-?[a-z]$/i.test(a)) {
+      // cmd's switches (`move /y`, `copy /b`).
     } else if (a === "-t" || a === "--target-directory") {
       dest = argv[++i];
+      intoDir = true;
     } else if (a.startsWith("--target-directory=")) {
       dest = a.slice("--target-directory=".length);
+      intoDir = true;
     } else if (a === "--") {
       append(positionals, argv.slice(i + 1));
       break;
@@ -1220,7 +1612,8 @@ function copyOperands(s: Stage): { sources: string[]; dest: string | undefined }
     }
   }
   if (sources.length === 0 && dest === undefined) {
-    if (positionals.length < 2) return { sources: [], dest: undefined };
+    // One operand names no destination (`ln -s target` links it into the working directory).
+    if (positionals.length < 2) return { sources: positionals, dest: undefined, intoDir };
     dest = positionals[positionals.length - 1];
     append(sources, positionals.slice(0, -1));
   } else if (sources.length === 0) {
@@ -1228,7 +1621,7 @@ function copyOperands(s: Stage): { sources: string[]; dest: string | undefined }
   } else if (dest === undefined && positionals.length > 0) {
     dest = positionals[positionals.length - 1];
   }
-  return { sources, dest };
+  return { sources, dest, intoDir };
 }
 
 /** Moving a protected path away is the same act as deleting it, so a mv source is judged like an rm target. */
@@ -1255,9 +1648,9 @@ function moveSourceRules(s: Stage, ctx: Context): Decision[] {
 
 /** Copying a private key or credential store is reading it: the copy lands where it can be committed or printed. */
 function copySourceRules(s: Stage, ctx: Context): Decision[] {
-  if (!COPIERS.has(s.cmd)) return [];
+  const sources = COPIERS.has(s.cmd) ? copyOperands(s).sources : s.cmd === "rsync" || s.cmd === "scp" ? transferOperands(s).sources.filter((src) => !isRemote(src)) : [];
   const out: Decision[] = [];
-  for (const src of copyOperands(s).sources) {
+  for (const src of sources) {
     const rel = privateCredential(src, ctx) ?? credentialStoreDir(src, ctx);
     if (rel !== null) {
       out.push(deny("shell.credential-read", `${s.cmd} ${src} copies a private key or credential store (${rel})`, "Private keys and credential stores stay where the user put them. Refer to the file by path (for example `ssh -i ~/.ssh/id_ed25519`); if a value is needed, the user supplies it through an environment variable."));
@@ -1271,9 +1664,10 @@ function uploadRules(s: Stage, ctx: Context): Decision[] {
   const argv = s.argv;
   const isCred = (p: string): boolean => {
     const clean = p.replace(/^@/, "").replace(/^[^=]*=@/, "");
-    if (!clean || clean === "-") return false;
+    // A public key is made to be sent (`ssh-copy-id` by hand).
+    if (!clean || clean === "-" || PUBLIC_KEY.test(clean)) return false;
     const info = classifyPath(clean, ctx);
-    return !info.isTestFile && (CRED_FILE.test(clean) || info.category === "home-config" || info.category === "env-file");
+    return !info.isTestFile && ((CRED_FILE.test(clean) && !isPublicPem(clean)) || info.category === "home-config" || info.category === "env-file");
   };
   if (DOWNLOADERS.has(s.cmd)) {
     for (let i = 1; i < argv.length; i++) {
@@ -1291,10 +1685,13 @@ function uploadRules(s: Stage, ctx: Context): Decision[] {
     }
     for (const r of s.reads) if (isCred(r)) out.push(deny("shell.credential-exfil", `${s.cmd} reads ${r} as input`, "Credentials never leave the machine through an agent session."));
   } else {
-    const positionals = argv.slice(1).filter((a) => !a.startsWith("-"));
-    const remote = positionals.some((p) => /^[^/]+:/.test(p) || /^rsync:\/\//.test(p) || /@/.test(p));
-    if (remote && positionals.some((p) => isCred(p))) {
-      out.push(deny("shell.credential-exfil", `${s.cmd} copies a credential file to a remote host`, "Credentials never leave the machine through an agent session."));
+    // scp and rsync send their sources to the destination; only a remote destination sends them off
+    // the machine. Option values (`-i key`, `--exclude .env`) are not sources.
+    if (s.cmd === "scp" || s.cmd === "rsync") {
+      const { sources, dest } = transferOperands(s);
+      if (dest !== undefined && isRemote(dest) && sources.some((p) => !isRemote(p) && isCred(p))) {
+        out.push(deny("shell.credential-exfil", `${s.cmd} copies a credential file to a remote host`, "Credentials never leave the machine through an agent session."));
+      }
     }
     for (const r of s.reads) if (isCred(r)) out.push(deny("shell.credential-exfil", `${s.cmd} sends ${r} over the network`, "Credentials never leave the machine through an agent session."));
   }
@@ -1309,7 +1706,17 @@ function uploadRules(s: Stage, ctx: Context): Decision[] {
  * cannot touch data volumes and `docker volume rm <name>` is the named removal the remediation
  * asks for, so both pass.
  */
+/** True when the command asks for its usage text: `--help`, `-help` or `-h` before any `--`. */
+function asksForHelp(argv: readonly string[]): boolean {
+  for (const a of argv.slice(1)) {
+    if (a === "--") return false;
+    if (a === "--help" || a === "-help" || a === "-h") return true;
+  }
+  return false;
+}
+
 function dockerRules(s: Stage): Decision[] {
+  if (asksForHelp(s.argv)) return [];
   const a = s.argv.slice(1).filter((x) => !x.startsWith("-"));
   const joined = s.argv.join(" ");
   const volumes = /\s(-v|--volumes)\b/.test(joined);
@@ -1353,6 +1760,8 @@ function publishRules(s: Stage): Decision[] {
   // real thing. A dry run excuses an ask; a destroy is excused only where the tool implements one
   // (`kubectl delete --dry-run=client|server`, `aws s3 rm --dryrun`).
   const dryRun = argv.some((a) => DRY_RUN.test(a));
+  // `--help` prints usage and stops. A package manager hands the flags after a script's name to the script, so there it counts only for its own commands.
+  if (asksForHelp(argv) && (!["npm", "pnpm", "yarn", "bun"].includes(s.cmd) || tail[0] === "publish" || tail[0] === "unpublish")) return [];
   const askIt = (what: string, why: string): Decision[] => (dryRun ? [] : [ask("shell.deploy-or-publish", `${what} reaches a shared destination`, why)]);
   const denyIt = (what: string, why: string): Decision[] => [deny("shell.remote-destroy", `${what} destroys shared infrastructure`, why)];
   const human = "Publishing and deploying are not undone by a revert. Tell the user it is ready and let them pull the trigger.";
@@ -1419,9 +1828,10 @@ function publishRules(s: Stage): Decision[] {
       if (tail[0] === "deploy") return askIt("firebase deploy", human);
       return [];
     case "gcloud": {
-      const g = tail.join(" ");
-      if (GCLOUD_DESTROY.test(g) || (tail[0] === "storage" && tail[1] === "rm" && RECURSIVE_FLAG.test(joined))) return denyIt(`gcloud ${tail.slice(0, 3).join(" ")}`, never);
-      if (tail[1] === "deploy" || (tail[0] === "deploy" && tail.length > 2 && !/^(list|describe|get)/.test(tail[2]))) return askIt(`gcloud ${tail.slice(0, 3).join(" ")}`, human);
+      const words = gcloudCommand(argv);
+      const g = words.join(" ");
+      if (GCLOUD_DESTROY.test(g) || (words[0] === "storage" && words[1] === "rm" && RECURSIVE_FLAG.test(joined))) return denyIt(`gcloud ${words.slice(0, 3).join(" ")}`, never);
+      if (words[1] === "deploy" || (words[0] === "deploy" && words.length > 2 && !/^(list|describe|get)/.test(words[2]))) return askIt(`gcloud ${words.slice(0, 3).join(" ")}`, human);
       return [];
     }
     case "gsutil":
@@ -1431,7 +1841,9 @@ function publishRules(s: Stage): Decision[] {
       const svc = tail[0] ?? "";
       const op = tail[1] ?? "";
       if ((svc === "s3" && op === "rb") || (svc === "s3" && op === "rm" && /--recursive\b/.test(joined) && !dryRun) || AWS_DESTROY.test(op)) return denyIt(`aws ${svc} ${op}`, never);
-      if ((svc === "s3" && op === "sync") || AWS_DEPLOY.test(op) || (svc === "deploy" && op !== "" && !/^(list|get|batch-get|describe)-/.test(op))) return askIt(`aws ${svc} ${op}`, human);
+      // `aws s3 sync s3://bucket ./dir` downloads: the bucket comes first and is the only one named.
+      const download = svc === "s3" && op === "sync" && /^s3:\/\//.test(tail[2] ?? "") && tail[3] !== undefined && argv.filter((a) => /^s3:\/\//.test(a)).length === 1;
+      if ((svc === "s3" && op === "sync" && !download) || AWS_DEPLOY.test(op) || (svc === "deploy" && op !== "" && !/^(list|get|batch-get|describe)-/.test(op))) return askIt(`aws ${svc} ${op}`, human);
       return [];
     }
     case "az": {
@@ -1450,10 +1862,15 @@ function publishRules(s: Stage): Decision[] {
       if (tail[0] === "destroy") return denyIt("pulumi destroy", never);
       if (tail[0] === "up") return askIt("pulumi up", human);
       return [];
-    case "kubectl":
-      if (tail[0] === "delete" && !dryRun && (tail.includes("namespace") || tail.includes("ns") || /\s(--all|-A|--all-namespaces)\b/.test(joined))) return denyIt("kubectl delete across a namespace", never);
-      if (tail[0] === "delete" || tail[0] === "apply" || tail[0] === "drain" || (tail[0] === "rollout" && !["status", "history"].includes(tail[1] ?? ""))) return askIt(`kubectl ${tail.slice(0, 2).join(" ")}`, human);
+    case "kubectl": {
+      const words = commandWords(argv, KUBECTL_VALUED);
+      // The kinds come as `namespace x`, `ns,pod x` or `namespace/x`; each later word may be another `kind/name`.
+      const namespace = /^(namespaces?|ns)(\/.*)?$/;
+      const deletesNamespace = (words[1] ?? "").split(",").some((k) => namespace.test(k)) || words.slice(2).some((w) => /^(namespaces?|ns)\//.test(w));
+      if (words[0] === "delete" && !dryRun && (deletesNamespace || /\s(--all|-A|--all-namespaces)\b/.test(joined))) return denyIt("kubectl delete across a namespace", never);
+      if (words[0] === "delete" || words[0] === "apply" || words[0] === "drain" || (words[0] === "rollout" && !["status", "history"].includes(words[1] ?? ""))) return askIt(`kubectl ${words.slice(0, 2).join(" ")}`, human);
       return [];
+    }
     case "helm":
       if (["install", "upgrade", "uninstall", "delete", "rollback"].includes(tail[0] ?? "")) return askIt(`helm ${tail[0]}`, human);
       return [];
@@ -1480,6 +1897,33 @@ const RECURSIVE_FLAG = /(^|\s)(-r|-R|--recursive)(\s|$)/;
 /** Operations that remove a whole account, project, cluster, database, bucket or app. Anything narrower (one blob, one image tag, one lock) passes. */
 const AWS_DESTROY = /^(terminate-instances|delete-db-instance|delete-db-cluster|delete-stack|delete-function|delete-table|delete-bucket|delete-user|delete-role|delete-cluster)$/;
 const AWS_DEPLOY = /^(deploy|update-function-code|update-service|put-bucket-policy|create-deployment)$/;
+/** gcloud's global flags that take their value as the next word (`gcloud --project p projects delete p`). */
+const GCLOUD_VALUED = new Set(["--project", "--account", "--configuration", "--verbosity", "--format", "--impersonate-service-account", "--billing-project", "--flags-file", "--trace-token", "--access-token-file", "--region", "--zone"]);
+
+/** kubectl's flags that take their value as the next word (`kubectl delete -n ns pod web`). */
+const KUBECTL_VALUED = new Set(["-n", "--namespace", "--context", "--cluster", "--kubeconfig", "--user", "-l", "--selector", "-f", "--filename", "-k", "--kustomize", "-o", "--output", "--field-selector", "--grace-period", "--timeout", "--cascade", "-s", "--server", "--as", "--as-group", "--token", "--request-timeout"]);
+
+/** A command's words after argv[0], without flags or the values of the flags in `valued`. */
+function commandWords(argv: readonly string[], valued: ReadonlySet<string>): string[] {
+  const words: string[] = [];
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--") break;
+    if (a.startsWith("-")) {
+      if (valued.has(a)) i++;
+      continue;
+    }
+    words.push(a);
+  }
+  return words;
+}
+
+/** gcloud's command words, without the release track (`alpha`, `beta`, `preview`) that runs the same command. */
+function gcloudCommand(argv: readonly string[]): string[] {
+  const words = commandWords(argv, GCLOUD_VALUED);
+  return /^(alpha|beta|preview)$/.test(words[0] ?? "") ? words.slice(1) : words;
+}
+
 const GCLOUD_DESTROY = /^(projects delete|sql instances delete|firestore databases delete|storage buckets delete|container clusters delete|compute (?:instances|disks) delete|run services delete|functions delete|iam service-accounts delete|spanner instances delete|bigtable instances delete|redis instances delete|filestore instances delete|artifacts repositories delete|app services delete)(\s|$)/;
 const AZ_DESTROY = /^(group delete|aks delete|sql (?:server|db|mi) delete|storage account delete|vm delete|vmss delete|webapp delete|functionapp delete|keyvault (?:delete|purge)|cosmosdb delete|postgres (?:server|flexible-server) delete|mysql (?:server|flexible-server) delete|acr delete|containerapp delete|appservice plan delete|staticwebapp delete)(\s|$)/;
 /** Deploy-shaped creates only: `az deployment ... create`, `az webapp up`, `az containerapp up`. Creating a tag, a work item or an app registration is not a deploy. */
@@ -1490,7 +1934,8 @@ function baselineRefreshRules(s: Stage): Decision[] {
   const argv = s.argv;
   const tail = argv.slice(1);
   const runners = new Set(["vitest", "jest", "playwright", "pytest", "ava", "mocha", "bun", "deno", "node"]);
-  const updateFlag = tail.some((a) => /^(-u|--update|--updateSnapshot|--update-snapshots|--snapshot-update|--force-update-snapshots)$/.test(a));
+  // mocha's `-u` is `--ui`; only its long forms update snapshots (through a plugin).
+  const updateFlag = tail.some((a) => /^(--update|--updateSnapshot|--update-snapshots|--snapshot-update|--force-update-snapshots)$/.test(a) || (a === "-u" && s.cmd !== "mocha"));
   let hit = false;
   if (runners.has(s.cmd) && updateFlag) hit = true;
   else if (s.cmd === "cargo" && tail[0] === "insta" && (tail[1] === "accept" || tail.includes("--accept"))) hit = true;
@@ -1543,6 +1988,51 @@ function ahCliRules(s: Stage): Decision[] {
 }
 
 const AH_TAMPER_REMEDIATION = "Hook wiring is how this project enforces its rules. Tell the user which refusal is in your way; changing the wiring is their call, made from their own terminal.";
+
+/**
+ * A nested agent started with hooks switched off, the per-run form of removing the wiring:
+ * Claude Code's `--bare`, `--safe-mode`, `--restricted`, `--setting-sources` without every source,
+ * `--settings '{"disableAllHooks": true}'`, `CLAUDE_CODE_SAFE_MODE` and `CLAUDE_CONFIG_DIR`; Codex's
+ * `--disable hooks`, `-c features.hooks=false` and a `CODEX_HOME` with none of the user's trust.
+ */
+function nestedAgentRules(s: Stage): Decision[] {
+  // Printing the version or usage starts no agent.
+  if (asksForHelp(s.argv) || s.argv.slice(1).some((a) => a === "--version" || a === "-v" || a === "-V")) return [];
+  const what = s.cmd === "claude" ? claudeHooksOff(s) : s.cmd === "codex" ? codexHooksOff(s) : null;
+  return what === null ? [] : [deny("shell.hook-tamper", `${s.cmd} ${what} starts an agent without this project's hooks`, AH_TAMPER_REMEDIATION)];
+}
+
+function claudeHooksOff(s: Stage): string | null {
+  if (/^(1|true|yes)$/i.test(s.env.CLAUDE_CODE_SAFE_MODE ?? "")) return "with CLAUDE_CODE_SAFE_MODE set";
+  if (s.env.CLAUDE_CONFIG_DIR !== undefined) return "with CLAUDE_CONFIG_DIR set";
+  const args = s.argv.slice(1);
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--") break;
+    if (a === "--bare" || a === "--safe-mode" || a === "--restricted") return a;
+    const [name, inline] = a.startsWith("--") && a.includes("=") ? [a.slice(0, a.indexOf("=")), a.slice(a.indexOf("=") + 1)] : [a, undefined];
+    if (name === "--setting-sources") {
+      const sources = new Set((inline ?? args[i + 1] ?? "").split(",").map((x) => x.trim().toLowerCase()));
+      if (!["user", "project", "local"].every((x) => sources.has(x))) return `${name} ${inline ?? args[i + 1] ?? ""}`.trim();
+    }
+    if (name === "--settings" && /"?disableAllHooks"?\s*:\s*true/.test(inline ?? args[i + 1] ?? "")) return "--settings with disableAllHooks";
+  }
+  return null;
+}
+
+function codexHooksOff(s: Stage): string | null {
+  if (s.env.CODEX_HOME !== undefined) return "with CODEX_HOME set";
+  const args = s.argv.slice(1);
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--") break;
+    const [name, inline] = a.startsWith("--") && a.includes("=") ? [a.slice(0, a.indexOf("=")), a.slice(a.indexOf("=") + 1)] : [a, undefined];
+    const value = inline ?? args[i + 1] ?? "";
+    if (name === "--disable" && value.toLowerCase() === "hooks") return "--disable hooks";
+    if ((name === "-c" || name === "--config") && /^features\s*(\.\s*hooks\s*=\s*false|=\s*\{[^}]*\bhooks\s*=\s*false)/i.test(value)) return `${name} ${value}`;
+  }
+  return null;
+}
 
 /** What `ah init <options>` does to the guard's wiring, or null when it leaves the guard as strong as it is. */
 function ahInitTamper(options: readonly string[]): string | null {
@@ -1720,12 +2210,57 @@ function writeTargetsOf(s: Stage, deadline: number | undefined): string[] {
   const targets = [...s.writes];
   const positionals = s.argv.slice(1).filter((a) => !a.startsWith("-"));
   switch (s.cmd) {
-    case "sed":
-      if (s.argv.includes("-i") || s.argv.some((a) => /^-i/.test(a) || a === "--in-place")) {
-        const hasScriptFlag = s.argv.some((a) => a === "-e" || a === "-f" || a === "--expression" || a === "--file");
-        append(targets, (hasScriptFlag ? positionals : positionals.slice(1)));
-      }
+    case "sed": {
+      // `-i`, `-i.bak`, `-Ei`, `-ni`, `--in-place=.bak`; the script is the first operand unless -e or -f gave it.
+      if (!s.argv.some((a) => /^-[nrEsuz]*i/.test(a) || /^--in-place(?:=|$)/.test(a))) break;
+      const { positionals: files, values } = operands(s.argv, "efl", ["--expression", "--file", "--line-length"]);
+      const scripted = values.has("-e") || values.has("-f") || values.has("--expression") || values.has("--file");
+      append(targets, scripted ? files : files.slice(1));
       break;
+    }
+    case "perl":
+    case "ruby": {
+      // `perl -pi -e '...' file`, `perl -i.bak -pe`: the files after the code are rewritten in place.
+      if (!s.argv.some((a) => /^-[pnalswWtTXcdDuUvx0-9]*i/.test(a))) break;
+      const { positionals: files, values } = operands(s.argv, "eEIMmr", []);
+      append(targets, values.has("-e") || values.has("-E") ? files : files.slice(1));
+      break;
+    }
+    case "awk":
+    case "gawk": {
+      // `gawk -i inplace '{...}' file`: the inplace extension rewrites the files.
+      const { positionals: files, values } = operands(s.argv, "fFvilEe", ["--file", "--field-separator", "--assign", "--include", "--load", "--exec", "--source"]);
+      const included = [...(values.get("-i") ?? []), ...(values.get("--include") ?? [])];
+      if (!included.some((v) => /^inplace(?:\.awk)?$/.test(v))) break;
+      const program = values.has("-f") || values.has("--file") || values.has("-e") || values.has("--source") || values.has("-E") || values.has("--exec");
+      append(targets, (program ? files : files.slice(1)).filter((f) => !/^[A-Za-z_]\w*=/.test(f)));
+      break;
+    }
+    case "yq": {
+      if (!s.argv.some((a) => a === "-i" || a === "--inplace" || /^-[a-zA-Z]*i$/.test(a) && !a.startsWith("--"))) break;
+      const { positionals: files, values } = operands(s.argv, "oIpe", ["--output-format", "--indent", "--input-format", "--expression", "--front-matter"]);
+      append(targets, values.has("-e") || values.has("--expression") || s.argv.includes("--from-file") ? files : files.slice(1));
+      break;
+    }
+    case "sponge":
+      append(targets, positionals);
+      break;
+    case "dd":
+      for (const a of s.argv.slice(1)) if (a.startsWith("of=")) targets.push(a.slice(3));
+      break;
+    case "curl":
+    case "wget":
+    case "iwr":
+    case "invoke-webrequest":
+    case "irm":
+    case "invoke-restmethod":
+      append(targets, downloadTargets(s));
+      break;
+    case "rsync": {
+      const { sources, dest } = transferOperands(s);
+      if (dest !== undefined && !isRemote(dest)) append(targets, copyTargets(sources, dest, false, true));
+      break;
+    }
     case "cp":
     case "mv":
     case "install":
@@ -1736,8 +2271,9 @@ function writeTargetsOf(s: Stage, deadline: number | undefined): string[] {
     case "move-item":
     case "cpi":
     case "mi": {
-      const { dest } = copyOperands(s);
-      if (dest !== undefined) targets.push(dest);
+      const { sources, dest, intoDir } = copyOperands(s);
+      if (dest !== undefined) append(targets, copyTargets(sources, dest, intoDir));
+      else if (s.cmd === "ln" && sources.length === 1) append(targets, copyTargets(sources, ".", true));
       break;
     }
     case "truncate":
@@ -1754,6 +2290,8 @@ function writeTargetsOf(s: Stage, deadline: number | undefined): string[] {
       append(targets, cmdletPaths(s.cmd, s.argv.slice(1), deadline));
       break;
     case "git":
+      // `git diff --output=file`, `git log --output file`.
+      append(targets, operands(s.argv, "", ["--output"]).values.get("--output") ?? []);
       break;
     default:
       break;
@@ -1761,7 +2299,122 @@ function writeTargetsOf(s: Stage, deadline: number | undefined): string[] {
   return targets;
 }
 
-function writeRules(target: string, s: Stage, ctx: Context): Decision[] {
+/**
+ * Positional arguments once options are set aside, and the values options took. `short` lists the
+ * letters whose value is the rest of the word or else the next word (`-o f`, `-of`, `-sSLo f`), `long`
+ * the long options whose value is the next word unless glued with `=`.
+ */
+function operands(argv: readonly string[], short: string, long: readonly string[]): { positionals: string[]; values: Map<string, string[]> } {
+  const positionals: string[] = [];
+  const values = new Map<string, string[]>();
+  const put = (k: string, v: string | undefined) => {
+    if (v === undefined) return;
+    const l = values.get(k);
+    if (l === undefined) values.set(k, [v]);
+    else l.push(v);
+  };
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--") {
+      append(positionals, argv.slice(i + 1));
+      break;
+    }
+    if (a.startsWith("--")) {
+      const eq = a.indexOf("=");
+      const name = eq < 0 ? a : a.slice(0, eq);
+      if (long.includes(name)) put(name, eq < 0 ? argv[++i] : a.slice(eq + 1));
+      continue;
+    }
+    if (a.startsWith("-") && a.length > 1) {
+      for (let l = 1; l < a.length; l++) {
+        if (!short.includes(a[l])) continue;
+        put(`-${a[l]}`, l === a.length - 1 ? argv[++i] : a.slice(l + 1));
+        break;
+      }
+      continue;
+    }
+    positionals.push(a);
+  }
+  return { positionals, values };
+}
+
+/**
+ * The files a copy to `dest` writes: `dest` itself, or `dest/<name>` for each source when `dest` is a
+ * directory, which the text shows by a trailing separator, `.`, `..` or `~`, a target-directory
+ * option, or several sources. A last segment with no extension (`.claude`, `config`) may be either,
+ * so both count; one with an extension (`vitest.config.ts.bak`) is taken as the file.
+ */
+function copyTargets(sources: readonly string[], dest: string, intoDir: boolean, contents = false): string[] {
+  const d = stripQuotes(dest);
+  const last = trimSeparators(d).split(/[\\/]/).pop() ?? "";
+  const dir = intoDir || sources.length > 1 || /[\\/]$/.test(d) || /^(?:\.{1,2}|~)$/.test(last) || last === "";
+  const maybeDir = !dir && /^\.?[^.]+$/.test(last);
+  const joined = sources.map((src) => {
+    const s = stripQuotes(src);
+    // rsync copies what a source ending in a separator holds, not the directory itself.
+    if (contents && /[\\/]$/.test(s)) return d;
+    const name = trimSeparators(s).split(/[\\/]/).pop() ?? "";
+    return name === "" || name === "." || name === ".." ? d : `${trimSeparators(d) || "/"}/${name}`;
+  });
+  return dir ? joined : maybeDir ? [d, ...joined] : [d];
+}
+
+/** Hosts in an scp or rsync operand: `host:path`, `user@host:path`, `rsync://`; a Windows drive (`C:\x`) is local. */
+function isRemote(p: string): boolean {
+  return (/^[^\\/:]+:/.test(p) && !/^[A-Za-z]:(?:[\\/]|$)/.test(p)) || /^(?:rsync|scp|sftp):\/\//i.test(p);
+}
+
+/** Sources and destination of rsync and scp, their options' values set aside. */
+function transferOperands(s: Stage): { sources: string[]; dest: string | undefined } {
+  const { positionals } = s.cmd === "scp"
+    ? operands(s.argv, "cFiJlmoPSX", [])
+    : operands(s.argv, "efTBM@", ["--exclude", "--include", "--filter", "--exclude-from", "--include-from", "--files-from", "--rsh", "--rsync-path", "--log-file", "--log-file-format", "--partial-dir", "--temp-dir", "--backup-dir", "--suffix", "--chmod", "--chown", "--compare-dest", "--copy-dest", "--link-dest", "--password-file", "--out-format", "--bwlimit", "--timeout", "--contimeout", "--port", "--max-size", "--min-size", "--max-delete", "--modify-window", "--block-size", "--usermap", "--groupmap", "--info", "--debug", "--iconv", "--remote-option", "--address", "--sockopts", "--checksum-choice", "--compress-choice", "--compress-level", "--skip-compress", "--outbuf", "--stop-after", "--stop-at", "--write-batch", "--read-batch", "--only-write-batch", "--protocol"]);
+  if (positionals.length < 2) return { sources: positionals, dest: undefined };
+  return { sources: positionals.slice(0, -1), dest: positionals[positionals.length - 1] };
+}
+
+/** The files a download writes: `curl -o f`, `curl -O URL` (the URL's last segment), `wget -O f`, `wget URL`, `wget -o log`, `iwr -OutFile f`. */
+function downloadTargets(s: Stage): string[] {
+  const out: string[] = [];
+  const argv = s.argv;
+  const urlName = (u: string) => {
+    const path = stripQuotes(u).replace(/[?#].*$/, "");
+    return /^[a-z][\w+.-]*:\/\/[^/]+\/./i.test(path) ? (path.split("/").pop() ?? "") : "";
+  };
+  if (s.cmd === "curl") {
+    const { positionals, values } = operands(argv, "oAbcCdDeEFHKmrTuUwxXyYzQtP", ["--output", "--output-dir", "--data", "--header", "--user", "--user-agent", "--referer", "--cookie", "--cookie-jar", "--config", "--form", "--request", "--upload-file", "--write-out", "--proxy", "--max-time", "--connect-timeout", "--retry", "--range", "--dump-header", "--cert", "--key", "--cacert", "--data-binary", "--data-raw", "--data-urlencode", "--json", "--url"]);
+    const dir = values.get("--output-dir")?.[0];
+    const at = (f: string) => (dir === undefined || /^[\\/~]/.test(f) ? f : `${trimSeparators(dir)}/${f}`);
+    for (const f of [...(values.get("-o") ?? []), ...(values.get("--output") ?? [])]) if (f !== "-") out.push(at(f));
+    if (argv.some((a) => /^-[a-zA-Z]*O[a-zA-Z]*$/.test(a) && !a.startsWith("--") || a === "--remote-name" || a === "--remote-name-all")) {
+      for (const u of [...positionals, ...(values.get("--url") ?? [])]) {
+        const name = urlName(u);
+        if (name !== "") out.push(at(name));
+      }
+    }
+    return out;
+  }
+  if (s.cmd === "wget") {
+    const { positionals, values } = operands(argv, "OoaPeiBtTwUQ", ["--output-document", "--output-file", "--append-output", "--directory-prefix", "--input-file", "--base", "--tries", "--timeout", "--wait", "--user-agent", "--quota", "--header", "--post-data", "--post-file", "--user", "--password"]);
+    const named = [...(values.get("-O") ?? []), ...(values.get("--output-document") ?? [])];
+    for (const f of [...named, ...(values.get("-o") ?? []), ...(values.get("--output-file") ?? []), ...(values.get("-a") ?? []), ...(values.get("--append-output") ?? [])]) if (f !== "-") out.push(f);
+    if (named.length === 0) {
+      const dir = [...(values.get("-P") ?? []), ...(values.get("--directory-prefix") ?? [])][0];
+      for (const u of positionals) {
+        const name = urlName(u);
+        if (name !== "") out.push(dir === undefined ? name : `${trimSeparators(dir)}/${name}`);
+      }
+    }
+    return out;
+  }
+  for (let i = 1; i < argv.length; i++) {
+    const m = /^-outf(?:i(?:le?)?)?(?::(.*))?$/i.exec(argv[i]);
+    if (m !== null) out.push(m[1] ?? argv[++i] ?? "");
+  }
+  return out.filter((f) => f !== "");
+}
+
+function writeRules(target: string, s: Stage, ctx: Context, whole = false): Decision[] {
   if (isBlockDevice(target)) {
     return [deny("shell.disk-destroy", `${s.cmd} writes to ${target}`, "Raw devices are never written from a coding task.")];
   }
@@ -1797,7 +2450,17 @@ function writeRules(target: string, s: Stage, ctx: Context): Decision[] {
     case "filesystem-root":
     case "home-root":
       return [ask("shell.write-system-path", `${s.cmd} writes to ${shown}`, "Write inside the project.")];
-    default:
+    case "project-root":
+      // Copying a tree's contents over the project root may replace its hook files too, but whether
+      // the tree holds any only the filesystem knows.
       return [];
+    default: {
+      // A directory copied whole over `.claude` or `~/.claude` replaces the settings inside it.
+      const inside = whole ? protectedInside(info.abs, ctx) : undefined;
+      if (inside === undefined) return [];
+      return inside.category === "hook-config"
+        ? [deny("shell.hook-tamper", `${s.cmd} writes into ${shown}, which holds hook configuration (${inside.matched})`, "Hook wiring is how this project enforces its rules. Leave it as it is.")]
+        : [deny("shell.write-home-config", `${s.cmd} writes into ${shown}, which holds the user's settings (${inside.matched})`, "Agent sessions do not change user-level credentials or agent settings. Ask the user.")];
+    }
   }
 }

@@ -1,0 +1,12 @@
+{
+  "name": "Remove-Item * -Include *.doc -Exclude *1* is allowed (Windows PowerShell)",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Remove-Item * -Include *.doc -Exclude *1*"
+    }
+  },
+  "near": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-020"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "cat certs/fullchain.pem prints a certificate and is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat certs/fullchain.pem"
+    }
+  },
+  "near": "shell.credential-read",
+  "source": "BUG-2026-020"
+}

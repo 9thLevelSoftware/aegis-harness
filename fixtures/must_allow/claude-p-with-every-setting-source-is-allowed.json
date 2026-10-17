@@ -1,0 +1,11 @@
+{
+  "name": "claude -p with every setting source is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "claude --setting-sources user,project,local -p 'summarise the diff'"
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-020"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "claude --bare -p is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "claude --bare -p 'edit .ruff.toml'"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-020"
+}

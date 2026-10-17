@@ -22,6 +22,8 @@ export interface Fixture {
   agent: Agent;
   platform: "posix" | "windows";
   cwd: string;
+  /** The project root, when it is not the payload's cwd: Claude Code's CLAUDE_PROJECT_DIR after the agent ran `cd`. */
+  root: string;
   home: string;
   payload: Record<string, unknown>;
   rule?: string;
@@ -44,14 +46,16 @@ export function loadFixtures(dir: string): Fixture[] {
         throw new Error(`${file}: "expect": "${String(raw.expect)}" disagrees with its directory (${sub})`);
       }
       const platform = raw.platform === "windows" ? "windows" : "posix";
+      const cwd = typeof raw.cwd === "string" ? raw.cwd : platform === "windows" ? "C:\\Users\\dev\\project" : "/home/dev/project";
       out.push({
         file,
         name: typeof raw.name === "string" ? raw.name : f,
         expect,
         agent: raw.agent === "codex" ? "codex" : "claude",
         platform,
-        cwd: typeof raw.cwd === "string" ? raw.cwd : platform === "windows" ? "C:\\Users\\dev\\project" : "/home/dev/project",
+        cwd,
         home: typeof raw.home === "string" ? raw.home : platform === "windows" ? "C:\\Users\\dev" : "/home/dev",
+        root: typeof raw.root === "string" ? raw.root : cwd,
         payload: (raw.payload ?? {}) as Record<string, unknown>,
         rule: typeof raw.rule === "string" ? raw.rule : undefined,
         near: typeof raw.near === "string" ? raw.near : undefined,
@@ -87,13 +91,13 @@ export interface FixtureResult {
 }
 
 export function runInProcess(fx: Fixture): FixtureResult {
-  const { decision } = evaluate(fullPayload(fx), { agent: fx.agent, root: fx.cwd, home: fx.home, platform: fx.platform, log: false }, {});
+  const { decision } = evaluate(fullPayload(fx), { agent: fx.agent, root: fx.root, home: fx.home, platform: fx.platform, log: false }, {});
   const ok = decision.verdict === fx.expect && (fx.rule === undefined || fx.expect === "allow" || decision.rule === fx.rule);
   return { fixture: fx, mode: "in-process", verdict: decision.verdict, rule: decision.rule, reason: decision.reason, ok };
 }
 
 export function runSubprocess(fx: Fixture, guardPath: string): FixtureResult {
-  const args = [guardPath, "--agent", fx.agent, "--output", "claude", "--root", fx.cwd, "--home", fx.home, "--platform", fx.platform, "--no-log"];
+  const args = [guardPath, "--agent", fx.agent, "--output", "claude", "--root", fx.root, "--home", fx.home, "--platform", fx.platform, "--no-log"];
   const started = process.hrtime.bigint();
   const r = spawnSync(process.execPath, args, { input: JSON.stringify(fullPayload(fx)), encoding: "utf8", timeout: 20_000 });
   const ms = Number(process.hrtime.bigint() - started) / 1e6;

@@ -1,0 +1,11 @@
+{
+  "name": "openssl rsa -pubout prints the public half and is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "openssl rsa -in ~/.ssh/id_rsa -pubout"
+    }
+  },
+  "near": "shell.credential-read",
+  "source": "BUG-2026-020"
+}

@@ -98,7 +98,9 @@ test("copying a private key or credential store is reading it", () => {
   for (const c of ["cp ~/.ssh/id_rsa .", "cp /home/dev/.ssh/id_rsa ./key.txt", "cp ~/.aws/credentials .", "cp -t /tmp ~/.ssh/id_ed25519"]) {
     assert.equal(verdictOf(sh(c)), "deny shell.credential-read", c);
   }
-  for (const c of ["cp ~/.ssh/id_rsa.pub .", "cp ~/.ssh/config .", "cp tests/fixtures/dev-cert.pem ."]) assert.equal(sh(c).verdict, "allow", c);
+  for (const c of ["cp ~/.ssh/id_rsa.pub .", "cp ~/.ssh/config .", "cp tests/fixtures/dev-cert.pem /tmp/"]) assert.equal(sh(c).verdict, "allow", c);
+  // Into the project it is a write of key material, which asks like a Write of the same file.
+  assert.equal(verdictOf(sh("cp tests/fixtures/dev-cert.pem .")), "ask shell.write-ask-path");
   // The whole store is every key in it.
   for (const c of ["cp -r ~/.ssh .", "cp -a ~/.ssh/ ./backup", "cp -r /home/dev/.aws .", "cp -r ~/.kube ./k", "cp -r ~/.gnupg .", "cp -r ~/.gnupg/private-keys-v1.d .", "cp -r $HOME/.ssh .", `cp -r "\${HOME:?}/.ssh" .`]) {
     assert.equal(verdictOf(sh(c)), "deny shell.credential-read", c);

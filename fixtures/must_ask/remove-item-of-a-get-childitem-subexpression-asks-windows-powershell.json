@@ -1,0 +1,12 @@
+{
+  "name": "Remove-Item of a Get-ChildItem subexpression asks (Windows PowerShell)",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Remove-Item -Recurse -Force (Get-ChildItem . -Include bin,obj -Recurse -Directory)"
+    }
+  },
+  "rule": "shell.rm-unresolved-variable",
+  "source": "BUG-2026-020"
+}

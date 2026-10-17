@@ -1,0 +1,12 @@
+{
+  "name": "Write adding it.skip.each is denied",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/home/dev/project/src/math.test.ts",
+      "content": "it.skip.each([[1]])('adds %i', (n) => {});\n"
+    }
+  },
+  "rule": "edit.test-skip",
+  "source": "BUG-2026-020"
+}
