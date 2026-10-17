@@ -156,7 +156,7 @@ test("init refuses to wire a guard that does not refuse rm -rf /", { skip }, () 
 });
 
 test("a hand-wired entry from the README is adopted, with its options", { skip }, () => {
-  const hand = { hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "/old/node /old/node_modules/@9thlevel/aegis/dist/guard.mjs --agent codex --ask-fallback warn", timeout: 10 }] }] } };
+  const hand = { hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "/old/node /old/node_modules/@9thlevelsoftware/aegis/dist/guard.mjs --agent codex --ask-fallback warn", timeout: 10 }] }] } };
   const s = sandbox({ ".codex/hooks.json": JSON.stringify(hand, null, 2) });
   try {
     const r = init(opts(s, { agents: ["codex"] }), s.env);

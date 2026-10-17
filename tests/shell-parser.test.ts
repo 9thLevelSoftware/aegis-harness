@@ -67,7 +67,7 @@ test("package-manager options before the runner word, npx -c and npm's -- are se
   assert.equal(first("pnpm --filter web --package=wrangler dlx wrangler deploy").cmd, "wrangler");
   assert.equal(first("pnpm -w exec wrangler deploy").cmd, "wrangler");
   assert.equal(first("npm --prefix web exec wrangler deploy").cmd, "wrangler");
-  assert.deepEqual(first("npm exec @9thlevel/aegis -- init --remove").argv, ["aegis", "init", "--remove"]);
+  assert.deepEqual(first("npm exec @9thlevelsoftware/aegis -- init --remove").argv, ["aegis", "init", "--remove"]);
   // A runner's -c / --call string is a shell command line.
   assert.deepEqual(cmds("npx -c 'cd web && wrangler deploy'"), ["sh", "cd", "wrangler"]);
   assert.deepEqual(cmds("npm exec --call='wrangler deploy'"), ["sh", "wrangler"]);

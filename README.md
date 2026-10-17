@@ -1,4 +1,4 @@
-# @9thlevel/aegis (`ah`)
+# @9thlevelsoftware/aegis (`ah`)
 
 A PreToolUse guard for coding agents. It reads the tool call Codex or Claude Code is about to make,
 decides in under 150 ms, and either stays silent or returns a deny with text the agent can act on.
@@ -24,7 +24,7 @@ the same author taught.
 Requires Node 22.18 or later.
 
 ```sh
-npm install -g @9thlevel/aegis
+npm install -g @9thlevelsoftware/aegis
 # or, from a checkout:
 npm ci && npm run build && npm link
 ```

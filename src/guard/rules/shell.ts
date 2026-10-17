@@ -1529,7 +1529,7 @@ function interpreterRules(s: Stage): Decision[] {
  * `ah init --remove` and `ah init --ask-fallback warn` are the sanctioned way to
  * unwire or weaken the guard, so an agent that was refused could reach for them.
  * Plain `ah init` (re-wiring) and `ah doctor` pass. Spelled as `ah`, `npx
- * @9thlevel/aegis`, `node .../dist/ah.mjs`, `./dist/ah.mjs`, `ah.ps1`,
+ * @9thlevelsoftware/aegis`, `node .../dist/ah.mjs`, `./dist/ah.mjs`, `ah.ps1`,
  * `pwsh [-File] ah.ps1`, `pnpm ah` or `yarn run ah`; the parser unwraps runners,
  * `env -S`, `npx -c`, `iex`, `Start-Process`, compound commands and PowerShell
  * blocks, and shellRules parses text piped into a shell, before this sees the stage.
@@ -1579,7 +1579,7 @@ function ahArgs(s: Stage): string[] | null {
         continue;
       }
       if (a.startsWith("-")) continue;
-      // `node dist/ah.mjs`, `node node_modules/.bin/ah` (the bin symlink), `bun ah`, `deno run npm:@9thlevel/aegis@0.0.1`.
+      // `node dist/ah.mjs`, `node node_modules/.bin/ah` (the bin symlink), `bun ah`, `deno run npm:@9thlevelsoftware/aegis@0.0.1`.
       return AH_COMMAND.test(normalizeCmd(a.replace(/^(npm:.+)@[^@/]*$/, "$1"))) ? s.argv.slice(i + 1) : null;
     }
   }

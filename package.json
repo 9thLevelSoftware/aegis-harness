@@ -1,5 +1,5 @@
 {
-  "name": "@9thlevel/aegis",
+  "name": "@9thlevelsoftware/aegis",
   "version": "0.1.0",
   "description": "ah: a PreToolUse guard for Codex and Claude Code. Vetoes destructive commands, hook bypasses, linter and test config edits, and credential leaks, with the fixture corpus that proves it.",
   "license": "MIT",
