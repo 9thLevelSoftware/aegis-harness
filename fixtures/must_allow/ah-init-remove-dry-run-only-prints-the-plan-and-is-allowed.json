@@ -1,0 +1,11 @@
+{
+  "name": "ah init --remove --dry-run only prints the plan and is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ah init --remove --dry-run"
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

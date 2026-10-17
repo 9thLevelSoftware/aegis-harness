@@ -193,6 +193,7 @@ function stageRules(s: Stage, ctx: Context): Decision[] {
   out.push(...publishRules(s));
   out.push(...baselineRefreshRules(s));
   out.push(...interpreterRules(s));
+  out.push(...ahCliRules(s));
   out.push(...moveSourceRules(s, ctx));
   out.push(...copySourceRules(s, ctx));
 
@@ -1150,6 +1151,42 @@ function interpreterRules(s: Stage): Decision[] {
     out.push(ask("shell.interpreter-destructive", `${s.cmd} inline code ${what}`, "Inline code cannot be checked the way a shell command can. Run the deletion as a plain command (`rm -rf <path>`) so the target is visible, or ask the user."));
   }
   return out;
+}
+
+/**
+ * `ah init --remove` and `ah init --ask-fallback warn` are the sanctioned way to
+ * unwire or weaken the guard, so an agent that was refused could reach for them.
+ * Plain `ah init` (re-wiring) and `ah doctor` pass. Spelled as `ah`, `npx
+ * @9thlevel/aegis`, or `node .../dist/ah.mjs`.
+ */
+function ahCliRules(s: Stage): Decision[] {
+  const args = ahArgs(s);
+  if (args === null || args[0] !== "init") return [];
+  const rest = args.slice(1);
+  const removes = rest.some((a) => a === "--remove" || a === "--uninstall");
+  const warnAt = rest.findIndex((a) => a === "--ask-fallback" || a.startsWith("--ask-fallback="));
+  const weakens = warnAt >= 0 && (rest[warnAt].includes("=") ? rest[warnAt].split("=")[1] : rest[warnAt + 1]) === "warn";
+  if ((!removes && !weakens) || rest.includes("--dry-run")) return [];
+  const what = removes ? "removes the guard's hook wiring" : "turns the guard's asks into warnings on Codex";
+  return [deny("shell.hook-tamper", `ah init ${removes ? "--remove" : "--ask-fallback warn"} ${what}`, "Hook wiring is how this project enforces its rules. Tell the user which refusal is in your way; changing the wiring is their call, made from their own terminal.")];
+}
+
+/** The arguments after `ah` when the stage runs the ah CLI, else null. */
+function ahArgs(s: Stage): string[] | null {
+  if (s.cmd === "ah" || s.cmd === "aegis") return s.argv.slice(1);
+  if (["node", "nodejs", "bun", "deno"].includes(s.cmd)) {
+    for (let i = 1; i < s.argv.length; i++) {
+      const a = s.argv[i];
+      if (a === "run" && s.cmd === "deno") continue;
+      if (INTERPRETER_VALUED_FLAGS.has(a)) {
+        i++;
+        continue;
+      }
+      if (a.startsWith("-")) continue;
+      return /(^|[\\/])ah\.m?js$/i.test(a) ? s.argv.slice(i + 1) : null;
+    }
+  }
+  return null;
 }
 
 /** What the inline code deletes, or null when it deletes nothing the guard recognises. */

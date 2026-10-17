@@ -87,7 +87,7 @@ function logDecision(ctx: Context, event: HookEvent, decision: Decision): void {
   }
 }
 
-export function runGuard(argv: readonly string[], io: { stdin?: string; stdout: (s: string) => void; stderr: (s: string) => void } = { stdout: (s) => process.stdout.write(s), stderr: (s) => process.stderr.write(s) }): number {
+export function runGuard(argv: readonly string[], io: { stdin?: string; stdout: (s: string) => void; stderr: (s: string) => void } = { stdout: (s) => process.stdout.write(s), stderr: (s) => process.stderr.write(s) }, env: NodeJS.ProcessEnv = process.env): number {
   const o = parseGuardArgs(argv);
   const text = io.stdin ?? readStdin();
   if (text.trim() === "") {
@@ -101,8 +101,10 @@ export function runGuard(argv: readonly string[], io: { stdin?: string; stdout: 
     io.stderr("ah guard: hook payload is not JSON\n");
     return 1;
   }
-  const { event, decision, ctx } = evaluate(raw, o);
-  if (o.log !== false) logDecision(ctx, event, decision);
+  const { event, decision, ctx } = evaluate(raw, o, env);
+  // AH_NO_LOG=1 lets `ah doctor` push canaries through the exact configured command
+  // without adding lines to metrics.jsonl. It changes logging only, never a decision.
+  if (o.log !== false && env.AH_NO_LOG !== "1") logDecision(ctx, event, decision);
   const out = render(decision, o.output ?? event.agent, o.askFallback ?? "deny");
   if (out.stdout) io.stdout(`${out.stdout}\n`);
   return out.exitCode;
