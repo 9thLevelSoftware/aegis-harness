@@ -1,0 +1,11 @@
+{
+  "name": "rm -f k8s/*.yml, manifests by extension, is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -f k8s/*.yml"
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

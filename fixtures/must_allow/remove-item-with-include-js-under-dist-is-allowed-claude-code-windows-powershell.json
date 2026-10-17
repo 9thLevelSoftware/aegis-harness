@@ -1,0 +1,13 @@
+{
+  "name": "Remove-Item with -Include *.js under dist is allowed (Claude Code, Windows PowerShell)",
+  "agent": "claude",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Remove-Item .\\dist\\* -Include *.js"
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

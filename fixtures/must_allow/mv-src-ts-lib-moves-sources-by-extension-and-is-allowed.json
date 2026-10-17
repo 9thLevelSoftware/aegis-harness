@@ -1,0 +1,11 @@
+{
+  "name": "mv src/*.ts lib/ moves sources by extension and is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mv src/*.ts lib/"
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "rm of a file named with a reversed bracket range is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -f \"file[z-a].txt\""
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

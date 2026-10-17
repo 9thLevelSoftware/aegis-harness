@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { fullPayload, loadFixtures } from "../src/cli/test-hooks.ts";
 import { evaluate } from "../src/guard/main.ts";
 import type { Decision } from "../src/guard/model.ts";
-import { call, sh, WINDOWS_CODEX } from "./helpers.ts";
+import { call, POSIX as POSIX_CTX, sh, WINDOWS_CODEX } from "./helpers.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -359,4 +359,65 @@ test("writes to the PowerShell profile are home rc-file writes", () => {
   }
   assert.equal(win("Set-Content -Path src/x.ts -Value y").verdict, "allow");
   assert.equal(win("cat $PROFILE").verdict, "allow");
+});
+
+test("a call the guard fails on asks instead of passing (BUG-2026-019)", async () => {
+  const { decideAll } = await import("../src/guard/decide.ts");
+  const { POSIX } = await import("./helpers.ts");
+  // A shell call without a command string makes the parser throw; the whole hook event must not pass.
+  const d = decideAll([{ kind: "shell", command: undefined as unknown as string }, { kind: "shell", command: "ls" }], POSIX);
+  assert.equal(d.verdict, "ask");
+  assert.equal(d.rule, "guard.internal-error");
+  assert.match(d.reason ?? "", /the guard failed while checking this call/);
+});
+
+test("wildcards: an extension alone names nothing, a stem or a directory head does (BUG-2026-019)", () => {
+  const allow = ["rm -f dist/*.js", "rm -f coverage/*.json", "rm -f build/test-results/*.xml", "rm -f conf/*.ini", "rm *.toml", "git rm src/*.js", "rm -rf src/*", "rm -rf */node_modules", "rm -rf dist/.[!.]*", "rm -f x[z-a]", "rm -f 'file[]a].txt'"];
+  for (const c of allow) assert.equal(verdictOf(sh(c)), "allow", c);
+  const deny: [string, string][] = [
+    ["rm .eslintrc*", "deny shell.write-lint-config"],
+    ["rm ruff*", "deny shell.write-lint-config"],
+    ["rm packages/*/.eslintrc*", "deny shell.write-lint-config"],
+    ["rm .gi?/hooks/pre-commit", "deny shell.rm-git-dir"],
+    ["rm -rf .[g]it/hooks", "deny shell.rm-git-dir"],
+    ["rm .c*/hooks/guard.sh", "deny shell.hook-tamper"],
+    ["rm .h*/memory/bugs/BUG-2026-019.yaml", "deny shell.write-harness"],
+    ["rm ~/.cl*/hooks/x.sh", "deny shell.write-home-config"],
+    ["find .g*/hooks -name pre-commit -delete", "deny shell.rm-git-dir"],
+  ];
+  for (const [c, want] of deny) assert.equal(verdictOf(sh(c)), want, c);
+  // A stale lock is still the one thing under .git a wildcard may take.
+  assert.equal(verdictOf(sh("rm .g*/index.lock")), "allow");
+  const sub = { ...POSIX_CTX, projectRoot: "/home/dev/project/sub" };
+  assert.equal(verdictOf(sh("rm ../.g*/hooks/pre-commit", sub)), "deny shell.rm-git-dir");
+  assert.equal(verdictOf(sh("Remove-Item ..\\.G*\\HOOKS\\pre-commit", { ...WINDOWS_CODEX, projectRoot: "C:\\Users\\dev\\project\\sub" })), "deny shell.rm-git-dir");
+});
+
+test("find: a filter on the other side of -o keeps what it names (BUG-2026-019)", () => {
+  for (const c of [
+    "find . -path ./.git -prune -o -name '*.orig' -delete",
+    "find . -name .git -prune -o -name '*.rej' -exec rm {} +",
+    "find . ( -name .git -o -name node_modules ) -prune -o -name '*.bak' -exec rm {} +",
+    "find . -type d -name .git -prune -o -type f -name '*~' -delete",
+    "find . -path ./.husky -prune -o -name '*.log' -delete",
+    "find . -path ./.harness -prune -o -name '*.log' -delete",
+  ]) assert.equal(verdictOf(sh(c)), "allow", c);
+  assert.equal(verdictOf(sh("find . -name .ruff.toml -delete")), "deny shell.write-lint-config");
+  assert.equal(verdictOf(sh("find . -type f -name .ruff.toml -delete")), "deny shell.write-lint-config");
+});
+
+test("Remove-Item filter values are not targets (BUG-2026-019)", () => {
+  for (const c of ["Remove-Item -Path .\\out\\* -Exclude biome.json", "Remove-Item -Path .\\dist -Recurse -Include *.json", "Remove-Item -Path .\\out\\* -Filter *.json", "Remove-Item .\\out\\* -ErrorAction SilentlyContinue", "Remove-Item .\\out\\* -ea SilentlyContinue", "rm .\\dist\\* -Exclude biome.json"]) {
+    assert.equal(verdictOf(win(c)), "allow", c);
+  }
+  assert.equal(verdictOf(win("Remove-Item .\\.claude\\* -Include *.json")), "deny shell.hook-tamper");
+  assert.equal(verdictOf(win("Remove-Item -Exc biome.json -Path .claude -Recurse")), "deny shell.hook-tamper");
+});
+
+test("brace expansion is budgeted per command, piped text included, so it cannot outrun the hook timeout (BUG-2026-019)", () => {
+  const many = Array.from({ length: 200 }, () => "rm f{1..1000}.txt").join("; ");
+  assert.equal(verdictOf(sh(`${many}; rm -rf .claude`)), "deny shell.hook-tamper");
+  assert.equal(verdictOf(sh(many)), "ask shell.brace-expansion-limit");
+  assert.equal(verdictOf(sh(`rm f{1..1000}.txt; echo 'rm g{1..1000}.txt' | sh`)), "ask shell.brace-expansion-limit");
+  assert.equal(verdictOf(sh("mkdir -p src/{a,b}/{c,d}; touch src/{a,b}/{c,d}/x.ts")), "allow");
 });

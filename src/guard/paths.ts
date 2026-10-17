@@ -188,11 +188,21 @@ function compileGlob(glob: string, platform: Platform): RegExp {
 export function matchGlobs(rel: string, globs: readonly string[], platform: Platform): string | undefined {
   const path = toPosix(rel);
   const base = path.slice(path.lastIndexOf("/") + 1);
-  for (const g of globs) {
-    const target = g.includes("/") ? path : base;
-    if (globToRegExp(g, platform).test(target)) return g;
+  const compiled = compiledList(globs, platform);
+  for (let i = 0; i < globs.length; i++) {
+    const c = compiled[i];
+    if (c.re.test(c.whole ? path : base)) return globs[i];
   }
   return undefined;
+}
+
+/** A policy list compiled once per platform; the lists are static and judged against every word of a command. */
+const LIST_CACHE = new WeakMap<readonly string[], Partial<Record<Platform, { re: RegExp; whole: boolean }[]>>>();
+
+function compiledList(globs: readonly string[], platform: Platform): { re: RegExp; whole: boolean }[] {
+  let byPlatform = LIST_CACHE.get(globs);
+  if (byPlatform === undefined) LIST_CACHE.set(globs, (byPlatform = {}));
+  return (byPlatform[platform] ??= globs.map((g) => ({ re: globToRegExp(g, platform), whole: g.includes("/") })));
 }
 
 export function basename(p: string): string {

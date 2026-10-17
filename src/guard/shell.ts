@@ -29,6 +29,8 @@ export interface Stage {
   hereStrings: string[];
   /** True when the stage carries code the parser cannot see (encoded or interpreter one-liners). */
   opaque: boolean;
+  /** A word left unexpanded because its brace expansion would pass the command's BRACE_LIMIT words. */
+  unexpanded?: string;
   raw: string;
 }
 
@@ -90,18 +92,28 @@ export type ShellDialect = "posix" | "powershell" | "cmd";
 export interface ParseOptions {
   /** Which shell will run the top-level command line. Defaults to POSIX sh. */
   dialect?: ShellDialect;
+  /**
+   * Brace-expanded words the parse may still produce, shared by every parse of one command
+   * (its substitutions, `sh -c` strings and the text it pipes into a shell), so a short command
+   * cannot multiply into more words than the guard can judge before the hook times out.
+   */
+  budget?: BraceBudget;
+}
+
+export interface BraceBudget {
+  words: number;
 }
 
 export function parseShell(command: string, options: ParseOptions = {}): Pipeline[] {
   try {
-    return parseInner(command, 0, false, options.dialect ?? "posix");
+    return parseInner(command, 0, false, options.dialect ?? "posix", options.budget ?? { words: BRACE_LIMIT });
   } catch {
     const argv = command.trim().split(/\s+/).filter(Boolean);
     return [{ raw: command, nested: false, stages: [makeStage(argv, {}, [], [], false, command)] }];
   }
 }
 
-function parseInner(command: string, depth: number, nested: boolean, dialect: ShellDialect): Pipeline[] {
+function parseInner(command: string, depth: number, nested: boolean, dialect: ShellDialect, budget: BraceBudget): Pipeline[] {
   if (depth > MAX_DEPTH) return [];
   const { commands, substitutions } = splitTop(command, dialect);
   const out: Pipeline[] = [];
@@ -113,18 +125,18 @@ function parseInner(command: string, depth: number, nested: boolean, dialect: Sh
       if (!text) continue;
       const grouped = unwrapGroup(text, dialect);
       if (grouped !== null) {
-        extra.push(...parseInner(grouped, depth + 1, true, dialect));
+        extra.push(...parseInner(grouped, depth + 1, true, dialect, budget));
         continue;
       }
-      const stage = buildStage(text, dialect);
+      const stage = buildStage(text, dialect, budget);
       stages.push(stage);
       const inner = inlineCommandOf(stage, dialect);
-      if (inner !== null) extra.push(...parseInner(inner.command, depth + 1, true, inner.dialect));
+      if (inner !== null) extra.push(...parseInner(inner.command, depth + 1, true, inner.dialect, budget));
     }
     if (stages.length > 0) out.push({ stages, raw: stageStrings.join(" | "), nested });
     out.push(...extra);
   }
-  for (const sub of substitutions) out.push(...parseInner(sub, depth + 1, true, dialect));
+  for (const sub of substitutions) out.push(...parseInner(sub, depth + 1, true, dialect, budget));
   return out;
 }
 
@@ -339,53 +351,120 @@ interface Token {
   text: string;
   /** Set for unquoted redirection operators. */
   op?: string;
-  /** No quote, escape or substitution in the word, so sh brace-expands it. */
+  /** No quote, escape or substitution anywhere in the word. */
   bare?: boolean;
+  /** Per character of `text`: true where it was written unquoted and unescaped, so sh may brace-expand it. */
+  live?: boolean[];
 }
 
+/** Brace-expanded words one command may yield before the guard stops expanding and asks instead. */
+export const BRACE_LIMIT = 1024;
+
+interface BraceGroup {
+  start: number;
+  end: number;
+  parts: { text: string; live: boolean[] }[];
+}
+
+const SEQ_NUMBERS = /^([-+]?\d+)\.\.([-+]?\d+)(?:\.\.([-+]?\d+))?$/;
+const SEQ_LETTERS = /^([A-Za-z])\.\.([A-Za-z])(?:\.\.([-+]?\d+))?$/;
+
 /**
- * sh brace expansion of one unquoted word: `.ruff.toml{,.bak}` is `.ruff.toml .ruff.toml.bak`,
- * `{rm,-rf,x}` is `rm -rf x`. Alternatives nest; `${VAR}` and a group without a comma stay as
- * they are, and the result is capped so a word cannot multiply without end.
+ * The words of a sequence expression (`1..3`, `01..10..2`, `a..e`), as bash writes them, or
+ * null when `body` is none; more than `limit` words is `"overflow"`.
  */
-export function braceExpand(word: string, limit = 64): string[] {
+function sequence(body: string, limit: number): string[] | "overflow" | null {
+  const num = SEQ_NUMBERS.exec(body);
+  const letters = num === null ? SEQ_LETTERS.exec(body) : null;
+  const m = num ?? letters;
+  if (m === null) return null;
+  const from = num ? Number(m[1]) : m[1].charCodeAt(0);
+  const to = num ? Number(m[2]) : m[2].charCodeAt(0);
+  const step = Math.abs(Number(m[3] ?? 1)) || 1;
+  if (Math.floor(Math.abs(to - from) / step) + 1 > limit) return "overflow";
+  const width = num && (/^[-+]?0\d/.test(m[1]) || /^[-+]?0\d/.test(m[2])) ? Math.max(m[1].length, m[2].length) : 0;
+  const out: string[] = [];
+  for (let n = from; from <= to ? n <= to : n >= to; n += from <= to ? step : -step) {
+    if (!num) out.push(String.fromCharCode(n));
+    else out.push(n < 0 ? `-${String(-n).padStart(width - 1, "0")}` : String(n).padStart(width, "0"));
+  }
+  return out;
+}
+
+/** The first brace group sh expands in `word`, null when there is none, `"overflow"` when it alone yields more than `limit` words. */
+function firstBraceGroup(word: string, live: readonly boolean[], limit: number): BraceGroup | "overflow" | null {
   for (let i = 0; i < word.length; i++) {
-    if (word[i] !== "{" || word[i - 1] === "$") continue;
+    if (word[i] !== "{" || !live[i] || (word[i - 1] === "$" && live[i - 1])) continue;
     const commas: number[] = [];
     for (let j = i, depth = 0; j < word.length; j++) {
+      if (!live[j]) continue;
       if (word[j] === "{") depth++;
       else if (word[j] === "," && depth === 1) commas.push(j);
       else if (word[j] === "}" && --depth === 0) {
-        if (commas.length === 0) break;
-        const out: string[] = [];
-        let start = i + 1;
-        for (const end of [...commas, j]) {
-          for (const w of braceExpand(word.slice(0, i) + word.slice(start, end) + word.slice(j + 1), limit)) {
-            out.push(w);
-            if (out.length >= limit) return out;
+        if (commas.length > 0) {
+          const parts: BraceGroup["parts"] = [];
+          let from = i + 1;
+          for (const to of [...commas, j]) {
+            parts.push({ text: word.slice(from, to), live: live.slice(from, to) });
+            from = to + 1;
           }
-          start = end + 1;
+          return { start: i, end: j, parts };
         }
-        return out;
+        const body = word.slice(i + 1, j);
+        const seq = live.slice(i + 1, j).every(Boolean) ? sequence(body, limit) : null;
+        if (seq === "overflow") return seq;
+        if (seq !== null) return { start: i, end: j, parts: seq.map((text) => ({ text, live: Array.from(text, () => false) })) };
+        break;
       }
     }
   }
-  return [word];
+  return null;
+}
+
+/**
+ * sh brace expansion of one word: `.ruff.toml{,.bak}` is `.ruff.toml .ruff.toml.bak`,
+ * `{rm,-rf,x}` is `rm -rf x`, `.claud{e..e}` is `.claude`. Only braces and commas marked
+ * `live` (unquoted, unescaped) count, so `{a,"b,c"}` is `a b,c` and `"{a,b}"` stays as it is.
+ * Alternatives nest; `${VAR}` and a group with neither a comma nor a sequence stay as they
+ * are. Returns null rather than a partial list once the words would pass `limit`.
+ */
+export function braceExpand(word: string, live: readonly boolean[] = Array.from(word, () => true), limit = BRACE_LIMIT): string[] | null {
+  const out: string[] = [];
+  const expand = (w: string, l: readonly boolean[]): boolean => {
+    const group = firstBraceGroup(w, l, limit);
+    if (group === "overflow") return false;
+    if (group === null) {
+      out.push(w);
+      return out.length <= limit;
+    }
+    for (const part of group.parts) {
+      if (!expand(w.slice(0, group.start) + part.text + w.slice(group.end + 1), [...l.slice(0, group.start), ...part.live, ...l.slice(group.end + 1)])) return false;
+    }
+    return true;
+  };
+  return expand(word, live) ? out : null;
 }
 
 function tokenize(stage: string, dialect: ShellDialect): Token[] {
   const escapeChar = dialect === "posix" ? "\\" : dialect === "powershell" ? "`" : "^";
   const tokens: Token[] = [];
   let cur = "";
+  let live: boolean[] = [];
   let has = false;
   let bare = true;
+  /** Append text that sh will not brace-expand: quoted, escaped, or inside a substitution. */
+  const dead = (text: string) => {
+    cur += text;
+    for (let k = 0; k < text.length; k++) live.push(false);
+  };
   let inSingle = false;
   let inDouble = false;
   let depth = 0; // $( ) and ( ) nesting inside a token
 
   const flush = () => {
-    if (has) tokens.push(bare ? { text: cur, bare } : { text: cur });
+    if (has) tokens.push(bare ? { text: cur, bare, live } : { text: cur, live });
     cur = "";
+    live = [];
     has = false;
     bare = true;
   };
@@ -395,7 +474,7 @@ function tokenize(stage: string, dialect: ShellDialect): Token[] {
     const next = stage[i + 1];
     if (inSingle) {
       if (c === "'") inSingle = false;
-      else cur += c;
+      else dead(c);
       continue;
     }
     if (c === escapeChar) {
@@ -407,7 +486,7 @@ function tokenize(stage: string, dialect: ShellDialect): Token[] {
       }
     }
     if (c === escapeChar && next !== undefined && !(inDouble && dialect === "posix" && !'"$`\\'.includes(next))) {
-      cur += next;
+      dead(next);
       has = true;
       bare = false;
       i++;
@@ -415,16 +494,16 @@ function tokenize(stage: string, dialect: ShellDialect): Token[] {
     }
     if (inDouble) {
       if (c === '"') inDouble = false;
-      else cur += c;
+      else dead(c);
       continue;
     }
     if (depth > 0) {
-      cur += c;
+      dead(c);
       if (c === "'" || c === '"') {
         // A quoted `)` inside `$( )` does not close it; copy the quoted text through.
         const close = stage.indexOf(c, i + 1);
-        if (close === -1) { cur += stage.slice(i + 1); break; }
-        cur += stage.slice(i + 1, close + 1);
+        if (close === -1) { dead(stage.slice(i + 1)); break; }
+        dead(stage.slice(i + 1, close + 1));
         i = close;
       } else if (c === "(") depth++;
       else if (c === ")") depth--;
@@ -432,13 +511,13 @@ function tokenize(stage: string, dialect: ShellDialect): Token[] {
     }
     if (c === "'") { inSingle = true; has = true; bare = false; continue; }
     if (c === '"') { inDouble = true; has = true; bare = false; continue; }
-    if (c === "$" && next === "(") { cur += "$("; has = true; bare = false; depth = 1; i++; continue; }
-    if ((c === "<" || c === ">") && next === "(") { cur += c + "("; has = true; bare = false; depth = 1; i++; continue; }
+    if (c === "$" && next === "(") { dead("$("); has = true; bare = false; depth = 1; i++; continue; }
+    if ((c === "<" || c === ">") && next === "(") { dead(c + "("); has = true; bare = false; depth = 1; i++; continue; }
     if (c === " " || c === "\t") { flush(); continue; }
     if (c === ">" || c === "<") {
       // Redirection. Fold a preceding bare fd number (`2>`) into the operator.
       let op = "";
-      if (has && /^\d+$/.test(cur)) { op = cur; cur = ""; has = false; }
+      if (has && /^\d+$/.test(cur)) { op = cur; cur = ""; live = []; has = false; }
       else flush();
       op += c;
       if (next === c) {
@@ -459,6 +538,7 @@ function tokenize(stage: string, dialect: ShellDialect): Token[] {
       continue;
     }
     cur += c;
+    live.push(true);
     has = true;
   }
   flush();
@@ -489,9 +569,23 @@ function stripCompoundLeads(argv: string[]): void {
   }
 }
 
-function buildStage(text: string, dialect: ShellDialect): Stage {
+function buildStage(text: string, dialect: ShellDialect, budget: BraceBudget): Stage {
   let tokens = tokenize(dialect === "powershell" ? text.replace(PWSH_ASSIGNMENT, "") : text, dialect);
-  if (dialect === "posix") tokens = tokens.flatMap((t) => (t.bare && t.text.includes(",") ? braceExpand(t.text).map((w) => ({ text: w, bare: true })) : [t]));
+  let unexpanded: string | undefined;
+  if (dialect === "posix") {
+    tokens = tokens.flatMap((t) => {
+      if (t.op !== undefined || t.live === undefined || !t.live.some((l, k) => l && t.text[k] === "{")) return [t];
+      // A word with no group to expand stays one word, whatever the budget has left.
+      const words = braceExpand(t.text, t.live, Math.max(budget.words, 1));
+      if (words === null) {
+        unexpanded ??= t.text;
+        return [t];
+      }
+      if (words.length > 1) budget.words -= words.length;
+      // sh drops a word that expands to nothing (`{,}`) unless part of it was quoted.
+      return words.filter((w) => w !== "" || !t.bare).map((w) => ({ text: w }));
+    });
+  }
   const argv: string[] = [];
   const writes: string[] = [];
   const reads: string[] = [];
@@ -577,7 +671,9 @@ function buildStage(text: string, dialect: ShellDialect): Stage {
   }
 
   const opaque = isOpaque(cmd, argv);
-  return makeStage(argv, env, wrappers, writes, opaque, text, reads, hereStrings);
+  const stage = makeStage(argv, env, wrappers, writes, opaque, text, reads, hereStrings);
+  if (unexpanded !== undefined) stage.unexpanded = unexpanded;
+  return stage;
 }
 
 /**

@@ -63,6 +63,13 @@ source:
       .codex/hooks.json and config.toml from the main checkout but its AGENTS.md from the worktree.
       Git for Windows' default core.symlinks=false checks a committed symlink out as a plain file
       holding the link's target, and git takes an edit to it for a new target.
+  - kind: session
+    date: 2026-10-17
+    note: >-
+      A fifth review ran the fourth fix's new matching against bash: bash 5.2 expands
+      `{e..e}` and `{01..3}` sequences, expands `a{b,'c'}` and `"x"{a,b}` with the quoted part kept
+      literal, drops a word that expands to nothing (`{,}`), and treats a reversed range `[z-a]` as
+      matching nothing.
 root_cause: >-
   The README told people to paste JSON into settings files. Whether the hook then ran depended on
   rules the README did not know: which files each agent loads and from which directory, what makes
@@ -124,7 +131,17 @@ impact: >-
   did `.GIT\hooks\pre-commit` on Windows, where the .git check alone did not fold case;
   `find .git/hooks -name pre-commit -delete` and `find . -name .ruff.toml -delete` passed because a
   narrowing filter exempted the whole find; and `mv .ruff.toml{,.bak}` and `{rm,-rf,.claude}`
-  passed because the parser did not brace-expand, and read `{rm,...}` as a `{ }` group.
+  passed because the parser did not brace-expand, and read `{rm,...}` as a `{ }` group. A fifth
+  review found the fourth fix denied `rm -f dist/*.js`, `mv src/*.ts lib/`,
+  `Remove-Item dist\*.js` and any `<dir>/*.<ext>` (it made up config names in that directory),
+  `find . -path ./.git -prune -o -name '*.orig' -delete` (a pruned name counted as deleted) and
+  Remove-Item's `-Include`/`-Exclude` values; that `rm -rf .claude x[z-a]` passed because the
+  reversed range threw out of the guard, and any command with such a word in it passed; and that
+  `rm .g*/hooks/pre-commit`, `rm .co*/hooks.json`, `rm */.eslintrc*`, braces with a quoted part
+  (`rm .claude/settings{.json,'x'}`, `{rm,-rf,".claude"}`), sequences (`.claud{e..e}`,
+  `r{m..m}`), an empty brace word (`{,} rm -rf .claude`) and a protected word past the 64-word
+  expansion cap passed. `ah init --agents codex` deleted Claude Code's stand-in, and a committed
+  stand-in was emptied in place.
 countermeasure:
   kind: test
   ref:
@@ -187,7 +204,17 @@ countermeasure:
     denied when it starts inside a protected directory or its -name/-path names a protected file;
     unquoted words are brace-expanded in the sh dialect, and a sh `{` group needs whitespace after
     it; `git rm` of a path above a subdirectory session passes, since git touches only its own
-    repository. A protected basename (`lefthook.yml`) inside a directory being removed is not seen,
+    repository. After the fifth review: a wildcard reaches a protected tree below its head too
+    (`.g*/hooks/pre-commit`; a wildcard naming nothing, `*`, does not count on the way down), and a
+    basename glob only from a last segment with a stem (`.eslintrc*`, `ruff*`, in any directory);
+    one naming an extension alone (`*.js`) reaches nothing; an invalid bracket class matches
+    nothing, and a call the guard throws on asks (guard.internal-error) instead of exiting 1;
+    find's named targets are only the filters that narrow its action; Remove-Item's filter and
+    common-parameter values are not targets; brace expansion follows bash's quoting (only unquoted
+    `{`, `,` and `}` count), expands sequences, drops empty words, and past 1024 words leaves the
+    word whole and asks (shell.brace-expansion-limit); stale stand-ins are only the selected
+    agents', and a committed one is left for the user to untrack, with doctor saying so. A
+    protected basename (`lefthook.yml`) inside a directory being removed is not seen,
     since the guard reads no filesystem. Still beyond any
     deny-list: variable indirection (`A=ah; $A init --remove`, `$(which ah) init --remove`,
     `$s = '...'; iex $s`), arbitrary interpreter programs that build the command at run time, and

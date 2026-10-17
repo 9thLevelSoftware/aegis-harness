@@ -1,0 +1,13 @@
+{
+  "name": "Remove-Item .G*\\hooks\\pre-commit is denied (Claude Code, Windows PowerShell)",
+  "agent": "claude",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Remove-Item -Force .G*\\hooks\\pre-commit"
+    }
+  },
+  "rule": "shell.rm-git-dir",
+  "source": "BUG-2026-019"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf */node_modules does not reach .git and is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf */node_modules"
+    }
+  },
+  "near": "shell.rm-git-dir",
+  "source": "BUG-2026-019"
+}

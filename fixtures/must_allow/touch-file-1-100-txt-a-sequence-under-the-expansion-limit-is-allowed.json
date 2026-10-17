@@ -1,0 +1,11 @@
+{
+  "name": "touch file{1..100}.txt, a sequence under the expansion limit, is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "touch file{1..100}.txt"
+    }
+  },
+  "near": "shell.brace-expansion-limit",
+  "source": "BUG-2026-019"
+}

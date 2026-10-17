@@ -239,6 +239,60 @@ test("once the text link is a real file again, ah init takes its stand-ins out, 
   }
 });
 
+test("ah init --agents X takes out only X's stale stand-in (BUG-2026-019)", { skip: !existsSync(guard) && "run npm run build first" }, () => {
+  const c = checkout({}, { "AGENTS.md": "CLAUDE.md" });
+  try {
+    const env = initEnv(c.home);
+    assert.ok(init(initOpts(c.root), env).ok);
+    const override = join(c.root, "AGENTS.override.md");
+    const local = join(c.root, "CLAUDE.local.md");
+    git(c.root, "rm", "-q", "--cached", "--", "AGENTS.md");
+    writeFileSync(join(c.root, "AGENTS.md"), "# Team\n");
+    git(c.root, "add", "--", "AGENTS.md");
+    const deps = { probe: (name: string) => ({ found: true, stdout: name === "claude" ? "2.1.302 (Claude Code)\n" : "codex-cli 0.163.0\n" }), featuresList: () => "hooks stable true\n" };
+    const codexOnly = doctor({ agents: ["codex"], root: c.root, json: false }, env, deps).checks.filter((ch) => /is the stand-in ah made/.test(ch.title));
+    assert.deepEqual(codexOnly.map((ch) => /AGENTS\.override\.md/.test(ch.title)), [true], "doctor --agents codex names Codex's stand-in only");
+
+    assert.ok(init(initOpts(c.root, { agents: ["codex"] }), env).ok);
+    assert.equal(existsSync(override), false, "Codex's stand-in goes");
+    assert.ok(existsSync(local), "Claude Code's stays: this run does not wire Claude Code");
+    assert.ok(readFileSync(join(c.root, ".git", "info", "exclude"), "utf8").split("\n").includes("/CLAUDE.local.md"), "and so does its exclude line");
+
+    assert.ok(init(initOpts(c.root, { agents: ["claude"] }), env).ok);
+    assert.equal(existsSync(local), false, "a run for Claude Code takes its stand-in out");
+  } finally {
+    c.done();
+  }
+});
+
+test("a committed stand-in is not deleted or emptied; doctor says to untrack it first (BUG-2026-019)", { skip: !existsSync(guard) && "run npm run build first" }, () => {
+  const c = checkout({}, { "AGENTS.md": "CLAUDE.md" });
+  try {
+    const env = initEnv(c.home);
+    assert.ok(init(initOpts(c.root), env).ok);
+    const standIns = ["AGENTS.override.md", "CLAUDE.local.md"].map((p) => join(c.root, p));
+    const before = standIns.map((p) => readFileSync(p, "utf8"));
+    git(c.root, "add", "-f", "--", "AGENTS.override.md", "CLAUDE.local.md");
+    git(c.root, "rm", "-q", "--cached", "--", "AGENTS.md");
+    writeFileSync(join(c.root, "AGENTS.md"), "# Team\n");
+    git(c.root, "add", "--", "AGENTS.md");
+    git(c.root, "-c", "user.email=dev@example.com", "-c", "user.name=dev", "commit", "-q", "-m", "x");
+
+    const deps = { probe: (name: string) => ({ found: true, stdout: name === "claude" ? "2.1.302 (Claude Code)\n" : "codex-cli 0.163.0\n" }), featuresList: () => "hooks stable true\n" };
+    const warned = doctor({ agents: ["claude", "codex"], root: c.root, json: false }, env, deps).checks.filter((ch) => /stand-in/.test(ch.title));
+    assert.equal(warned.length, 2, JSON.stringify(warned));
+    for (const ch of warned) {
+      assert.match(ch.title, /it is committed/);
+      assert.match(ch.fix ?? "", /git rm --cached/);
+    }
+    assert.ok(init(initOpts(c.root), env).ok);
+    assert.deepEqual(standIns.map((p) => readFileSync(p, "utf8")), before, "init leaves the committed files as they are");
+    assert.equal(git(c.root, "status", "--porcelain", "--", "AGENTS.override.md", "CLAUDE.local.md"), "");
+  } finally {
+    c.done();
+  }
+});
+
 test("--remove takes out the exclude line of a stand-in you already deleted", { skip: !existsSync(guard) && "run npm run build first" }, () => {
   const c = checkout({ "CLAUDE.md": "# Team\n" }, { "AGENTS.md": "CLAUDE.md" });
   try {

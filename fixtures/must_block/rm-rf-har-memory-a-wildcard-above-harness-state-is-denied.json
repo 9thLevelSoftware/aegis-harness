@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf .har*/memory, a wildcard above harness state, is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf .har*/memory"
+    }
+  },
+  "rule": "shell.write-harness",
+  "source": "BUG-2026-019"
+}

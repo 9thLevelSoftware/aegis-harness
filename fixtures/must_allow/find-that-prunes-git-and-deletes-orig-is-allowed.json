@@ -1,0 +1,11 @@
+{
+  "name": "find that prunes .git and deletes *.orig is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . -path ./.git -prune -o -name '*.orig' -delete"
+    }
+  },
+  "near": "shell.rm-git-dir",
+  "source": "BUG-2026-019"
+}

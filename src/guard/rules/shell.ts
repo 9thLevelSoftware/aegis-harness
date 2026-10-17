@@ -2,7 +2,7 @@ import { classifyPath, isBlockDevice, protectedInside, wildcardReach, type PathI
 import { ALLOW, ask, deny, strictest, type Context, type Decision, type ShellCall } from "../model.ts";
 import { globToRegExp, hasVariable, isTempPath, normalize } from "../paths.ts";
 import { findSecrets, redact } from "../secrets.ts";
-import { allStages, flagsOf, normalizeCmd, parseShell, pwshRun, subcommandIndex, type Pipeline, type ShellDialect, type Stage } from "../shell.ts";
+import { allStages, BRACE_LIMIT, flagsOf, normalizeCmd, parseShell, pwshRun, subcommandIndex, type BraceBudget, type Pipeline, type ShellDialect, type Stage } from "../shell.ts";
 import { AH_INIT_VALUED_OPTIONS } from "../../wiring/init-options.ts";
 
 const FORK_BOMB = /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/;
@@ -61,8 +61,9 @@ export function shellRules(call: ShellCall, ctx: Context): Decision {
     }
   }
 
-  const pipelines = parseShell(raw, { dialect: ctx.shellDialect ?? "posix" });
-  pipelines.push(...pipedCommands(pipelines));
+  const budget = { words: BRACE_LIMIT };
+  const pipelines = parseShell(raw, { dialect: ctx.shellDialect ?? "posix", budget });
+  pipelines.push(...pipedCommands(pipelines, budget));
   for (const p of pipelines) decisions.push(...pipelineRules(p, ctx));
   for (const s of allStages(pipelines)) decisions.push(...stageRules(s, ctx));
   return strictest(decisions);
@@ -106,7 +107,7 @@ const STDIN_SHELLS: Record<string, ShellDialect> = {
  * text fed to a shell that runs its stdin is a command line, parsed in that shell's dialect so that
  * every rule sees it.
  */
-function pipedCommands(pipelines: readonly Pipeline[], depth = 0): Pipeline[] {
+function pipedCommands(pipelines: readonly Pipeline[], budget: BraceBudget, depth = 0): Pipeline[] {
   const out: Pipeline[] = [];
   for (const p of pipelines) {
     for (let j = 0; j < p.stages.length; j++) {
@@ -115,9 +116,9 @@ function pipedCommands(pipelines: readonly Pipeline[], depth = 0): Pipeline[] {
       if (dialect === undefined || !readsStdinAsCode(sink)) continue;
       const text = sink.hereStrings.length > 0 ? sink.hereStrings.join("\n") : j > 0 ? literalOutput(p.stages[j - 1]) : null;
       if (text === null) continue;
-      const inner = parseShell(text, { dialect });
+      const inner = parseShell(text, { dialect, budget });
       out.push(...inner);
-      if (depth < 2) out.push(...pipedCommands(inner, depth + 1));
+      if (depth < 2) out.push(...pipedCommands(inner, budget, depth + 1));
     }
   }
   return out;
@@ -224,6 +225,10 @@ function stageRules(s: Stage, ctx: Context): Decision[] {
     out.push(ask("shell.privilege-escalation", `${describe(s)} runs with elevated privileges`, "Elevated commands change the machine, not the project. Ask the user to run it, or explain why the project needs it."));
   }
 
+  if (s.unexpanded !== undefined) {
+    out.push(ask("shell.brace-expansion-limit", `${s.unexpanded.slice(0, 60)} takes this command's brace expansion past ${BRACE_LIMIT} words, too many to check one by one`, "Spell the paths out, or split the command, so each word can be checked."));
+  }
+
   if (REMOVERS.has(s.cmd)) out.push(...removeRules(s, ctx));
   else if (s.cmd === "find") out.push(...findRules(s, ctx));
   else if (s.cmd === "git") out.push(...gitRules(s, ctx));
@@ -259,15 +264,36 @@ interface RemoveSpec {
   noPreserveRoot: boolean;
 }
 
+/**
+ * Remove-Item parameters whose value is no path to delete: the filters (`-Include *.js` narrows
+ * `-Path`, `-Exclude` names what stays) and the common parameters that take a value. PowerShell
+ * takes any unambiguous prefix of a parameter's name.
+ */
+const PWSH_VALUED_PARAMS: readonly (readonly [string, number])[] = [
+  ["include", 3], ["exclude", 2], ["filter", 2], ["credential", 2], ["stream", 1],
+  ["erroraction", 6], ["errorvariable", 6], ["warningaction", 8], ["warningvariable", 8],
+  ["informationaction", 12], ["informationvariable", 12], ["outvariable", 4], ["outbuffer", 4],
+  ["pipelinevariable", 2], ["progressaction", 2],
+];
+const PWSH_VALUED_ALIASES = new Set(["ea", "ev", "wa", "wv", "infa", "iv", "ov", "ob", "pv", "proga"]);
+
+function pwshValuedParam(a: string): boolean {
+  const m = /^-([a-z]+)$/i.exec(a);
+  if (m === null) return false;
+  const p = m[1].toLowerCase();
+  return PWSH_VALUED_ALIASES.has(p) || PWSH_VALUED_PARAMS.some(([name, min]) => p.length >= min && name.startsWith(p));
+}
+
 function removeSpec(s: Stage): RemoveSpec {
   const argv = s.argv.slice(1);
-  const pwshStyle = s.cmd === "remove-item" || s.cmd === "ri" || argv.some((a) => /^-(Recurse|Force|Path|LiteralPath|WhatIf|Confirm)$/i.test(a));
+  const pwshStyle = s.cmd === "remove-item" || s.cmd === "ri" || argv.some((a) => /^-(Recurse|Force|Path|LiteralPath|WhatIf|Confirm|Include|Exclude|Filter)$/i.test(a));
   if (pwshStyle) {
     const targets: string[] = [];
     let recursive = false;
     for (let i = 0; i < argv.length; i++) {
       const a = argv[i];
       if (/^-(recurse|rec|r)$/i.test(a)) recursive = true;
+      else if (pwshValuedParam(a)) i++;
       else if (/^-(path|literalpath|lp|p)$/i.test(a)) {
         const v = argv[i + 1];
         if (v !== undefined) targets.push(...v.split(","));
@@ -500,9 +526,11 @@ function findRules(s: Stage, ctx: Context): Decision[] {
   const stage = { ...s, cmd: "find -delete" };
   if (argv.some((_, i) => narrows(argv, i, actionAt))) {
     // A filter narrows what goes, but not where: a start inside a protected directory, or a filter
-    // that names a protected file outright, still deletes it.
+    // that names a protected file outright, still deletes it. A filter on the other side of `-o`
+    // (`-path ./.git -prune -o ...`) keeps what it names.
     const named: string[] = [];
     for (let i = 0; i < actionAt; i++) {
+      if (!narrows(argv, i, actionAt)) continue;
       const v = argv[i + 1] ?? "";
       if (/^-i?name$/.test(argv[i]) && !/[*?[]/.test(v)) named.push(...starts.map((st) => `${st.replace(/[\\/]+$/, "")}/${v}`));
       if (/^-i?(path|wholename)$/.test(argv[i]) && !/[*?[]/.test(v)) named.push(v);

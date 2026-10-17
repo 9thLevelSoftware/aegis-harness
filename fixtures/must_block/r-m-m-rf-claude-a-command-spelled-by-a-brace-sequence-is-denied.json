@@ -1,0 +1,11 @@
+{
+  "name": "r{m..m} -rf .claude, a command spelled by a brace sequence, is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "r{m..m} -rf .claude"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

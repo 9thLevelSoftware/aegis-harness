@@ -20,8 +20,8 @@ import { realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { agentsBlockLines, AGENTS_BLOCK_BODY } from "./agents-md.ts";
-import { readText } from "./files.ts";
-import { excludedByAh, symlinkCheckedOutAsText } from "./project.ts";
+import { isSymlink, readText } from "./files.ts";
+import { excludedByAh, gitStatusOf, symlinkCheckedOutAsText } from "./project.ts";
 import { blockEndByte, readBlock, removeBlock, upsertBlock, type BlockEdit } from "./text-block.ts";
 
 export interface InstructionEdit {
@@ -373,13 +373,26 @@ export function rootTextLinks(root: string): TextLink[] {
  * The stand-ins ah made for text links (AGENTS.override.md, CLAUDE.local.md
  * holding only ah's block and kept out of git by ah's own exclude line) once
  * no instruction file at the root is a text link any more: each now hides
- * AGENTS.md from the agent that reads it in its place.
+ * AGENTS.md from the agent that reads it in its place. Only the stand-ins of
+ * `agents` count, so `ah init --agents codex` leaves Claude Code's alone. One
+ * that git tracks or that is a symlink is the team's, whatever it holds; see
+ * committedStandIns.
  */
-export function staleStandIns(root: string, links: TextLink[] = rootTextLinks(root)): string[] {
+export function staleStandIns(root: string, links: TextLink[] = rootTextLinks(root), agents: readonly string[] = ["claude", "codex"]): string[] {
+  return standIns(root, links, agents).filter((p) => gitStatusOf(p) !== "tracked");
+}
+
+/** Stand-ins as staleStandIns finds them that someone committed: ah does not delete a tracked file, so `git rm --cached` comes first. */
+export function committedStandIns(root: string, links: TextLink[] = rootTextLinks(root), agents: readonly string[] = ["claude", "codex"]): string[] {
+  return standIns(root, links, agents).filter((p) => gitStatusOf(p) === "tracked");
+}
+
+function standIns(root: string, links: TextLink[], agents: readonly string[]): string[] {
   if (links.length > 0) return [];
-  return [join(root, "AGENTS.override.md"), join(root, "CLAUDE.local.md")].filter((p) => {
+  const names = [...(agents.includes("codex") ? ["AGENTS.override.md"] : []), ...(agents.includes("claude") ? ["CLAUDE.local.md"] : [])];
+  return names.map((n) => join(root, n)).filter((p) => {
     const t = readText(p).text;
-    return t !== null && ahsOwn(t, p) && excludedByAh(p);
+    return t !== null && !isSymlink(p) && ahsOwn(t, p) && excludedByAh(p);
   });
 }
 
@@ -485,7 +498,7 @@ export function planInstructions(root: string, agents: readonly string[], remove
   const links = rootTextLinks(root);
   const agentsLink = links.find((l) => l.path === agentsPath);
   const overrideLink = links.find((l) => l.path === overridePath);
-  const stale = staleStandIns(root, links);
+  const stale = staleStandIns(root, links, agents);
   for (const p of stale) {
     const t = readText(p).text;
     out.push({ path: p, original: t, edit: removeBlock(t, p), why: STALE_STAND_IN, local: true });

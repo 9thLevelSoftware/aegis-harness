@@ -121,12 +121,14 @@ folder a session started in, and in a linked worktree's main checkout, so a sess
 cannot remove `../.claude/settings.local.json` or `../.git/hooks/pre-commit` either.
 
 `ah rules` prints the full list with each rule's provenance. The authoritative definition is the
-fixture corpus: [`fixtures/`](fixtures/README.md) holds about 300 calls that must be denied,
-55 that must ask and 235 legitimate neighbours that must pass, and CI runs all of them through the
+fixture corpus: [`fixtures/`](fixtures/README.md) holds about 310 calls that must be denied,
+57 that must ask and 249 legitimate neighbours that must pass, and CI runs all of them through the
 built guard on Linux and Windows. Commands inside loops, `if` blocks, functions and PowerShell
-`{ }` blocks meet every rule, so a `for` loop that runs `rm -rf "$d"` asks like the bare command;
-sh brace expansion is applied first (`mv .ruff.toml{,.bak}`), and a wildcard counts as the
-protected path it names (`rm .claude/*`, `rm .eslintrc*`).
+`{ }` blocks meet every rule, so a `for` loop that runs `rm -rf "$d"` asks like the bare command.
+sh brace expansion is applied first, as bash does it (`mv .ruff.toml{,.bak}`, `.claud{e..e}`,
+quoted parts and all); past 1024 words the guard asks instead. A wildcard counts as the protected
+path it names (`rm .claude/*`, `rm .eslintrc*`, `rm .g*/hooks/pre-commit`); one that names only
+an extension (`rm dist/*.js`) or nothing (`rm -rf src/*`) does not.
 
 ## What it is not
 
@@ -137,8 +139,9 @@ compiled, or an interpreter one-liner (a one-liner that visibly deletes a tree o
 is caught; everything else passes). It does not resolve symlinks. If you need a boundary, use a
 container or a separate user; the guard then stops the mistakes, and the boundary stops the rest.
 
-It fails open by default. Malformed input or an internal error exits 1, which Claude Code treats as
-a non-blocking hook error, so a broken install never locks you out. To fail closed instead, run
+It fails open by default. Malformed input exits 1, which Claude Code treats as a non-blocking hook
+error, so a broken install never locks you out. A call the guard fails on while checking it asks
+instead, so a command that trips a bug in the guard cannot switch its checks off. To fail closed instead, run
 `ah init --fail-closed` (Claude Code v2.1.295 or later; it sets `"onFailure": "block"`); then a
 hook that cannot start, times out, or exits with a code other than 0 or 2 blocks the call. Codex
 has no such switch: a hook that cannot start lets the call through.

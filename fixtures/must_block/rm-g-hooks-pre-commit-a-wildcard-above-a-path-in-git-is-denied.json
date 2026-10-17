@@ -1,0 +1,11 @@
+{
+  "name": "rm .g*/hooks/pre-commit, a wildcard above a path in .git, is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm .g*/hooks/pre-commit"
+    }
+  },
+  "rule": "shell.rm-git-dir",
+  "source": "BUG-2026-019"
+}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseShell, allStages } from "../src/guard/shell.ts";
+import { parseShell, allStages, braceExpand, BRACE_LIMIT } from "../src/guard/shell.ts";
 
 const cmds = (command: string, dialect?: "posix" | "powershell" | "cmd") => allStages(parseShell(command, { dialect })).map((s) => s.cmd);
 
@@ -267,4 +267,44 @@ test("a quoted ) inside $( ) does not close the substitution (BUG-2026-016)", ()
   assert.deepEqual(cmds("echo \"$(echo 'x')\" && rm -rf /"), ["echo", "rm", "echo"]);
   assert.ok(cmds("echo \"$(echo \"it's\")\" && rm -rf /").includes("rm"));
   assert.deepEqual(allStages(parseShell("echo $(echo ')')"))[0].argv, ["echo", "$(echo ')')"]);
+});
+
+test("brace expansion follows bash: lists, sequences, quoting and nesting (BUG-2026-019)", () => {
+  assert.deepEqual(braceExpand(".ruff.toml{,.bak}"), [".ruff.toml", ".ruff.toml.bak"]);
+  assert.deepEqual(braceExpand("a{b,c{d,e}}f"), ["abf", "acdf", "acef"]);
+  assert.deepEqual(braceExpand("{a,b}{1..2}"), ["a1", "a2", "b1", "b2"]);
+  assert.deepEqual(braceExpand("{1..10..3}"), ["1", "4", "7", "10"]);
+  assert.deepEqual(braceExpand("{01..3}"), ["01", "02", "03"]);
+  assert.deepEqual(braceExpand("{-01..2}"), ["-01", "000", "001", "002"]);
+  assert.deepEqual(braceExpand("{10..8}"), ["10", "9", "8"]);
+  assert.deepEqual(braceExpand("{a..e..2}"), ["a", "c", "e"]);
+  assert.deepEqual(braceExpand(".claud{e..e}"), [".claude"]);
+  for (const literal of ["{}", "{a}", "a{b}", "${HOME}", "@{u}..HEAD", "{a..}", "{%..+}"]) assert.deepEqual(braceExpand(literal), [literal], literal);
+  assert.deepEqual(braceExpand("${x}{a,b}"), ["${x}a", "${x}b"]);
+});
+
+test("only unquoted braces and commas expand, as in bash (BUG-2026-019)", () => {
+  const argv = (command: string) => allStages(parseShell(command))[0].argv;
+  assert.deepEqual(argv(`rm .claude/settings{.json,'x'}`), ["rm", ".claude/settings.json", ".claude/settingsx"]);
+  assert.deepEqual(argv(`rm ".claude/"settings{.json,}`), ["rm", ".claude/settings.json", ".claude/settings"]);
+  assert.deepEqual(argv(`rm "$PWD"/.ruff.toml{,.bak}`), ["rm", "$PWD/.ruff.toml", "$PWD/.ruff.toml.bak"]);
+  assert.deepEqual(argv(`{rm,-rf,".claude"}`), ["rm", "-rf", ".claude"]);
+  assert.deepEqual(argv(`echo {a,"b,c"} "{d,e}" '{f,g}' \\{h,i} {j\\,k,l}`), ["echo", "a", "b,c", "{d,e}", "{f,g}", "{h,i}", "j,k", "l"]);
+  assert.deepEqual(argv(`echo $(echo {a,b})`), ["echo", "$(echo {a,b})"]);
+  // sh drops a word that expands to nothing, so `{,} rm` runs rm; a quoted empty word stays.
+  assert.deepEqual(argv(`{,} rm -rf .claude`), ["rm", "-rf", ".claude"]);
+  assert.deepEqual(argv(`printf %s ""{,}`), ["printf", "%s", "", ""]);
+});
+
+test("a brace expansion past the limit is left whole and flagged, never cut short (BUG-2026-019)", () => {
+  assert.equal(braceExpand("{x,}".repeat(11) + ".claude"), null);
+  assert.equal(braceExpand(`{1..${BRACE_LIMIT + 1}}`), null);
+  assert.equal(braceExpand(`{1..${BRACE_LIMIT}}`)?.length, BRACE_LIMIT);
+  assert.equal(braceExpand("{1..99999999999999999999}"), null);
+  const [s] = allStages(parseShell(`rm -rf ${"{x,}".repeat(11)}.claude`));
+  assert.equal(s.unexpanded, `${"{x,}".repeat(11)}.claude`);
+  assert.equal(allStages(parseShell("touch f{1..100}"))[0].unexpanded, undefined);
+  // The budget is the command's, not each word's: many small expansions add up.
+  const stages = allStages(parseShell(Array.from({ length: 3 }, () => "rm f{1..400}").join("; ") + "; find . -exec rm {} +"));
+  assert.deepEqual(stages.map((st) => st.unexpanded), [undefined, undefined, "f{1..400}", undefined]);
 });

@@ -1,0 +1,11 @@
+{
+  "name": "rm .co*/hooks.json, a wildcard above Codex hooks, is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm .co*/hooks.json"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}
