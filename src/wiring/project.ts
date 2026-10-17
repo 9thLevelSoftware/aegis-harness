@@ -118,6 +118,8 @@ function excludeLine(fromTop: string): string {
 /**
  * Add `file` to the repository's `.git/info/exclude` (local to this clone,
  * never committed) unless git already ignores or tracks it. Returns what it did.
+ * A file without a final newline gets one before ah's lines and none after
+ * them, so unexcludeLocally takes out exactly what went in.
  */
 export function excludeLocally(file: string, dryRun: boolean): "excluded" | "already-ignored" | "tracked" | "no-repo" {
   const status = gitStatusOf(file);
@@ -129,12 +131,16 @@ export function excludeLocally(file: string, dryRun: boolean): "excluded" | "alr
   const current = readText(r.excludePath).text ?? "";
   const line = excludeLine(r.fromTop);
   if (current.split(/\r?\n/).includes(line)) return "already-ignored";
-  const sepNl = current === "" || current.endsWith("\n") ? "" : "\n";
-  writeAtomic(r.excludePath, `${current}${sepNl}${EXCLUDE_NOTE}\n${line}\n`);
+  const open = current !== "" && !current.endsWith("\n");
+  writeAtomic(r.excludePath, open ? `${current}\n${EXCLUDE_NOTE}\n${line}` : `${current}${EXCLUDE_NOTE}\n${line}\n`);
   return "excluded";
 }
 
-/** Take out the lines excludeLocally added for `file`. Returns true when there were some. */
+/**
+ * Take out the lines excludeLocally added for `file`, with the line break
+ * after each, or, last in the file and without one, the break before them.
+ * Returns true when there were some.
+ */
 export function unexcludeLocally(file: string, dryRun: boolean): boolean {
   const r = inRepo(file);
   if (r === null) return false;
