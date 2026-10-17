@@ -83,13 +83,23 @@ jobs:
           New-Item -ItemType Directory -Force (Join-Path $dir "dist") | Out-Null
           Copy-Item (Get-Command node).Source $dir
           Copy-Item dist/guard.mjs (Join-Path $dir "dist")
+          # Codex: the guard under a spaced path (this volume has no 8.3 names), so
+          # commandWindows quotes it; both cmd.exe and PowerShell must run it.
           $proj = Join-Path $env:RUNNER_TEMP "ah proj"
           New-Item -ItemType Directory -Force $proj | Out-Null
           git -C $proj init -q
-          node dist/ah.mjs init --root $proj --node (Join-Path $dir "node.exe") --guard (Join-Path $dir "dist/guard.mjs")
+          node dist/ah.mjs init --root $proj --guard (Join-Path $dir "dist/guard.mjs")
           if ($LASTEXITCODE) { exit 1 }
           node dist/ah.mjs doctor --root $proj --agents claude
           if ($LASTEXITCODE) { exit 1 }
           node dist/ah.mjs doctor --root $proj --agents codex --json > codex.json
-          node scripts/ci-doctor-codex.mjs codex.json
+          node scripts/ci-doctor-codex.mjs codex.json --both-shells
+          if ($LASTEXITCODE) { exit 1 }
+          # Claude Code: node.exe itself under a spaced path, run in exec form.
+          $proj2 = Join-Path $env:RUNNER_TEMP "ah proj 2"
+          New-Item -ItemType Directory -Force $proj2 | Out-Null
+          git -C $proj2 init -q
+          node dist/ah.mjs init --root $proj2 --agents claude --node (Join-Path $dir "node.exe") --guard (Join-Path $dir "dist/guard.mjs")
+          if ($LASTEXITCODE) { exit 1 }
+          node dist/ah.mjs doctor --root $proj2 --agents claude
           if ($LASTEXITCODE) { exit 1 }

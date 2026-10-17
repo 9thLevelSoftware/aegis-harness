@@ -181,10 +181,12 @@ export function init(o: InitOptions, env: NodeJS.ProcessEnv = process.env): Init
     if (o.remove && !read.exists) continue;
     const value = read.exists ? read.value : {};
     try {
+      const built: string[] = [];
       const plan = planHooks(value, t.path, (found) => {
         if (o.remove) return null;
-        return t.agent === "claude" ? claudeGroup(m, { failClosed: o.failClosed, noLog: o.noLog || undefined }, found) : codexGroup(m, { askFallback: o.askFallback, noLog: o.noLog || undefined }, found);
+        return t.agent === "claude" ? claudeGroup(m, { failClosed: o.failClosed, noLog: o.noLog || undefined }, found) : codexGroup(m, { askFallback: o.askFallback, noLog: o.noLog || undefined }, found, undefined, built);
       }, { placement: t.agent === "codex" ? "keep-indexes" : "first-owned" });
+      plan.notes.push(...built);
       if (o.remove && plan.action === "absent") continue;
       changes.push({ agent: t.agent, file: t.path, action: plan.action, detail: [describeHook(t.agent, plan.action, o), ...plan.notes].join("; ") });
       if (plan.action !== "unchanged" && plan.action !== "absent") {

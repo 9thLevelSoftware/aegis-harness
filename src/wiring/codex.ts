@@ -10,8 +10,8 @@
  * - `command` runs as `<login shell> -c <command>` when the login shell is
  *   bash or zsh (so zsh on a default macOS), else `bash -c`; paths are quoted
  *   for both. Codex does not document the shell behind `commandWindows`;
- *   ah writes a form that cmd.exe and PowerShell both run (short 8.3 paths
- *   without quotes) when it can, and `ah doctor` runs it through both.
+ *   ah writes a form that cmd.exe and PowerShell both run when it can
+ *   (codexCommand), and `ah doctor` runs it through both.
  * - Trust is recorded per hook in ~/.codex/config.toml under
  *   `[hooks.state."<file>:pre_tool_use:<group>:<handler>"] trusted_hash`. The
  *   hash covers command, matcher, timeout and statusMessage, and the key covers
@@ -79,22 +79,60 @@ export interface CodexCommand {
   windowsNote?: string;
 }
 
-export function codexCommand(m: Machine, guardArgs: string[], short: (p: string) => string = shortPath): CodexCommand {
+/** The first `node` on PATH, per `where node`, or null. */
+export function nodeOnPath(): string | null {
+  if (process.platform !== "win32") return null;
+  const r = spawnSync("where.exe", ["node"], { encoding: "utf8", windowsHide: true });
+  const first = (r.stdout ?? "").split(/\r?\n/).find((l) => l.trim() !== "");
+  return r.status === 0 && first ? first.trim() : null;
+}
+
+export interface WindowsLookups {
+  short?: (p: string) => string;
+  onPath?: () => string | null;
+}
+
+/**
+ * The hook command. On Windows, `commandWindows` must run in cmd.exe and in
+ * PowerShell alike, since Codex does not document which one it uses. Both run
+ * a line whose first word is a bare path, and both take later arguments in
+ * double quotes. So the node path goes first as is, as its 8.3 short form, or
+ * as plain `node` when that is the same node on PATH; the guard path goes
+ * bare, short, or double-quoted. Only when none of that works does ah fall
+ * back to PowerShell's `& '...'`, which cmd.exe cannot run.
+ */
+export function codexCommand(m: Machine, guardArgs: string[], look: WindowsLookups = {}): CodexCommand {
   if (m.os !== "win32") return { command: [m.nodePath, m.guardPath, ...guardArgs].map(posixQuote).join(" ") };
+  const short = look.short ?? shortPath;
   const posixForm = [m.nodePath.replace(/\\/g, "/"), m.guardPath.replace(/\\/g, "/"), ...guardArgs].map(posixQuote).join(" ");
-  let node = m.nodePath;
-  let guard = m.guardPath;
-  if (!windowsBare(node)) node = short(node);
-  if (!windowsBare(guard)) guard = short(guard);
-  if (windowsBare(node) && windowsBare(guard)) {
-    const changed = node !== m.nodePath || guard !== m.guardPath;
-    return { command: posixForm, commandWindows: [node, guard, ...guardArgs].join(" "), windowsNote: changed ? "short 8.3 paths, so the command needs no quoting in cmd.exe or PowerShell" : undefined };
+  const notes: string[] = [];
+  let node: string | null = m.nodePath;
+  if (!windowsBare(node)) {
+    node = short(m.nodePath);
+    if (windowsBare(node)) notes.push("the node path as its 8.3 short name");
+    else {
+      const found = (look.onPath ?? nodeOnPath)();
+      node = found !== null && found.toLowerCase() === m.nodePath.toLowerCase() ? "node" : null;
+      if (node) notes.push("`node` from PATH (the same node.exe), because its path has spaces and no 8.3 name");
+    }
+  }
+  let guard: string | null = m.guardPath;
+  if (!windowsBare(guard)) {
+    guard = short(m.guardPath);
+    if (windowsBare(guard)) notes.push("the guard path as its 8.3 short name");
+    else {
+      guard = /["%$`]/.test(m.guardPath) ? null : `"${m.guardPath}"`;
+      if (guard) notes.push("the guard path in double quotes");
+    }
+  }
+  if (node !== null && guard !== null) {
+    return { command: posixForm, commandWindows: [node, guard, ...guardArgs].join(" "), windowsNote: notes.length > 0 ? `${notes.join(" and ")}, so cmd.exe and PowerShell both run it` : undefined };
   }
   const q = (p: string) => `'${p.replace(/'/g, "''")}'`;
   return {
     command: posixForm,
     commandWindows: `& ${q(m.nodePath)} ${q(m.guardPath)} ${guardArgs.join(" ")}`,
-    windowsNote: "PowerShell quoting: this volume has no 8.3 names and the paths contain spaces; Codex does not document its Windows hook shell, so run `ah doctor`",
+    windowsNote: "PowerShell quoting, which cmd.exe cannot run: the paths have spaces and no 8.3 names. Codex does not document its Windows hook shell, so run `ah doctor`",
   };
 }
 
@@ -103,7 +141,7 @@ export interface CodexEntryOptions {
   noLog?: boolean;
 }
 
-export function codexGroup(m: Machine, o: CodexEntryOptions, found: Record<string, unknown>[], short?: (p: string) => string): Record<string, unknown> {
+export function codexGroup(m: Machine, o: CodexEntryOptions, found: Record<string, unknown>[], look?: WindowsLookups, notes?: string[]): Record<string, unknown> {
   const carried: CarriedOptions = {};
   let timeout: number | undefined;
   let statusMessage: string | undefined;
@@ -117,7 +155,8 @@ export function codexGroup(m: Machine, o: CodexEntryOptions, found: Record<strin
   const fallback = o.askFallback ?? carried.askFallback;
   if (fallback === "warn") args.push("--ask-fallback", "warn");
   if (o.noLog ?? carried.noLog) args.push("--no-log");
-  const c = codexCommand(m, args, short);
+  const c = codexCommand(m, args, look);
+  if (c.windowsNote && notes) notes.push(`commandWindows uses ${c.windowsNote}`);
   const entry: Record<string, unknown> = { type: "command", command: c.command };
   if (c.commandWindows !== undefined) entry.commandWindows = c.commandWindows;
   entry.timeout = timeout ?? 5;

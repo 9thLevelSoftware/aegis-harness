@@ -29,3 +29,22 @@ test("the command quotes what bash and zsh would split, and nothing else", () =>
   const m = { root: "/home/dev/project", home: "/home/dev", os: "linux", env: {}, nodePath: "/home/dev/.nvm/versions/node/v22.18.0/bin/node", guardPath: "/home/dev/My Tools/aegis/dist/guard.mjs" } as unknown as Machine;
   assert.equal(codexCommand(m, ["--agent", "codex"]).command, "/home/dev/.nvm/versions/node/v22.18.0/bin/node '/home/dev/My Tools/aegis/dist/guard.mjs' --agent codex");
 });
+
+test("commandWindows runs in cmd.exe and PowerShell alike whenever it can", () => {
+  const win = (nodePath: string, guardPath: string) => ({ root: "C:\\Users\\dev\\project", home: "C:\\Users\\dev", os: "win32", env: {}, nodePath, guardPath }) as unknown as Machine;
+  const noShort = (p: string) => p;
+  const args = ["--agent", "codex"];
+  const plain = codexCommand(win("C:\\nodejs\\node.exe", "C:\\Users\\dev\\npm\\guard.mjs"), args, { short: noShort });
+  assert.equal(plain.commandWindows, "C:\\nodejs\\node.exe C:\\Users\\dev\\npm\\guard.mjs --agent codex");
+  const short = codexCommand(win("C:\\Program Files\\nodejs\\node.exe", "C:\\x\\guard.mjs"), args, { short: (p) => p.replace("Program Files", "PROGRA~1") });
+  assert.equal(short.commandWindows, "C:\\PROGRA~1\\nodejs\\node.exe C:\\x\\guard.mjs --agent codex");
+  const quoted = codexCommand(win("C:\\nodejs\\node.exe", "C:\\Users\\dev\\ah with space\\guard.mjs"), args, { short: noShort });
+  assert.equal(quoted.commandWindows, 'C:\\nodejs\\node.exe "C:\\Users\\dev\\ah with space\\guard.mjs" --agent codex', "a quoted argument after a bare first word runs in both");
+  const viaPath = codexCommand(win("C:\\Users\\dev\\my tools\\node.exe", "C:\\x\\guard.mjs"), args, { short: noShort, onPath: () => "c:\\users\\dev\\My Tools\\node.exe" });
+  assert.equal(viaPath.commandWindows, "node C:\\x\\guard.mjs --agent codex");
+  const other = codexCommand(win("C:\\Users\\dev\\my tools\\node.exe", "C:\\x\\guard.mjs"), args, { short: noShort, onPath: () => "C:\\nodejs\\node.exe" });
+  assert.equal(other.commandWindows, "& 'C:\\Users\\dev\\my tools\\node.exe' 'C:\\x\\guard.mjs' --agent codex", "never a different node than the one asked for");
+  assert.match(other.windowsNote ?? "", /cmd\.exe cannot run/);
+  const dollar = codexCommand(win("C:\\nodejs\\node.exe", "C:\\Users\\dev\\a b$c\\guard.mjs"), args, { short: noShort });
+  assert.match(dollar.commandWindows ?? "", /^& /, "PowerShell would expand $c inside double quotes");
+});
