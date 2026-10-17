@@ -119,7 +119,12 @@ impact: >-
   and `git clean -fdx -- .claude` passed because git's own deletes were never judged; and from a
   subdirectory or a linked worktree, `rm` and `chmod -x` of the top level's or main checkout's
   `.git/hooks/pre-commit` passed. PowerShell `Rename-Item`, cmd `ren` and `rename` were never
-  judged at all, so renaming `.ruff.toml` or `.codex\hooks.json` away passed.
+  judged at all, so renaming `.ruff.toml` or `.codex\hooks.json` away passed. A fourth review found
+  `rm -rf .claude/*` (and `Remove-Item .claude\* -Recurse`, `rm ~/.claude/*`) still passed, as
+  did `.GIT\hooks\pre-commit` on Windows, where the .git check alone did not fold case;
+  `find .git/hooks -name pre-commit -delete` and `find . -name .ruff.toml -delete` passed because a
+  narrowing filter exempted the whole find; and `mv .ruff.toml{,.bak}` and `{rm,-rf,.claude}`
+  passed because the parser did not brace-expand, and read `{rm,...}` as a `{ }` group.
 countermeasure:
   kind: test
   ref:
@@ -174,7 +179,15 @@ countermeasure:
     to that path; `.git` in any directory above the project root, and in a worktree's main
     checkout, is git internals (a stale `*.lock` still passes); `git rm` (not `--cached`),
     `git mv` and a scoped `git clean -f` are judged like rm and mv on their paths, from `git -C`'s
-    directory, and `Rename-Item`, `ren` and `rename` like mv. A protected basename (`lefthook.yml`) inside a directory being removed is not seen,
+    directory, and `Rename-Item`, `ren` and `rename` like mv (a rename's expression words and
+    wildcard file lists are not judged; `rename -n` and `-WhatIf` pass). After the fourth review: a
+    wildcard counts as the protected path it matches the way sh expands it (`.claude/*`,
+    `.eslintrc*`, `.c*` with a recursive rm or a move; a bare `*` or `.[!.]*` names nothing, since
+    only the filesystem knows what is there); `.git` folds case on Windows; a narrowed find is still
+    denied when it starts inside a protected directory or its -name/-path names a protected file;
+    unquoted words are brace-expanded in the sh dialect, and a sh `{` group needs whitespace after
+    it; `git rm` of a path above a subdirectory session passes, since git touches only its own
+    repository. A protected basename (`lefthook.yml`) inside a directory being removed is not seen,
     since the guard reads no filesystem. Still beyond any
     deny-list: variable indirection (`A=ah; $A init --remove`, `$(which ah) init --remove`,
     `$s = '...'; iex $s`), arbitrary interpreter programs that build the command at run time, and

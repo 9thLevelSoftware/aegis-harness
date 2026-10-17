@@ -1,0 +1,12 @@
+{
+  "name": "perl rename over every file in a directory is allowed",
+  "cwd": "/home/dev/project/assets",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rename 's/ /_/g' *"
+    }
+  },
+  "near": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-019"
+}

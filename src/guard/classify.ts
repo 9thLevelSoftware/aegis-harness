@@ -92,7 +92,7 @@ export function classifyPath(input: string, ctx: Context): PathInfo {
     if (rel === ".") return base("project-root");
     let m: string | undefined;
     if ((m = matchGlobs(rel, policy.harnessPaths, platform))) return base("harness", m);
-    if (rel === ".git" || rel.startsWith(".git/")) return { ...base("git-internals", ".git/**"), gitRel: rel };
+    if (isGitRel(rel, platform)) return { ...base("git-internals", ".git/**"), gitRel: rel };
     // A session started inside a hook directory (`<top>/.codex`) has the hook files themselves in the project.
     if ((m = matchGlobs(rel, policy.hookConfigPaths, platform) ?? hookConfigAbove(abs, ctx, true))) return base("hook-config", m);
     if ((m = matchGlobs(rel, policy.lockfilePaths, platform))) return base("lockfile", m);
@@ -158,7 +158,94 @@ function layersAbove(ctx: Context): string[] {
 function gitDirAbove(abs: string, ctx: Context): string | undefined {
   for (const dir of layersAbove(ctx)) {
     const r = relativeTo(dir, abs, ctx.platform);
-    if (r !== null && (r === ".git" || r.startsWith(".git/"))) return r;
+    if (r !== null && isGitRel(r, ctx.platform)) return r;
+  }
+  return undefined;
+}
+
+/** `.git` itself or a path inside it; Windows file systems fold case, so `.GIT` is the same directory there. */
+function isGitRel(r: string, platform: Platform): boolean {
+  const f = platform === "windows" ? r.toLowerCase() : r;
+  return f === ".git" || f.startsWith(".git/");
+}
+
+const WILDCARD = /[*?[]/;
+
+/**
+ * One segment of a sh glob as a RegExp. A wildcard does not match a leading
+ * dot unless the pattern spells it (sh without dotglob); on Windows it does,
+ * as PowerShell and cmd wildcards do, and case folds.
+ */
+function segmentPattern(seg: string, platform: Platform): RegExp {
+  let re = "";
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    const close = c === "[" ? seg.indexOf("]", i + 2) : -1;
+    if (c === "*") re += "[^/]*";
+    else if (c === "?") re += "[^/]";
+    else if (close > 0) {
+      const body = seg.slice(i + 1, close);
+      re += `[${/^[!^]/.test(body) ? "^" : ""}${body.replace(/^[!^]/, "").replace(/[\\\]^]/g, "\\$&")}]`;
+      i = close;
+    } else re += c.replace(/[.+^${}()|\\[\]]/g, "\\$&");
+  }
+  const lead = platform !== "windows" && WILDCARD.test(seg[0] ?? "") ? "(?!\\.)" : "";
+  return new RegExp(`^${lead}${re}$`, platform === "windows" ? "i" : "");
+}
+
+/** Concrete names a basename glob stands for, to test a wildcard target against: `vitest.config.*` as `vitest.config.ts` and its kin. */
+function spellings(glob: string): string[] {
+  if (!WILDCARD.test(glob)) return [glob];
+  return ["js", "ts", "mjs", "cjs", "json", "jsonc", "yml", "yaml", "toml", "x"].map((ext) => glob.replace(/\*+|\?/g, ext));
+}
+
+/**
+ * The protected path a removal target with shell wildcards reaches, matched
+ * the way sh expands it: `.claude/*` reaches `.claude/settings.json`,
+ * `.eslintrc*` reaches `.eslintrc.json`. With `whole`, a target that matches
+ * a directory above a protected path reaches it too (`rm -rf .c*` takes
+ * `.claude` with it); without, only the path itself counts, since a
+ * non-recursive rm leaves directories alone. The result is classified as the
+ * protected path it reached.
+ */
+export function wildcardReach(input: string, ctx: Context, whole: boolean): PathInfo | undefined {
+  const { policy, platform } = ctx;
+  const stripped = input.replace(/^["']+|["']+$/g, "");
+  if (!WILDCARD.test(stripped) || hasVariable(stripped)) return undefined;
+  const pattern = resolvePath(stripped, ctx.projectRoot, ctx.homeDir, platform).split("/");
+  const fixed = pattern.findIndex((seg) => WILDCARD.test(seg));
+  const join = (dir: string, rest: string) => `${normalize(driveForm(dir, platform)).replace(/\/$/, "")}/${rest}`;
+  const candidates: string[] = [];
+  const root = normalize(driveForm(ctx.projectRoot, platform));
+  for (const dir of [root, ...layersAbove(ctx)]) {
+    for (const g of [...policy.hookConfigPaths, ...policy.harnessPaths]) {
+      const head = literalHead(g);
+      if (head !== null) candidates.push(join(dir, head));
+    }
+    candidates.push(join(dir, ".git"));
+  }
+  if (ctx.homeDir !== undefined) for (const g of policy.homeSensitivePaths) candidates.push(join(ctx.homeDir, literalHead(g) ?? g));
+  // Basename globs match at any depth: try them in the project root and in the directory the wildcard
+  // sits in, but only for a wildcard that names something (`.eslintrc*`, `*.toml`). A bare `*` or the
+  // hidden-file `.[!.]*` matches any name, protected or not, and whether one is there only the filesystem knows.
+  const parent = pattern.slice(0, fixed).join("/") || "/";
+  const last = pattern[pattern.length - 1];
+  const names = fixed === pattern.length - 1 && /[^.]/.test(last.replace(/\[[^\]]*\]|[*?]/g, ""));
+  const basenames = [...policy.hookConfigPaths, ...policy.lintConfigPaths, ...policy.testConfigPaths].filter((g) => !g.includes("/"));
+  // Names spelled out in the policy first, so `*.toml` reports ruff.toml rather than a made-up config name.
+  const ordered = [...basenames.filter((g) => !WILDCARD.test(g)), ...basenames.filter((g) => WILDCARD.test(g))];
+  for (const dir of names ? new Set([root, parent]) : []) {
+    for (const g of ordered) for (const name of spellings(g)) candidates.push(join(dir, name));
+  }
+  for (const lit of candidates) {
+    const segs = lit.split("/");
+    if (segs.length < pattern.length || (!whole && segs.length !== pattern.length)) continue;
+    const hit = pattern.every((p, i) => (WILDCARD.test(p) ? segmentPattern(p, platform).test(segs[i]) : platform === "windows" ? p.toLowerCase() === segs[i].toLowerCase() : p === segs[i]));
+    if (!hit) continue;
+    const info = classifyPath(lit, ctx);
+    if (info.category === "normal" || info.category === "outside-project" || info.category === "temp") continue;
+    const shown = relativeTo(ctx.projectRoot, lit, platform) ?? lit;
+    return { ...info, input, abs: pattern.join("/"), matched: `it matches ${shown}` };
   }
   return undefined;
 }

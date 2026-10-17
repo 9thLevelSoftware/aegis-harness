@@ -1,0 +1,13 @@
+{
+  "name": "Write of .GIT\\hooks\\pre-commit is denied on Windows",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "C:\\Users\\dev\\project\\.GIT\\hooks\\pre-commit",
+      "content": "exit 0\n"
+    }
+  },
+  "rule": "edit.git-internals",
+  "source": "BUG-2026-019"
+}

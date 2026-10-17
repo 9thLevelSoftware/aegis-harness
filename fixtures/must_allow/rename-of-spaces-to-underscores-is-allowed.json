@@ -1,0 +1,11 @@
+{
+  "name": "rename of spaces to underscores is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rename ' ' '_' assets/*.png"
+    }
+  },
+  "near": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-019"
+}

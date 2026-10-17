@@ -111,7 +111,7 @@ function parseInner(command: string, depth: number, nested: boolean, dialect: Sh
     for (const s of stageStrings) {
       const text = s.trim();
       if (!text) continue;
-      const grouped = unwrapGroup(text);
+      const grouped = unwrapGroup(text, dialect);
       if (grouped !== null) {
         extra.push(...parseInner(grouped, depth + 1, true, dialect));
         continue;
@@ -128,10 +128,13 @@ function parseInner(command: string, depth: number, nested: boolean, dialect: Sh
   return out;
 }
 
-/** `( ... )` subshells and `{ ...; }` groups: return the inner text, or null. */
-function unwrapGroup(text: string): string | null {
+/**
+ * `( ... )` subshells and `{ ...; }` groups: return the inner text, or null. In sh a group's `{`
+ * is a word of its own, so `{rm,-rf,x}` is one brace-expanded command, not a group.
+ */
+function unwrapGroup(text: string, dialect: ShellDialect): string | null {
   if (text.startsWith("(") && text.endsWith(")")) return text.slice(1, -1);
-  if (text.startsWith("{") && text.endsWith("}")) {
+  if (text.startsWith("{") && text.endsWith("}") && (dialect !== "posix" || /^\{\s/.test(text))) {
     const inner = text.slice(1, -1).trim();
     return inner.endsWith(";") ? inner.slice(0, -1) : inner;
   }
@@ -336,6 +339,38 @@ interface Token {
   text: string;
   /** Set for unquoted redirection operators. */
   op?: string;
+  /** No quote, escape or substitution in the word, so sh brace-expands it. */
+  bare?: boolean;
+}
+
+/**
+ * sh brace expansion of one unquoted word: `.ruff.toml{,.bak}` is `.ruff.toml .ruff.toml.bak`,
+ * `{rm,-rf,x}` is `rm -rf x`. Alternatives nest; `${VAR}` and a group without a comma stay as
+ * they are, and the result is capped so a word cannot multiply without end.
+ */
+export function braceExpand(word: string, limit = 64): string[] {
+  for (let i = 0; i < word.length; i++) {
+    if (word[i] !== "{" || word[i - 1] === "$") continue;
+    const commas: number[] = [];
+    for (let j = i, depth = 0; j < word.length; j++) {
+      if (word[j] === "{") depth++;
+      else if (word[j] === "," && depth === 1) commas.push(j);
+      else if (word[j] === "}" && --depth === 0) {
+        if (commas.length === 0) break;
+        const out: string[] = [];
+        let start = i + 1;
+        for (const end of [...commas, j]) {
+          for (const w of braceExpand(word.slice(0, i) + word.slice(start, end) + word.slice(j + 1), limit)) {
+            out.push(w);
+            if (out.length >= limit) return out;
+          }
+          start = end + 1;
+        }
+        return out;
+      }
+    }
+  }
+  return [word];
 }
 
 function tokenize(stage: string, dialect: ShellDialect): Token[] {
@@ -343,14 +378,16 @@ function tokenize(stage: string, dialect: ShellDialect): Token[] {
   const tokens: Token[] = [];
   let cur = "";
   let has = false;
+  let bare = true;
   let inSingle = false;
   let inDouble = false;
   let depth = 0; // $( ) and ( ) nesting inside a token
 
   const flush = () => {
-    if (has) tokens.push({ text: cur });
+    if (has) tokens.push(bare ? { text: cur, bare } : { text: cur });
     cur = "";
     has = false;
+    bare = true;
   };
 
   for (let i = 0; i < stage.length; i++) {
@@ -372,6 +409,7 @@ function tokenize(stage: string, dialect: ShellDialect): Token[] {
     if (c === escapeChar && next !== undefined && !(inDouble && dialect === "posix" && !'"$`\\'.includes(next))) {
       cur += next;
       has = true;
+      bare = false;
       i++;
       continue;
     }
@@ -392,10 +430,10 @@ function tokenize(stage: string, dialect: ShellDialect): Token[] {
       else if (c === ")") depth--;
       continue;
     }
-    if (c === "'") { inSingle = true; has = true; continue; }
-    if (c === '"') { inDouble = true; has = true; continue; }
-    if (c === "$" && next === "(") { cur += "$("; has = true; depth = 1; i++; continue; }
-    if ((c === "<" || c === ">") && next === "(") { cur += c + "("; has = true; depth = 1; i++; continue; }
+    if (c === "'") { inSingle = true; has = true; bare = false; continue; }
+    if (c === '"') { inDouble = true; has = true; bare = false; continue; }
+    if (c === "$" && next === "(") { cur += "$("; has = true; bare = false; depth = 1; i++; continue; }
+    if ((c === "<" || c === ">") && next === "(") { cur += c + "("; has = true; bare = false; depth = 1; i++; continue; }
     if (c === " " || c === "\t") { flush(); continue; }
     if (c === ">" || c === "<") {
       // Redirection. Fold a preceding bare fd number (`2>`) into the operator.
@@ -452,7 +490,8 @@ function stripCompoundLeads(argv: string[]): void {
 }
 
 function buildStage(text: string, dialect: ShellDialect): Stage {
-  const tokens = tokenize(dialect === "powershell" ? text.replace(PWSH_ASSIGNMENT, "") : text, dialect);
+  let tokens = tokenize(dialect === "powershell" ? text.replace(PWSH_ASSIGNMENT, "") : text, dialect);
+  if (dialect === "posix") tokens = tokens.flatMap((t) => (t.bare && t.text.includes(",") ? braceExpand(t.text).map((w) => ({ text: w, bare: true })) : [t]));
   const argv: string[] = [];
   const writes: string[] = [];
   const reads: string[] = [];

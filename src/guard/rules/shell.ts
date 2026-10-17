@@ -1,4 +1,4 @@
-import { classifyPath, isBlockDevice, protectedInside, type PathInfo } from "../classify.ts";
+import { classifyPath, isBlockDevice, protectedInside, wildcardReach, type PathInfo } from "../classify.ts";
 import { ALLOW, ask, deny, strictest, type Context, type Decision, type ShellCall } from "../model.ts";
 import { globToRegExp, hasVariable, isTempPath, normalize } from "../paths.ts";
 import { findSecrets, redact } from "../secrets.ts";
@@ -342,16 +342,23 @@ function stripWipeSuffix(t: string): string {
 /**
  * A path whose removal, move or permission change takes a whole directory
  * with it: one that holds hook wiring or agent settings counts as them
- * (`rm -rf .claude` removes `.claude/settings.json`).
+ * (`rm -rf .claude` removes `.claude/settings.json`), and a wildcard counts
+ * as the protected path it expands to (`rm .claude/*`). `whole` is false for
+ * a non-recursive rm, which leaves the directories a wildcard matches alone.
  */
-function classifyWhole(t: string, ctx: Context): PathInfo {
+function classifyWhole(t: string, ctx: Context, whole = true): PathInfo {
   const info = classifyPath(t, ctx);
   if (info.category !== "normal" && info.category !== "temp" && info.category !== "outside-project") return info;
   const inside = protectedInside(info.abs, ctx);
-  return inside === undefined ? info : { ...info, category: inside.category, matched: `it holds ${inside.matched}` };
+  if (inside !== undefined) return { ...info, category: inside.category, matched: `it holds ${inside.matched}` };
+  return wildcardReach(t, ctx, whole) ?? info;
 }
 
-function judgeRemoveTarget(target: string, destructive: boolean, recursive: boolean, s: Stage, ctx: Context): Decision {
+/**
+ * `rename` is true for Rename-Item, ren and rename, which keep the file where
+ * it is: wiping the working directory is not something they can do.
+ */
+function judgeRemoveTarget(target: string, destructive: boolean, recursive: boolean, s: Stage, ctx: Context, rename = false): Decision {
   let t = target.replace(/^["']+|["']+$/g, "");
   if (t === "" || t === "--") return ALLOW;
 
@@ -367,7 +374,7 @@ function judgeRemoveTarget(target: string, destructive: boolean, recursive: bool
   if (HOME_LITERAL.test(t)) {
     return deny("shell.rm-recursive-home", `${s.cmd} targets the home directory (${shownTarget(t)})`, "Deleting the home directory destroys the user's machine state. Name the specific directory inside the project.");
   }
-  if (CWD_WIPE_LITERAL.test(t)) {
+  if (CWD_WIPE_LITERAL.test(t) && !rename) {
     if (recursive || /\*/.test(t) || s.cmd === "del" || s.cmd === "erase") {
       return deny("shell.rm-recursive-cwd", `${s.cmd} ${t} wipes the working directory`, "Delete specific paths (for example `rm -rf dist node_modules`). If the whole tree must go, the user does that.");
     }
@@ -389,7 +396,7 @@ function judgeRemoveTarget(target: string, destructive: boolean, recursive: bool
 
   // `rm -rf <dir>/*` is the same act as `rm -rf <dir>` when <dir> is the project, the home or the root.
   const base = stripWipeSuffix(t);
-  if (base !== t) {
+  if (base !== t && !rename) {
     const parent = classifyPath(base, ctx);
     if (parent.category === "filesystem-root") {
       return deny("shell.rm-recursive-root", `${s.cmd} ${t} empties the filesystem root`, "Nothing in a project needs the filesystem root emptied. Name the specific directory.");
@@ -402,16 +409,16 @@ function judgeRemoveTarget(target: string, destructive: boolean, recursive: bool
     }
   }
 
-  const info = classifyWhole(t, ctx);
+  const info = classifyWhole(t, ctx, recursive || destructive);
   switch (info.category) {
     case "filesystem-root":
       return deny("shell.rm-recursive-root", `${s.cmd} targets the filesystem root (${t})`, "Nothing in a project needs the filesystem root deleted.");
     case "home-root":
       return deny("shell.rm-recursive-home", `${s.cmd} targets the home directory (${t})`, "Deleting the home directory destroys the user's machine state.");
     case "project-root":
-      return destructive ? deny("shell.rm-recursive-cwd", `${s.cmd} ${t} wipes the project`, "Delete specific paths instead.") : ALLOW;
+      return destructive && !rename ? deny("shell.rm-recursive-cwd", `${s.cmd} ${t} wipes the project`, "Delete specific paths instead.") : ALLOW;
     case "git-internals": {
-      const rel = info.gitRel ?? "";
+      const rel = (info.gitRel ?? "").toLowerCase();
       // A stale lock file (`index.lock`, `HEAD.lock`, `refs/heads/x.lock`) is the one thing under .git/ git itself tells the user to remove.
       if (rel !== ".git" && /\.lock$/i.test(rel)) return ALLOW;
       return rel === ".git"
@@ -484,14 +491,26 @@ function findRules(s: Stage, ctx: Context): Decision[] {
   const argv = s.argv.slice(1);
   const actionAt = argv.findIndex((a, i) => a === "-delete" || (/^-exec(dir)?$/.test(a) && REMOVERS.has((argv[i + 1] ?? "").replace(/^\\/, ""))));
   if (actionAt < 0) return [];
-  if (argv.some((_, i) => narrows(argv, i, actionAt))) return [];
   const starts: string[] = [];
   for (const a of argv) {
     if (a.startsWith("-") || a === "(" || a === "!") break;
     starts.push(a);
   }
   if (starts.length === 0) starts.push(".");
-  return starts.map((t) => judgeRemoveTarget(t, true, true, { ...s, cmd: "find -delete" }, ctx));
+  const stage = { ...s, cmd: "find -delete" };
+  if (argv.some((_, i) => narrows(argv, i, actionAt))) {
+    // A filter narrows what goes, but not where: a start inside a protected directory, or a filter
+    // that names a protected file outright, still deletes it.
+    const named: string[] = [];
+    for (let i = 0; i < actionAt; i++) {
+      const v = argv[i + 1] ?? "";
+      if (/^-i?name$/.test(argv[i]) && !/[*?[]/.test(v)) named.push(...starts.map((st) => `${st.replace(/[\\/]+$/, "")}/${v}`));
+      if (/^-i?(path|wholename)$/.test(argv[i]) && !/[*?[]/.test(v)) named.push(v);
+    }
+    const guarded = new Set(["git-internals", "harness", "hook-config", "home-config", "lint-config", "test-config"]);
+    return [...starts, ...named].filter((t) => guarded.has(classifyWhole(t, ctx).category)).map((t) => judgeRemoveTarget(t, false, false, stage, ctx)).filter((d) => d.verdict !== "allow");
+  }
+  return starts.map((t) => judgeRemoveTarget(t, true, true, stage, ctx));
 }
 
 // ---------------------------------------------------------------------------
@@ -540,7 +559,8 @@ function gitRules(s: Stage, ctx: Context): Decision[] {
   const removes = (paths: string[], destructive: boolean, recursive: boolean): void => {
     for (const p of paths) {
       const d = judgeRemoveTarget(at(p), destructive, recursive, { ...s, cmd: `git ${sub}` }, ctx);
-      if (d.verdict !== "allow") out.push(d);
+      // git touches only its own repository, which a subdirectory session shares with the paths above it.
+      if (d.verdict !== "allow" && d.rule !== "shell.rm-outside-project") out.push(d);
     }
   };
 
@@ -967,9 +987,19 @@ function copyOperands(s: Stage): { sources: string[]; dest: string | undefined }
 /** Moving a protected path away is the same act as deleting it, so a mv source is judged like an rm target. */
 function moveSourceRules(s: Stage, ctx: Context): Decision[] {
   if (RENAMERS.has(s.cmd)) {
-    // `rename` names its files after the expression; every word is judged, which only matters for a protected path.
-    const sources = s.cmd === "rename" ? flagsOf(s.argv, 1).positionals : copyOperands({ ...s, cmd: "move-item" }).sources;
-    return sources.map((src) => judgeRemoveTarget(src, true, false, s, ctx)).filter((d) => d.verdict !== "allow");
+    let sources: string[];
+    if (s.cmd === "rename") {
+      // perl rename takes an expression (or -e/-E code) and the files; util-linux rename takes two strings and the files.
+      const f = flagsOf(s.argv, 1, ["-e", "-E"]);
+      if (f.short.has("n") || f.long.has("nono") || f.long.has("no-act") || f.long.has("dry-run")) return [];
+      const perl = f.short.has("e") || f.short.has("E") ? 0 : /^(?:s|y|tr)([^\w\s]).*\1/s.test(f.positionals[0] ?? "") ? 1 : 2;
+      sources = f.positionals.slice(perl);
+    } else {
+      if (s.argv.some((a) => /^-(whatif|wi)$/i.test(a))) return [];
+      sources = copyOperands({ ...s, cmd: "move-item" }).sources;
+    }
+    // A wildcard renames whatever the expression matches, which only the expression knows; a named file is judged.
+    return sources.filter((src) => !/[*?[]/.test(src)).map((src) => judgeRemoveTarget(src, true, false, s, ctx, true)).filter((d) => d.verdict !== "allow");
   }
   if (!MOVERS.has(s.cmd)) return [];
   const { sources } = copyOperands(s);

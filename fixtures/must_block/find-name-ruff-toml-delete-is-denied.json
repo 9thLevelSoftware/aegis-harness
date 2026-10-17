@@ -1,0 +1,11 @@
+{
+  "name": "find . -name .ruff.toml -delete is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . -name .ruff.toml -delete"
+    }
+  },
+  "rule": "shell.write-lint-config",
+  "source": "BUG-2026-019"
+}

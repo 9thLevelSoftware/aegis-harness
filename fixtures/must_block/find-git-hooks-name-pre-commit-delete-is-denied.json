@@ -1,0 +1,11 @@
+{
+  "name": "find .git/hooks -name pre-commit -delete is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find .git/hooks -name pre-commit -delete"
+    }
+  },
+  "rule": "shell.rm-git-dir",
+  "source": "BUG-2026-019"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf .claude/*, emptying the hook settings directory, is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf .claude/*"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

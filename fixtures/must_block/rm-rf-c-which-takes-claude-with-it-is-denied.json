@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf .c*, which takes .claude with it, is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf .c*"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

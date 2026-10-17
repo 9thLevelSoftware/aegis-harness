@@ -1,0 +1,11 @@
+{
+  "name": "rm .eslintrc* is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm .eslintrc*"
+    }
+  },
+  "rule": "shell.write-lint-config",
+  "source": "BUG-2026-019"
+}

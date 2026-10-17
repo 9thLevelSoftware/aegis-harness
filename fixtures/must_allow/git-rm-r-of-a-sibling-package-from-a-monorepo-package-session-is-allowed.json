@@ -1,0 +1,12 @@
+{
+  "name": "git rm -r of a sibling package from a monorepo package session is allowed",
+  "cwd": "/home/dev/mono/packages/api",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git rm -r ../legacy"
+    }
+  },
+  "near": "shell.rm-outside-project",
+  "source": "BUG-2026-019"
+}
