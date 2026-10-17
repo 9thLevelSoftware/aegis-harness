@@ -298,7 +298,7 @@ test("doctor catches the switches and mistakes that leave calls unguarded", { sk
     writeFileSync(join(s.home, ".claude", "settings.json"), '{"disableAllHooks": true}\n');
     assert.match(titles(), /disableAllHooks is true/);
     writeFileSync(join(s.home, ".claude", "settings.json"), '{"hooks": {"PreToolUse": [{"matcher": ["Bash"], "hooks": []}]}}\n');
-    assert.match(titles(), /a matcher that is not a string under PreToolUse; Claude Code then loads nothing from this file/);
+    assert.match(titles(), /a PreToolUse matcher that is not a string .*Claude Code then applies nothing from this file/);
     rmSync(join(s.home, ".claude", "settings.json"));
 
     const local = join(s.root, ".claude", "settings.local.json");

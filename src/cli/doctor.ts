@@ -12,14 +12,15 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
-import { atLeast, CLAUDE_MIN, CLAUDE_OPTIONAL_TOOLS, CLAUDE_REQUIRED_TOOLS, claudeConfigDir, claudeMatcherCovers, claudeSettingsFiles, managedDir, parseVersion, type SettingsFile } from "../wiring/claude.ts";
+import { basename, delimiter, dirname, join, relative, resolve } from "node:path";
+import { atLeast, CLAUDE_MIN, CLAUDE_OPTIONAL_TOOLS, CLAUDE_REQUIRED_TOOLS, claudeConfigDir, claudeHooksProblem, claudeMatcherCovers, claudeSettingsFiles, managedDir, parseVersion, type SettingsFile } from "../wiring/claude.ts";
 import { canaries, runCanary, type Launch } from "../wiring/canary.ts";
-import { CODEX_REQUIRED_TOOLS, codexConfigFiles, codexHome, codexHooksFiles, codexMatcherCovers, codexRequirementsFile, parseCodexVersion, parseFeaturesHooks } from "../wiring/codex.ts";
+import { canonical, CODEX_REQUIRED_TOOLS, codexConfigFiles, codexFileProblem, codexHome, codexHooksFiles, codexHooksList, codexLayers, codexMatcherCovers, codexRequirementsFile, parseCodexVersion, parseFeaturesHooks, type CodexListedHook, type CodexListing } from "../wiring/codex.ts";
 import { readJson, readText } from "../wiring/files.ts";
 import { blockIsCurrent, claudeMdState, CODEX_DOC_BUDGET } from "../wiring/instructions.ts";
-import { entryWords, guardArgs, isOwnedEntry, splitWords } from "../wiring/owned.ts";
+import { entryWords, GUARD_FILE, guardArgs, isOwnedEntry, looksLikeGuard, splitWords } from "../wiring/owned.ts";
 import { defaultMachine, gitTopLevel, readJsonQuiet, type Machine } from "../wiring/project.ts";
+import { defaultGuardPath } from "./test-hooks.ts";
 import { blockEndByte } from "../wiring/text-block.ts";
 import { get, parseToml } from "../wiring/toml.ts";
 
@@ -41,7 +42,9 @@ export interface DoctorOptions {
 export const DOCTOR_HELP = `ah doctor [--agents claude,codex] [--root DIR] [--json]
     Check that each agent will run the guard: CLI version, every settings file it loads hooks from,
     switches and trust that turn hooks off, and a canary through each ah hook command (rm -rf / and an
-    edit to .ruff.toml must be refused, ls must pass). Exits 1 if any call would go unguarded.
+    edit to .ruff.toml must be refused, ls must pass). With codex on PATH it also asks Codex itself
+    (codex app-server, offline) which hooks it loads here and whether it trusts them.
+    Exits 1 if any call would go unguarded.
 `;
 
 export function parseDoctorArgs(argv: readonly string[]): DoctorOptions | string {
@@ -95,6 +98,31 @@ function exists(p: string): boolean {
   }
 }
 
+/** A command an agent starts by name: a path is checked as is, a bare name on PATH (with .exe/.cmd on Windows). */
+function findCommand(m: Machine, cmd: string): boolean {
+  if (/[\\/]/.test(cmd)) return exists(cmd);
+  const exts = m.os === "win32" ? ["", ".exe", ".cmd", ".bat"] : [""];
+  return (m.env.PATH ?? m.env.Path ?? "").split(m.os === "win32" ? ";" : delimiter).some((d) => d !== "" && exts.some((x) => exists(join(d, cmd + x))));
+}
+
+/** `<node> <guard> --version`, or null when the guard does not answer with one (builds before it learned to). */
+function guardVersion(node: string, guard: string, env: NodeJS.ProcessEnv): string | null {
+  const r = spawnSync(node, [guard, "--version"], { encoding: "utf8", env, input: "", timeout: 10_000, windowsHide: true });
+  const v = (r.stdout ?? "").trim();
+  return r.status === 0 && /^\d+\.\d+\.\d+\S*$/.test(v) ? v : null;
+}
+
+/** Warn when a hook runs a different guard build than the one `ah init` wires now: rules added since are missing from it. */
+function versionCheck(agent: "claude" | "codex", m: Machine, where: string, node: string | undefined, guard: string | undefined): Check[] {
+  const ours = defaultGuardPath();
+  if (!guard || !ours || !exists(guard) || canonical(guard) === canonical(ours)) return [];
+  const theirs = guardVersion(node && findCommand(m, node) ? node : process.execPath, guard, m.env);
+  const mine = guardVersion(process.execPath, ours, m.env);
+  if (theirs !== null && theirs === mine) return [];
+  const what = theirs === null ? "an older build that does not report its version" : `version ${theirs}`;
+  return [{ agent, level: "warn", title: `${where}: the hook runs the guard at ${guard}, ${what}; this ah wires ${ours}${mine ? ` (${mine})` : ""}, so rules added since may be missing from the hook`, fix: "re-run `ah init` to point the hook at this ah's guard" }];
+}
+
 function isObj(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
@@ -108,14 +136,14 @@ interface OwnedAt {
   handlerIndex: number;
 }
 
-function ownedIn(value: unknown, file: string, scope: string): OwnedAt[] {
+function ownedIn(value: unknown, file: string, scope: string, test: (e: unknown) => boolean = isOwnedEntry): OwnedAt[] {
   const groups = get(value, "hooks", "PreToolUse");
   if (!Array.isArray(groups)) return [];
   const out: OwnedAt[] = [];
   groups.forEach((g, groupIndex) => {
     if (!isObj(g) || !Array.isArray(g.hooks)) return;
     g.hooks.forEach((e, handlerIndex) => {
-      if (isOwnedEntry(e)) out.push({ file, scope, group: g, entry: e as Record<string, unknown>, groupIndex, handlerIndex });
+      if (test(e)) out.push({ file, scope, group: g, entry: e as Record<string, unknown>, groupIndex, handlerIndex });
     });
   });
   return out;
@@ -123,7 +151,7 @@ function ownedIn(value: unknown, file: string, scope: string): OwnedAt[] {
 
 /** The node and guard paths an entry names, for checking they still exist. */
 function namedPaths(words: string[]): { node?: string; guard?: string } {
-  const gi = words.findIndex((w) => /(^|[\\/])dist[\\/]guard\.mjs$/i.test(w));
+  const gi = words.findIndex((w) => GUARD_FILE.test(w));
   if (gi < 0) return {};
   const before = words.slice(0, gi).filter((w) => w !== "&");
   return { node: before.length > 0 ? before[before.length - 1] : undefined, guard: words[gi] };
@@ -151,25 +179,6 @@ function canaryLine(agent: "claude" | "codex", m: Machine, launch: Launch, timeo
 // ---------------------------------------------------------------------------
 // Claude Code
 
-const CLAUDE_HOOK_TYPES = new Set(["command", "prompt", "agent", "http", "mcp_tool"]);
-
-/** What makes Claude Code reject a PreToolUse entry, and with it the whole file (2.1.302). */
-function claudeFatal(g: unknown): string | null {
-  if (!isObj(g)) return "a matcher group that is not an object";
-  if (g.matcher !== undefined && typeof g.matcher !== "string") return "a matcher that is not a string";
-  if (!Array.isArray(g.hooks)) return "a matcher group without a hooks array";
-  for (const e of g.hooks) {
-    if (!isObj(e)) return "a hook that is not an object";
-    if (typeof e.type !== "string" || !CLAUDE_HOOK_TYPES.has(e.type)) return `a hook with type ${JSON.stringify(e.type)}`;
-    if (e.type === "command" && typeof e.command !== "string") return "a command hook without a command string";
-    if (e.args !== undefined && !(Array.isArray(e.args) && e.args.every((a) => typeof a === "string"))) return "args that is not a list of strings";
-    if (e.timeout !== undefined && !(typeof e.timeout === "number" && e.timeout > 0)) return `timeout ${JSON.stringify(e.timeout)} (it must be a positive number)`;
-    if (e.onFailure !== undefined && e.onFailure !== "continue" && e.onFailure !== "block") return `onFailure ${JSON.stringify(e.onFailure)}`;
-    if (e.shell !== undefined && e.shell !== "bash" && e.shell !== "powershell") return `shell ${JSON.stringify(e.shell)}`;
-  }
-  return null;
-}
-
 function managedDropIns(m: Machine): string[] {
   const d = join(managedDir(m), "managed-settings.d");
   try {
@@ -177,6 +186,28 @@ function managedDropIns(m: Machine): string[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * The switches that turn Claude Code's hooks off, per 2.1.302's hook source:
+ * managed-settings.json and its drop-ins merge into one policy, later files
+ * winning; elsewhere the first of local, project, user that sets one wins.
+ * `files` is in precedence order, managed first.
+ */
+export function claudeSwitches(files: { scope: string; path: string; value: Record<string, unknown> }[], managedAh: boolean, env: NodeJS.ProcessEnv): Check[] {
+  const out: Check[] = [];
+  const add = (level: Level, title: string, fix?: string) => out.push({ agent: "claude", level, title, fix });
+  const managed = files.filter((f) => f.scope === "managed");
+  const policy: Record<string, unknown> = Object.assign({}, ...managed.map((f) => f.value));
+  const setIn = (key: string) => [...managed].reverse().find((f) => f.value[key] !== undefined)?.path ?? "";
+  const first = files.filter((f) => f.scope !== "managed").find((f) => typeof f.value.disableAllHooks === "boolean");
+  const disabledIn = typeof policy.disableAllHooks === "boolean" ? (policy.disableAllHooks ? setIn("disableAllHooks") : null) : first?.value.disableAllHooks === true ? first.path : null;
+  if (disabledIn !== null) add("fail", `disableAllHooks is true in ${disabledIn}; no hook runs`, "remove disableAllHooks or set it to false");
+  const strict = policy.strictPluginOnlyCustomization;
+  if (policy.allowManagedHooksOnly === true && !managedAh) add("fail", `allowManagedHooksOnly is set in ${setIn("allowManagedHooksOnly")}; only hooks your organization deploys run, and ah's is not one`, "ask whoever manages that file to add the ah hook to it");
+  else if ((strict === true || (Array.isArray(strict) && strict.includes("hooks"))) && !managedAh) add("fail", `strictPluginOnlyCustomization covers hooks in ${setIn("strictPluginOnlyCustomization")}; only managed and plugin hooks run, and ah's is neither`, "ask whoever manages that file to add the ah hook to it");
+  if (/^(1|true|yes|on)$/i.test(env.CLAUDE_CODE_SAFE_MODE ?? "") && !managedAh) add("warn", "CLAUDE_CODE_SAFE_MODE is set in this shell; a Claude Code session started from it runs only managed hooks", "unset CLAUDE_CODE_SAFE_MODE");
+  return out;
 }
 
 export function doctorClaude(m: Machine, probe: CliProbe): Check[] {
@@ -189,6 +220,7 @@ export function doctorClaude(m: Machine, probe: CliProbe): Check[] {
   const files: SettingsFile[] = claudeSettingsFiles(m, managedDropIns(m));
   const values: { f: SettingsFile; value: Record<string, unknown> }[] = [];
   const owned: OwnedAt[] = [];
+  const wrapped: string[] = [];
   for (const f of files) {
     const r = readJson(f.path);
     if (!r.ok) {
@@ -201,26 +233,17 @@ export function doctorClaude(m: Machine, probe: CliProbe): Check[] {
       continue;
     }
     values.push({ f, value: r.value });
-    const pre = get(r.value, "hooks", "PreToolUse");
-    if (pre !== undefined && !Array.isArray(pre)) add("fail", `${rel(m, f.path)}: hooks.PreToolUse is not a list; Claude Code rejects the whole file`);
-    else if (Array.isArray(pre)) {
-      for (const g of pre) {
-        const bad = claudeFatal(g);
-        if (bad) {
-          add("fail", `${rel(m, f.path)} has ${bad} under PreToolUse; Claude Code then loads nothing from this file, ah's hook included`, "fix or remove that entry");
-          break;
-        }
-      }
+    const bad = claudeHooksProblem(r.value);
+    if (bad) {
+      add("fail", `${rel(m, f.path)} has ${bad}; Claude Code then applies nothing from this file, ah's hook included`, "fix or remove that entry");
+      continue;
     }
     owned.push(...ownedIn(r.value, f.path, f.scope));
+    wrapped.push(...ownedIn(r.value, f.path, f.scope, looksLikeGuard).map((o) => rel(m, o.file)));
   }
+  for (const w of new Set(wrapped)) add("info", `${w} has an entry that runs the guard with other words around it; ah does not count or test it`);
 
-  // Switches that turn hooks off. Precedence: managed, then local, project, user.
-  const managedValues = values.filter((v) => v.f.scope === "managed");
-  const disable = values.find((v) => typeof v.value.disableAllHooks === "boolean");
-  if (disable?.value.disableAllHooks === true) add("fail", `disableAllHooks is true in ${rel(m, disable.f.path)}; no hook runs`, "remove disableAllHooks or set it to false");
-  const onlyManaged = managedValues.find((v) => v.value.allowManagedHooksOnly === true);
-  if (onlyManaged && !owned.some((o) => o.scope === "managed")) add("fail", `allowManagedHooksOnly is set in ${onlyManaged.f.path}; only hooks your organization deploys run, and ah's is not one`, "ask whoever manages that file to add the ah hook to it");
+  out.push(...claudeSwitches(values.map((v) => ({ scope: v.f.scope, path: rel(m, v.f.path), value: v.value })), owned.some((o) => o.scope === "managed"), m.env));
 
   if (owned.length === 0) {
     add("fail", "no ah PreToolUse hook in any Claude Code settings file", "run `ah init --agents claude`");
@@ -247,14 +270,15 @@ export function doctorClaude(m: Machine, probe: CliProbe): Check[] {
       const agentAt = args.indexOf("--agent");
       if (agentAt >= 0 && args[agentAt + 1] !== "claude") add("fail", `${where}: the ah entry runs the guard with --agent ${args[agentAt + 1]}; Claude Code payloads need --agent claude`, "re-run `ah init --agents claude`");
       if (e.async === true || e.asyncRewake === true) add("fail", `${where}: the ah entry is async, so it cannot block anything`, "re-run `ah init`");
-      if (typeof e.if === "string") add("warn", `${where}: the ah entry only runs when ${JSON.stringify(e.if)} matches`, "re-run `ah init` to drop the filter");
+      if (typeof e.if === "string") add("fail", `${where}: the ah entry only runs when ${JSON.stringify(e.if)} matches, so every other call skips the guard`, "re-run `ah init` to drop the filter");
       const missing = CLAUDE_REQUIRED_TOOLS.filter((t) => !claudeMatcherCovers(o.group.matcher, t));
       const optional = CLAUDE_OPTIONAL_TOOLS.filter((t) => !claudeMatcherCovers(o.group.matcher, t));
       if (missing.length > 0) add("fail", `${where}: the matcher ${JSON.stringify(o.group.matcher)} skips ${missing.join(", ")}; those calls are never checked`, "re-run `ah init`");
       else add("ok", `${where}: ah hook bound${exec ? " (exec form)" : " (shell form)"} for ${CLAUDE_REQUIRED_TOOLS.join(", ")}${optional.length > 0 ? `; not for ${optional.join(", ")}` : ""}`);
       if (o.scope === "project") add("info", `${where} is read only by sessions started in ${m.root}; one started in a subdirectory runs without this hook`, "`ah init --scope local` covers the whole repository");
-      if (node && !exists(node) && exec) add("fail", `${where}: ${node} does not exist, so the hook cannot start${e.onFailure === "block" ? " and every matched call is blocked" : " and every call goes through unchecked"}`, "re-run `ah init` with the node you use now");
+      if (node && !findCommand(m, node) && exec) add("fail", `${where}: ${node} ${/[\\/]/.test(node) ? "does not exist" : "is not on PATH"}, so the hook cannot start${e.onFailure === "block" ? " and every matched call is blocked" : " and every call goes through unchecked"}`, "re-run `ah init` with the node you use now");
       if (guard && !exists(guard)) add("fail", `${where}: ${guard} does not exist`, "reinstall @9thlevel/aegis, then re-run `ah init`");
+      out.push(...versionCheck("claude", m, where, node, guard));
       if (e.onFailure === "block") {
         if (atLeast(version, CLAUDE_MIN.onFailure) === false) add("warn", `${where}: onFailure needs Claude Code ${CLAUDE_MIN.onFailure} or later; this version ignores it and fails open`);
       } else add("info", `${where}: fails open: if the hook cannot start or times out, the call goes ahead`, "`ah init --fail-closed` blocks the call instead");
@@ -307,33 +331,6 @@ export function doctorClaude(m: Machine, probe: CliProbe): Check[] {
 // ---------------------------------------------------------------------------
 // Codex
 
-const CODEX_HOOK_TYPES = new Set(["command", "mcp_tool", "prompt", "agent"]);
-
-/** What makes Codex 0.163 reject a hooks.json file. */
-function codexFileProblem(value: unknown): string | null {
-  if (!isObj(value)) return "it is not a JSON object";
-  const extra = Object.keys(value).filter((k) => k !== "description" && k !== "hooks");
-  if (extra.length > 0) return `top-level key ${extra.map((k) => JSON.stringify(k)).join(", ")} (only "description" and "hooks" are allowed)`;
-  if (value.hooks === undefined) return null;
-  if (!isObj(value.hooks)) return '"hooks" is not an object';
-  for (const [event, groups] of Object.entries(value.hooks)) {
-    if (!Array.isArray(groups)) return `hooks.${event} is not a list`;
-    for (const g of groups) {
-      if (!isObj(g) || !Array.isArray(g.hooks)) return `a ${event} group without a hooks list`;
-      if (g.matcher !== undefined && typeof g.matcher !== "string") return `a ${event} matcher that is not a string`;
-      for (const e of g.hooks) {
-        if (!isObj(e) || typeof e.type !== "string" || !CODEX_HOOK_TYPES.has(e.type)) return `a ${event} hook with type ${JSON.stringify(isObj(e) ? e.type : e)}`;
-        if (e.type === "command" && typeof e.command !== "string") return `a ${event} command hook without a command string`;
-        if (e.commandWindows !== undefined && e.commandWindows !== null && typeof e.commandWindows !== "string") return `a ${event} commandWindows that is not a string`;
-        if (e.timeout !== undefined && !(Number.isInteger(e.timeout) && (e.timeout as number) >= 0)) return `a ${event} timeout of ${JSON.stringify(e.timeout)} (it must be a whole number of seconds)`;
-        if (e.async !== undefined && typeof e.async !== "boolean") return `a ${event} async that is not true or false`;
-        if (e.statusMessage !== undefined && typeof e.statusMessage !== "string") return `a ${event} statusMessage that is not a string`;
-      }
-    }
-  }
-  return null;
-}
-
 function readToml(path: string): { doc?: Record<string, unknown>; error?: string; exists: boolean } {
   const t = readText(path).text;
   if (t === null) return { exists: false };
@@ -344,28 +341,39 @@ function readToml(path: string): { doc?: Record<string, unknown>; error?: string
   }
 }
 
-export function doctorCodex(m: Machine, probe: CliProbe, featuresList: string | null): Check[] {
+/** The listed hook Codex built from an entry at this file and position, if it loads one. */
+function listedAt(listing: CodexListing, file: string, groupIndex: number, handlerIndex: number): CodexListedHook | undefined {
+  const at = `:pre_tool_use:${groupIndex}:${handlerIndex}`;
+  return listing.hooks.find((h) => h.eventName === "preToolUse" && h.key.endsWith(at) && canonical(h.sourcePath) === canonical(file));
+}
+
+function isAhListed(h: CodexListedHook): boolean {
+  return h.eventName === "preToolUse" && h.handlerType === "command" && typeof h.command === "string" && isOwnedEntry({ type: "command", command: h.command });
+}
+
+export function doctorCodex(m: Machine, probe: CliProbe, featuresList: string | null, listing: CodexListing | null = null): Check[] {
   const out: Check[] = [];
   const add = (level: Level, title: string, fix?: string) => out.push({ agent: "codex", level, title, fix });
-  if (!probe.found) add("warn", "`codex` is not on PATH here; checking its files anyway");
-  else add("ok", `Codex ${parseCodexVersion(probe.stdout) ?? probe.stdout.trim()}`);
+  if (!probe.found) add("warn", "`codex` is not on PATH here; checking its files anyway, without asking Codex what it loads");
+  else {
+    add("ok", `Codex ${parseCodexVersion(probe.stdout) ?? probe.stdout.trim()}`);
+    if (listing === null) add("warn", "Codex did not answer hooks/list (`codex app-server`), so the checks below come from reading its files and may miss what Codex rejects");
+  }
 
-  const userConfigPath = codexConfigFiles(m).find((f) => f.scope === "user")?.path as string;
-  const projectConfigPath = codexConfigFiles(m).find((f) => f.scope === "project")?.path as string;
+  const configs = codexConfigFiles(m);
+  const userConfigPath = configs.find((f) => f.scope === "user")?.path as string;
   const userConfig = readToml(userConfigPath);
   if (userConfig.error) add("warn", `${rel(m, userConfigPath)} could not be read (${userConfig.error}); trust and feature checks below are incomplete`);
-  // An entry for the repository root also trusts the layers below it.
+  // A project entry for the session directory or the repository root trusts every layer in between.
   const top = gitTopLevel(m.root);
-  const projectTrust = get(userConfig.doc, "projects", m.root, "trust_level") ?? (top !== null ? get(userConfig.doc, "projects", top, "trust_level") : undefined);
+  const trustOf = (dir: string | null) => (dir === null ? undefined : (get(userConfig.doc, "projects", dir, "trust_level") ?? get(userConfig.doc, "projects", canonical(dir), "trust_level")));
+  const projectTrust = trustOf(m.root) ?? trustOf(top);
   const projectTrusted = projectTrust === "trusted";
 
   // features.hooks: `codex features list` knows the effective value; config.toml says where it was set.
   const fromList = featuresList === null ? null : parseFeaturesHooks(featuresList);
-  const projectConfig = projectTrusted ? readToml(projectConfigPath) : { exists: false };
-  const setOff = [
-    { path: userConfigPath, doc: userConfig.doc },
-    { path: projectConfigPath, doc: (projectConfig as { doc?: Record<string, unknown> }).doc },
-  ].filter((c) => get(c.doc, "features", "hooks") === false || get(c.doc, "features", "codex_hooks") === false);
+  const configDocs = [{ path: userConfigPath, doc: userConfig.doc }, ...(projectTrusted ? configs.filter((f) => f.scope === "project").map((f) => ({ path: f.path, doc: readToml(f.path).doc })) : [])];
+  const setOff = configDocs.filter((c) => get(c.doc, "features", "hooks") === false || get(c.doc, "features", "codex_hooks") === false);
   if (fromList === false || (fromList === null && setOff.length > 0)) add("fail", `Codex hooks are off (features.hooks = false${setOff.length > 0 ? ` in ${setOff.map((c) => rel(m, c.path)).join(", ")}` : ""}); no hook runs`, "remove `hooks = false` from [features], or run `codex features enable hooks`");
   else if (fromList === true) add("ok", "features.hooks is on");
 
@@ -373,24 +381,47 @@ export function doctorCodex(m: Machine, probe: CliProbe, featuresList: string | 
   const managedOnly = get(req.doc, "allow_managed_hooks_only") === true;
 
   const owned: OwnedAt[] = [];
+  const rejected = new Set<string>();
   for (const f of codexHooksFiles(m)) {
     const r = readJson(f.path);
     if (!r.ok) {
       add("fail", `${rel(m, f.path)} is not plain JSON (${r.error}); Codex loads no hook from it`);
+      rejected.add(canonical(f.path));
       continue;
     }
     if (!r.exists) continue;
-    const bad = codexFileProblem(r.value);
-    if (bad) add("fail", `${rel(m, f.path)} has ${bad}; Codex rejects the whole file`, "fix the file, then re-run `ah init`");
+    const bad = codexFileProblem(r.value, r.text);
+    if (bad) {
+      add("fail", `${rel(m, f.path)} has ${bad}; Codex rejects the whole file, ah's hook included`, "fix the file, then re-run `ah init`");
+      rejected.add(canonical(f.path));
+      continue;
+    }
     owned.push(...ownedIn(r.value, f.path, f.scope));
+    if (ownedIn(r.value, f.path, f.scope, looksLikeGuard).length > 0) add("info", `${rel(m, f.path)} has an entry that runs the guard with other words around it; ah does not count or test it`);
   }
-  for (const c of [{ path: userConfigPath, doc: userConfig.doc }, { path: projectConfigPath, doc: (projectConfig as { doc?: Record<string, unknown> }).doc }]) {
+  for (const c of configDocs) {
     if (ownedIn(c.doc, c.path, "toml").length > 0) add("info", `${rel(m, c.path)} has an inline ah hook in [hooks]; ah init does not manage TOML, so check it by hand`);
   }
 
-  if (managedOnly) add("fail", `allow_managed_hooks_only is set in ${codexRequirementsFile(m)}; Codex skips user and project hooks, ah's included`, "ask whoever manages that file to add the ah hook as a managed hook");
+  if (listing) {
+    for (const w of listing.warnings) {
+      const file = /hooks config (.+?\.json):/.exec(w)?.[1];
+      if (file !== undefined && rejected.has(canonical(file))) continue;
+      if (/^failed to parse/.test(w)) add("fail", `Codex cannot load ${file ? rel(m, file) : "a hooks file"}: ${w.replace(/^failed to parse hooks config .+?\.json: /, "")}`, "fix the file, then re-run `ah init`");
+      else add("info", `Codex: ${w.split("\n")[0]}`);
+    }
+    for (const e of listing.errors) add("fail", `Codex: ${rel(m, e.path)}: ${e.message}`);
+    // Hooks Codex loads that ah did not find in a file it reads: managed or plugin sources.
+    for (const h of listing.hooks.filter(isAhListed)) {
+      const [g, i] = h.key.split(":").slice(-2).map(Number);
+      if (owned.some((o) => o.groupIndex === g && o.handlerIndex === i && canonical(o.file) === canonical(h.sourcePath))) continue;
+      owned.push({ file: h.sourcePath, scope: h.source, group: { matcher: h.matcher }, entry: { type: "command", command: h.command, timeout: h.timeoutSec }, groupIndex: g, handlerIndex: i });
+    }
+  }
+
+  if (managedOnly && !owned.some((o) => listing && listedAt(listing, o.file, o.groupIndex, o.handlerIndex)?.isManaged)) add("fail", `allow_managed_hooks_only is set in ${codexRequirementsFile(m)}; Codex skips user and project hooks, ah's included`, "ask whoever manages that file to add the ah hook as a managed hook");
   if (owned.length === 0) {
-    add("fail", "no ah PreToolUse hook in ~/.codex/hooks.json or .codex/hooks.json", "run `ah init --agents codex`");
+    if (rejected.size === 0) add("fail", "no ah PreToolUse hook in ~/.codex/hooks.json or .codex/hooks.json", "run `ah init --agents codex`");
     return [...out, ...codexInstructions(m, projectTrust)];
   }
   if (owned.length > 1) add("warn", `ah is wired ${owned.length} times (${[...new Set(owned.map((o) => rel(m, o.file)))].join(", ")}); Codex runs every copy on every matched call`, "keep one: `ah init --remove` then `ah init`, or delete the extra entry");
@@ -408,17 +439,30 @@ export function doctorCodex(m: Machine, probe: CliProbe, featuresList: string | 
     if (missing.length > 0) add("fail", `${where}: the matcher ${JSON.stringify(o.group.matcher)} skips ${missing.map((t) => t.label).join(" and ")}`, "re-run `ah init`");
     else add("ok", `${where}: ah hook bound for shell commands and apply_patch`);
     const { node, guard } = namedPaths(words);
-    if (node && /[\\/]/.test(node) && !exists(node)) add("fail", `${where}: ${node} does not exist, so the hook cannot start and Codex lets every call through`, "re-run `ah init` with the node you use now");
+    if (node && !findCommand(m, node)) add("fail", `${where}: ${node} ${/[\\/]/.test(node) ? "does not exist" : "is not on PATH"}, so the hook cannot start and Codex lets every call through`, "re-run `ah init` with the node you use now");
     if (guard && !exists(guard)) add("fail", `${where}: ${guard} does not exist`, "reinstall @9thlevel/aegis, then re-run `ah init`");
-    if (o.scope === "project") {
+    out.push(...versionCheck("codex", m, where, node, guard));
+    const untrustedProject = o.scope === "project" && !projectTrusted;
+    if (untrustedProject) {
       if (projectTrust === "untrusted") add("fail", `this project is marked untrusted in ${rel(m, userConfigPath)}; Codex skips .codex/hooks.json`, "trust the project when Codex asks, or set trust_level = \"trusted\" for it");
-      else if (!projectTrusted) add("fail", `this project is not trusted in ${rel(m, userConfigPath)} yet; Codex loads .codex/hooks.json only for trusted projects`, "start Codex here and accept the trust prompt");
+      else add("fail", `this project is not trusted in ${rel(m, userConfigPath)} yet; Codex loads .codex/hooks.json only for trusted projects`, "start Codex here and accept the trust prompt");
     }
-    const key = `${o.file}:pre_tool_use:${o.groupIndex}:${o.handlerIndex}`;
-    const state = get(userConfig.doc, "hooks", "state", key);
-    if (get(state, "enabled") === false) add("fail", `${where}: the ah hook is disabled in Codex's /hooks`, "open /hooks in Codex and enable it");
-    else if (typeof get(state, "trusted_hash") === "string") add("ok", `${where}: Codex has a trust record for the ah hook (if the entry changed since, Codex asks again in /hooks)`);
-    else add("fail", `${where}: Codex has not trusted the ah hook yet, so it skips it`, "start Codex in this project, open /hooks, and trust the ah entry");
+    const untrustedFix = "start Codex in this project, open /hooks, and trust the ah entry";
+    if (listing) {
+      const h = listedAt(listing, o.file, o.groupIndex, o.handlerIndex);
+      if (h === undefined) {
+        if (!untrustedProject) add("fail", `${where}: Codex does not load this ah entry for a session started in ${m.root}`, "run `ah doctor` from the directory you start Codex in");
+      } else if (!h.enabled) add("fail", `${where}: the ah hook is disabled in Codex's /hooks`, "open /hooks in Codex and enable it");
+      else if (h.trustStatus === "trusted" || h.trustStatus === "managed") add("ok", `${where}: Codex ${h.trustStatus === "managed" ? "runs the ah hook as a managed hook" : "trusts the ah hook"}`);
+      else if (h.trustStatus === "modified") add("fail", `${where}: the ah hook changed since you trusted it, so Codex skips it until you review it`, "open /hooks in Codex and trust the ah entry again");
+      else add("fail", `${where}: Codex has not trusted the ah hook yet, so it skips it`, untrustedFix);
+    } else {
+      const keys = [canonical(o.file), o.file].map((f) => `${f}:pre_tool_use:${o.groupIndex}:${o.handlerIndex}`);
+      const state = keys.map((k) => get(userConfig.doc, "hooks", "state", k)).find((v) => v !== undefined);
+      if (get(state, "enabled") === false) add("fail", `${where}: the ah hook is disabled in Codex's /hooks`, "open /hooks in Codex and enable it");
+      else if (typeof get(state, "trusted_hash") === "string") add("warn", `${where}: Codex has a trust record for the ah hook, but without asking Codex ah cannot tell whether the entry changed since; Codex skips a changed entry until you trust it again`, "put codex on PATH and re-run `ah doctor`, or check /hooks in Codex");
+      else add("fail", `${where}: Codex has not trusted the ah hook yet, so it skips it`, untrustedFix);
+    }
 
     const timeout = Number.isInteger(e.timeout) && (e.timeout as number) > 0 ? (e.timeout as number) : 600;
     if (m.os !== "win32") {
@@ -452,23 +496,41 @@ function codexShell(): string {
   return "/bin/sh";
 }
 
+/**
+ * Codex reads one instructions file per project layer, from the repository's
+ * top down to the session directory (AGENTS.override.md in place of
+ * AGENTS.md), within one combined 32 KiB budget. The block counts when one of
+ * those files carries it and it ends inside the budget.
+ */
 function codexInstructions(m: Machine, projectTrust: unknown): Check[] {
   const out: Check[] = [];
-  const override = join(m.root, "AGENTS.override.md");
-  const file = readText(override).text !== null ? override : join(m.root, "AGENTS.md");
-  const text = readText(file).text;
-  let state: string;
-  try {
-    state = blockIsCurrent(text, file);
-  } catch (err) {
-    state = `unreadable (${(err as Error).message})`;
+  let before = 0;
+  let stale: string | null = null;
+  for (const dir of codexLayers(m)) {
+    const override = join(dir, "AGENTS.override.md");
+    const file = readText(override).text !== null ? override : join(dir, "AGENTS.md");
+    const text = readText(file).text;
+    if (text === null) continue;
+    let state: string;
+    try {
+      state = blockIsCurrent(text, file);
+    } catch (err) {
+      state = `unreadable (${(err as Error).message})`;
+    }
+    const where = rel(m, file);
+    if (state === "current") {
+      const end = before + (blockEndByte(text, file) ?? 0);
+      if (end > CODEX_DOC_BUDGET) out.push({ agent: "codex", level: "warn", title: `${where}: the guard's block ends past the first ${CODEX_DOC_BUDGET / 1024} KiB of this project's instructions, which is all Codex reads`, fix: "re-run `ah init`; it moves the block to the top" });
+      else out.push({ agent: "codex", level: "ok", title: `${where} carries the guard's instructions for Codex` });
+      stale = null;
+      break;
+    }
+    if (state !== "missing" && stale === null) stale = `${where}: the guard's instructions are ${state}`;
+    before += Buffer.byteLength(text, "utf8");
   }
-  const where = rel(m, file);
-  if (state !== "current") out.push({ agent: "codex", level: "warn", title: `${where}: the guard's instructions are ${state}`, fix: "re-run `ah init`" });
-  else {
-    const end = text === null ? null : blockEndByte(text, file);
-    if (end !== null && end > CODEX_DOC_BUDGET) out.push({ agent: "codex", level: "warn", title: `${where}: the guard's block ends past the first ${CODEX_DOC_BUDGET / 1024} KiB, which is all Codex reads`, fix: "re-run `ah init`; it moves the block to the top" });
-    else out.push({ agent: "codex", level: "ok", title: `${where} carries the guard's instructions for Codex` });
+  if (out.length === 0) {
+    const file = readText(join(m.root, "AGENTS.override.md")).text !== null ? join(m.root, "AGENTS.override.md") : join(m.root, "AGENTS.md");
+    out.push({ agent: "codex", level: "warn", title: stale ?? `${rel(m, file)}: the guard's instructions are missing`, fix: "re-run `ah init`" });
   }
   if (projectTrust === "untrusted") out.push({ agent: "codex", level: "warn", title: "Codex does not read a project's AGENTS.md while the project is marked untrusted" });
   return out;
@@ -485,14 +547,17 @@ export interface DoctorResult {
 export interface DoctorDeps {
   probe: (name: string) => CliProbe;
   featuresList: (root: string) => string | null;
+  /** What Codex's own loader reports for a session started in root (hooks/list), or null. */
+  codexListing?: (root: string) => CodexListing | null;
 }
 
-export const realDeps = (env: NodeJS.ProcessEnv): DoctorDeps => ({
+export const realDeps = (env: NodeJS.ProcessEnv, listing: CodexListing | null = null): DoctorDeps => ({
   probe: (name) => probeCli(name, env),
   featuresList: (root) => {
     const r = spawnSync("codex", ["features", "list"], { cwd: root, encoding: "utf8", env, timeout: 15_000, windowsHide: true, shell: process.platform === "win32" });
     return r.status === 0 ? (r.stdout ?? "") : null;
   },
+  codexListing: () => listing,
 });
 
 export function doctor(o: DoctorOptions, env: NodeJS.ProcessEnv = process.env, deps: DoctorDeps = realDeps(env)): DoctorResult {
@@ -502,7 +567,7 @@ export function doctor(o: DoctorOptions, env: NodeJS.ProcessEnv = process.env, d
   if (o.agents.includes("claude")) checks.push(...doctorClaude(m, deps.probe("claude")));
   if (o.agents.includes("codex")) {
     const p = deps.probe("codex");
-    checks.push(...doctorCodex(m, p, p.found ? deps.featuresList(m.root) : null));
+    checks.push(...doctorCodex(m, p, p.found ? deps.featuresList(m.root) : null, p.found ? (deps.codexListing?.(m.root) ?? null) : null));
   }
   if (!existsSync(join(m.root, ".harness"))) checks.push({ agent: "project", level: "info", title: "no .harness/ directory, so denies and asks are not logged to .harness/metrics.jsonl", fix: "`ah init` creates it" });
   return { ok: !checks.some((c) => c.level === "fail"), root: m.root, checks };
@@ -526,7 +591,7 @@ export function renderDoctor(r: DoctorResult): string {
   return `${lines.join("\n")}\n`;
 }
 
-export function runDoctor(argv: readonly string[], io: { stdout: (s: string) => void; stderr: (s: string) => void } = { stdout: (s) => process.stdout.write(s), stderr: (s) => process.stderr.write(s) }, env: NodeJS.ProcessEnv = process.env, deps?: DoctorDeps): number {
+export async function runDoctor(argv: readonly string[], io: { stdout: (s: string) => void; stderr: (s: string) => void } = { stdout: (s) => process.stdout.write(s), stderr: (s) => process.stderr.write(s) }, env: NodeJS.ProcessEnv = process.env, deps?: DoctorDeps): Promise<number> {
   if (argv.includes("--help") || argv.includes("-h")) {
     io.stdout(DOCTOR_HELP);
     return 0;
@@ -536,7 +601,13 @@ export function runDoctor(argv: readonly string[], io: { stdout: (s: string) => 
     io.stderr(`ah doctor: ${o}\n\n${DOCTOR_HELP}`);
     return 2;
   }
-  const r = doctor(o, env, deps ?? realDeps(env));
+  let d = deps;
+  if (d === undefined) {
+    const root = resolve(o.root);
+    const askCodex = o.agents.includes("codex") && existsSync(root) && probeCli("codex", env).found;
+    d = realDeps(env, askCodex ? await codexHooksList(root, env) : null);
+  }
+  const r = doctor(o, env, d);
   io.stdout(o.json ? `${JSON.stringify(r, null, 2)}\n` : renderDoctor(r));
   return r.ok ? 0 : 1;
 }

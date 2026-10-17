@@ -22,7 +22,7 @@ test("--fail-closed adds onFailure block; an existing block is never dropped", (
 });
 
 test("keys that would weaken the hook are not carried over", () => {
-  const g = claudeGroup(m, {}, [{ command: "/n", args: ["/p/dist/guard.mjs", "--agent", "claude", "--no-log"], async: true, if: "Bash(git *)", once: true, timeout: -1 }]);
+  const g = claudeGroup(m, {}, [{ command: "/usr/bin/node", args: ["/p/dist/guard.mjs", "--agent", "claude", "--no-log"], async: true, if: "Bash(git *)", once: true, timeout: -1 }]);
   assert.deepEqual((g.hooks as Record<string, unknown>[])[0], { type: "command", command: "/usr/bin/node", args: [m.guardPath, "--agent", "claude", "--no-log"], timeout: 5 });
 });
 

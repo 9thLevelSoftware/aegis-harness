@@ -106,7 +106,7 @@ export function claudeGroup(m: Machine, o: ClaudeEntryOptions, found: Record<str
     if (onFailure === undefined && (e.onFailure === "block" || e.onFailure === "continue")) onFailure = e.onFailure;
     if (statusMessage === undefined && typeof e.statusMessage === "string" && e.statusMessage !== "") statusMessage = e.statusMessage;
   }
-  const args = [m.guardPath, "--agent", "claude"];
+  const args = [m.guardPath, "--agent", "claude", ...(carried.extra ?? [])];
   if (o.noLog ?? carried.noLog) args.push("--no-log");
   const entry: Record<string, unknown> = { type: "command", command: m.nodePath, args, timeout: timeout ?? 5 };
   const fail = o.failClosed ? "block" : onFailure;
@@ -144,4 +144,77 @@ export function atLeast(v: number[] | null, min: string): boolean | null {
     if (v[i] !== w[i]) return v[i] > w[i];
   }
   return true;
+}
+
+function isObj(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+/** Events whose one invalid entry makes Claude Code apply nothing from the file (2.1.302); others drop just the entry. */
+export const CLAUDE_FATAL_EVENTS = ["PreToolUse", "PermissionRequest"] as const;
+
+const optStr = (v: unknown) => v === undefined || typeof v === "string";
+const optBool = (v: unknown) => v === undefined || typeof v === "boolean";
+const optStrs = (v: unknown) => v === undefined || (Array.isArray(v) && v.every((a) => typeof a === "string"));
+const optRecord = (v: unknown, values?: (x: unknown) => boolean) => v === undefined || (isObj(v) && (!values || Object.values(v).every(values)));
+
+/** Why Claude Code 2.1.302's hook schema rejects `e`, or null. Mirrors the zod schema in the binary; null is never accepted for an optional field. */
+export function claudeEntryProblem(e: unknown): string | null {
+  if (!isObj(e)) return "a hook that is not an object";
+  const bad = (field: string, want: string) => `a ${String(e.type)} hook whose ${field} is not ${want}`;
+  if (!optStr(e.if)) return bad("if", "a string");
+  if (e.timeout !== undefined && !(typeof e.timeout === "number" && e.timeout > 0)) return `a hook with timeout ${JSON.stringify(e.timeout)} (it must be a positive number)`;
+  if (!optStr(e.statusMessage)) return bad("statusMessage", "a string");
+  if (!optBool(e.once)) return bad("once", "true or false");
+  const failure = e.onFailure === undefined || e.onFailure === "continue" || e.onFailure === "block";
+  switch (e.type) {
+    case "command":
+      if (typeof e.command !== "string") return "a command hook without a command string";
+      if (!optStrs(e.args)) return bad("args", "a list of strings");
+      if (e.shell !== undefined && e.shell !== "bash" && e.shell !== "powershell") return `a command hook with shell ${JSON.stringify(e.shell)}`;
+      if (!failure) return `a command hook with onFailure ${JSON.stringify(e.onFailure)}`;
+      if (!optBool(e.async)) return bad("async", "true or false");
+      if (!optBool(e.asyncRewake)) return bad("asyncRewake", "true or false");
+      for (const k of ["rewakeMessage", "rewakeSummary"]) if (e[k] !== undefined && !(typeof e[k] === "string" && e[k] !== "")) return bad(k, "a non-empty string");
+      return null;
+    case "prompt":
+    case "agent":
+      if (typeof e.prompt !== "string") return `a ${e.type} hook without a prompt string`;
+      if (!optStr(e.model)) return bad("model", "a string");
+      if (e.type === "prompt" && !optBool(e.continueOnBlock)) return bad("continueOnBlock", "true or false");
+      return null;
+    case "mcp_tool":
+      if (typeof e.server !== "string" || typeof e.tool !== "string") return "an mcp_tool hook without server and tool strings";
+      if (!optRecord(e.input)) return bad("input", "an object");
+      return null;
+    case "http":
+      if (typeof e.url !== "string" || !URL.canParse(e.url)) return `an http hook whose url ${JSON.stringify(e.url)} is not a URL`;
+      if (!failure) return `an http hook with onFailure ${JSON.stringify(e.onFailure)}`;
+      if (!optRecord(e.headers, (h) => typeof h === "string")) return bad("headers", "an object of strings");
+      if (!optStrs(e.allowedEnvVars)) return bad("allowedEnvVars", "a list of strings");
+      return null;
+    default:
+      return `a hook with type ${JSON.stringify(e.type)}`;
+  }
+}
+
+/** What in a settings value makes Claude Code 2.1.302 apply nothing from the file, or null. */
+export function claudeHooksProblem(value: unknown): string | null {
+  const hooks = isObj(value) ? value.hooks : undefined;
+  if (!isObj(hooks)) return null;
+  for (const event of CLAUDE_FATAL_EVENTS) {
+    const groups = hooks[event];
+    if (groups === undefined) continue;
+    if (!Array.isArray(groups)) return `hooks.${event} that is not a list`;
+    for (const [i, g] of groups.entries()) {
+      if (!isObj(g)) return `a ${event} matcher group that is not an object`;
+      if (!optStr(g.matcher)) return `a ${event} matcher that is not a string (${event}[${i}])`;
+      if (!Array.isArray(g.hooks)) return `a ${event} matcher group without a hooks list (${event}[${i}])`;
+      for (const [j, e] of g.hooks.entries()) {
+        const bad = claudeEntryProblem(e);
+        if (bad) return `${bad} under ${event} (${event}[${i}].hooks[${j}])`;
+      }
+    }
+  }
+  return null;
 }

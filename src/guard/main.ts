@@ -12,6 +12,7 @@ import type { Context, Decision, Platform } from "./model.ts";
 import { normalizeHookPayload, type Agent, type HookEvent } from "./normalize.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
 import { render, type AskFallback } from "./respond.ts";
+import { VERSION } from "../version.ts";
 
 export interface GuardOptions {
   agent?: Agent;
@@ -88,6 +89,11 @@ function logDecision(ctx: Context, event: HookEvent, decision: Decision): void {
 }
 
 export function runGuard(argv: readonly string[], io: { stdin?: string; stdout: (s: string) => void; stderr: (s: string) => void } = { stdout: (s) => process.stdout.write(s), stderr: (s) => process.stderr.write(s) }, env: NodeJS.ProcessEnv = process.env): number {
+  // `ah doctor` asks a hooked guard its version, to tell an old build from the one ah wires now.
+  if (argv.includes("--version")) {
+    io.stdout(`${VERSION}\n`);
+    return 0;
+  }
   const o = parseGuardArgs(argv);
   const text = io.stdin ?? readStdin();
   if (text.trim() === "") {
