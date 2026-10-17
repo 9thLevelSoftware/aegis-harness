@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -219,6 +219,30 @@ test("--scope user writes the home files and leaves git alone; --dry-run writes 
     assert.equal(existsSync(join(s.root, ".claude")), false);
     const exclude = join(s.root, ".git", "info", "exclude");
     assert.ok(!existsSync(exclude) || !read(exclude).includes("ah init"));
+  } finally {
+    s.done();
+  }
+});
+
+test("the exclude lines and the tracked check hold when ah and git spell the project path differently", { skip: skip || (win && "symlinks need elevation on Windows; the runner's 8.3 temp path covers it there") }, () => {
+  // git reports the resolved path; a symlinked parent stands in for a Windows 8.3 short name.
+  const s = sandbox();
+  try {
+    const alias = join(dirname(s.root), "alias");
+    symlinkSync(s.root, alias, "dir");
+    const t: Sandbox = { ...s, root: alias };
+    assert.ok(init(opts(t), t.env).ok);
+    const exclude = read(join(s.root, ".git", "info", "exclude"));
+    assert.match(exclude, /^\/\.claude\/settings\.local\.json$/m);
+    assert.match(exclude, /^\/\.codex\/hooks\.json$/m);
+    assert.ok(init(opts(t, { remove: true }), t.env).ok);
+    assert.doesNotMatch(read(join(s.root, ".git", "info", "exclude")), /ah init/);
+    writeFileSync(join(s.root, "AGENTS.md"), "# P\n");
+    mkdirSync(join(s.root, ".claude"), { recursive: true });
+    writeFileSync(join(s.root, ".claude", "settings.local.json"), "{}\n");
+    spawnSync("git", ["add", ".claude/settings.local.json"], { cwd: s.root });
+    const r = init(opts(t, { agents: ["claude"] }), t.env);
+    assert.ok(r.changes.some((c) => c.agent === "git" && c.action === "skipped"), JSON.stringify(r.changes));
   } finally {
     s.done();
   }

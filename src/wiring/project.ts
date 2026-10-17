@@ -64,8 +64,10 @@ export type GitStatus = "tracked" | "ignored" | "untracked" | "no-repo";
 export function gitStatusOf(file: string): GitStatus {
   const dir = existingDir(dirname(file));
   if (dir === null || gitTopLevel(dir) === null) return "no-repo";
-  if (git(dir, ["ls-files", "--error-unmatch", "--", file]).ok) return "tracked";
-  return git(dir, ["check-ignore", "-q", "--no-index", "--", file]).ok ? "ignored" : "untracked";
+  // Relative to git's cwd, so git never compares our spelling of the root with its own.
+  const rel = relative(dir, file);
+  if (git(dir, ["ls-files", "--error-unmatch", "--", rel]).ok) return "tracked";
+  return git(dir, ["check-ignore", "-q", "--no-index", "--", rel]).ok ? "ignored" : "untracked";
 }
 
 function existingDir(d: string): string | null {
@@ -79,41 +81,66 @@ function existingDir(d: string): string | null {
   return null;
 }
 
+const EXCLUDE_NOTE = "# machine-local hook wiring written by ah init";
+
+interface InRepo {
+  /** The nearest existing directory above the file; git runs there. */
+  dir: string;
+  /** The file relative to `dir`, in this process's spelling of both. */
+  fromDir: string;
+  /** The file relative to the repository root, as git spells it (`/` separators). */
+  fromTop: string;
+  excludePath: string;
+}
+
+/**
+ * Locate `file` in its repository. Paths are made relative before git sees
+ * them, and the root-relative form comes from git, because git's spelling of
+ * the root can differ from ours (a Windows 8.3 short name, a symlinked /tmp).
+ */
+function inRepo(file: string): InRepo | null {
+  const dir = existingDir(dirname(file));
+  if (dir === null) return null;
+  const top = gitTopLevel(dir);
+  const prefix = git(dir, ["rev-parse", "--show-prefix"]);
+  if (top === null || !prefix.ok) return null;
+  const fromDir = relative(dir, file);
+  const info = git(dir, ["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"]);
+  const excludePath = info.ok && info.out !== "" ? resolve(info.out) : join(top, ".git", "info", "exclude");
+  return { dir, fromDir, fromTop: prefix.out + fromDir.split(sep).join("/"), excludePath };
+}
+
+/** The exclude line for a root-relative path: anchored, with glob characters escaped. */
+function excludeLine(fromTop: string): string {
+  return `/${fromTop.replace(/[\\*?[\]!#]/g, "\\$&")}`;
+}
+
 /**
  * Add `file` to the repository's `.git/info/exclude` (local to this clone,
  * never committed) unless git already ignores or tracks it. Returns what it did.
  */
-const EXCLUDE_NOTE = "# machine-local hook wiring written by ah init";
-
 export function excludeLocally(file: string, dryRun: boolean): "excluded" | "already-ignored" | "tracked" | "no-repo" {
   const status = gitStatusOf(file);
   if (status === "tracked") return "tracked";
   if (status === "ignored") return "already-ignored";
-  if (status === "no-repo") return "no-repo";
-  const dir = existingDir(dirname(file)) as string;
-  const top = gitTopLevel(dir) as string;
-  const info = git(dir, ["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"]);
-  const excludePath = info.ok && info.out !== "" ? info.out : join(top, ".git", "info", "exclude");
-  const rel = relative(top, file).split(sep).join("/");
+  const r = inRepo(file);
+  if (status === "no-repo" || r === null) return "no-repo";
   if (dryRun) return "excluded";
-  const current = readText(excludePath).text ?? "";
-  const line = `/${rel}`;
+  const current = readText(r.excludePath).text ?? "";
+  const line = excludeLine(r.fromTop);
   if (current.split(/\r?\n/).includes(line)) return "already-ignored";
   const sepNl = current === "" || current.endsWith("\n") ? "" : "\n";
-  writeAtomic(excludePath, `${current}${sepNl}${EXCLUDE_NOTE}\n${line}\n`);
+  writeAtomic(r.excludePath, `${current}${sepNl}${EXCLUDE_NOTE}\n${line}\n`);
   return "excluded";
 }
 
 /** Take out the lines excludeLocally added for `file`. Returns true when there were some. */
 export function unexcludeLocally(file: string, dryRun: boolean): boolean {
-  const dir = existingDir(dirname(file));
-  const top = dir === null ? null : gitTopLevel(dir);
-  if (dir === null || top === null) return false;
-  const info = git(dir, ["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"]);
-  const excludePath = info.ok && info.out !== "" ? info.out : join(top, ".git", "info", "exclude");
-  const current = readText(excludePath).text;
+  const r = inRepo(file);
+  if (r === null) return false;
+  const current = readText(r.excludePath).text;
   if (current === null) return false;
-  const line = `/${relative(top, file).split(sep).join("/")}`;
+  const line = excludeLine(r.fromTop);
   const lines = current.split("\n");
   const out: string[] = [];
   let found = false;
@@ -125,7 +152,7 @@ export function unexcludeLocally(file: string, dryRun: boolean): boolean {
     }
     out.push(lines[i]);
   }
-  if (found && !dryRun) writeAtomic(excludePath, out.join("\n"));
+  if (found && !dryRun) writeAtomic(r.excludePath, out.join("\n"));
   return found;
 }
 

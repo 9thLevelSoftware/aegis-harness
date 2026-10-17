@@ -117,9 +117,9 @@ test("globs are compiled once and classifyPath stays cheap", () => {
   assert.equal(globToRegExp("*.{yml,yaml}", "posix"), globToRegExp("*.{yml,yaml}", "posix"));
   assert.notEqual(globToRegExp("*.{yml,yaml}", "posix"), globToRegExp("*.{yml,yaml}", "windows"));
   classifyPath("src/warm-up.ts", POSIX);
-  // Best of five rounds: `npm test` runs the test files in parallel, and one round on a
-  // busy CI runner can take twice as long. Recompiling the globs on every call costs
-  // about three times as much, so the fastest round still exceeds the budget then.
+  // Best of five rounds: one round on a busy CI runner can take twice as long.
+  // Recompiling the globs on every call costs about three times as much, so the
+  // fastest round still exceeds the budget then.
   let ms = Infinity;
   for (let round = 0; round < 5; round++) {
     const t = performance.now();
