@@ -664,6 +664,28 @@ test("brace chains, runs of [, long bracket classes, pwsh options and here-strin
   assert.ok(performance.now() - t < 3000, `took ${Math.round(performance.now() - t)} ms`);
 });
 
+test("cd x; make; cd .. across eight folders is judged, past 1024 possible directories it asks (BUG-2026-020)", async () => {
+  const { decideAll } = await import("../src/guard/decide.ts");
+  // Each `cd` before `;` may fail, so the directories double with each one; eight round trips stay
+  // under the cap, ten do not and ask, naming the forms that do not multiply: a subshell per folder
+  // or a line joined with `&&`.
+  const loop = (n: number) => Array.from({ length: n }, (_, i) => `cd p${i}; make; cd ..`).join("; ");
+  for (const n of [5, 8]) {
+    const t = performance.now();
+    assert.equal(verdictOf(decideAll([{ kind: "shell", command: loop(n) }], POSIX_CTX)), "allow", `${n} folders`);
+    assert.ok(performance.now() - t < 1000, `${n} folders took ${Math.round(performance.now() - t)} ms`);
+  }
+  const d = decideAll([{ kind: "shell", command: loop(10) }], POSIX_CTX);
+  assert.equal(verdictOf(d), "ask guard.time-limit");
+  assert.match(d.reason ?? "", /run each folder in a subshell, \(cd x && make\), or join the whole line with &&/);
+  assert.equal(verdictOf(decideAll([{ kind: "shell", command: loop(8) + "; cd .claude; rm -rf *" }], POSIX_CTX)), "deny shell.hook-tamper");
+  for (const c of [
+    Array.from({ length: 20 }, (_, i) => `(cd p${i}; make)`).join("; "),
+    Array.from({ length: 20 }, (_, i) => `cd p${i} && make && cd ..`).join(" && "),
+  ]) assert.equal(verdictOf(decideAll([{ kind: "shell", command: c }], POSIX_CTX)), "allow", c);
+  assert.equal(verdictOf(decideAll([{ kind: "shell", command: "(cd p0; make); (cd .claude; rm -rf *)" }], POSIX_CTX)), "deny shell.hook-tamper");
+});
+
 test("the writing cmdlets bind their parameters: a value is not a file, a colon-bound or positional path is (BUG-2026-019)", async () => {
   const { decideAll } = await import("../src/guard/decide.ts");
   for (const c of [

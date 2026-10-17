@@ -104,8 +104,12 @@ export function shellRules(call: ShellCall, ctx: Context): Decision {
 const CHDIR = new Set(["cd", "chdir", "pushd", "set-location", "sl", "push-location"]);
 /** Commands that move it back to where a `pushd` left, which the text does not say. */
 const CHDIR_BACK = new Set(["popd", "pop-location"]);
-/** Past this many directories one command could be in, the guard asks rather than judge it from each. */
-const MAX_DIRS = 32;
+/**
+ * Past this many directories one command could be in, the guard asks rather than judge it from each.
+ * Each fallible `cd` (one followed by `;`) can double the set, so this bounds memory; time is bounded
+ * by the deadline, checked here and for each directory a pipeline is judged from.
+ */
+const MAX_DIRS = 1024;
 
 /**
  * Contexts for the directories a command line visits, each made once: `at(c, dir)` is `c` moved to
@@ -156,11 +160,12 @@ function workingDirs(pipelines: readonly Pipeline[], start: Context, at: (c: Con
   const out = new Map<Pipeline, Context[]>();
   const union = (a: readonly Context[], b: readonly Context[]): Context[] => {
     const u = [...new Set([...a, ...b])];
-    if (u.length > MAX_DIRS) throw new TimeLimit(`the command moves between more than ${MAX_DIRS} directories, too many to check from each`);
+    if (u.length > MAX_DIRS) throw new TimeLimit(`the command moves between more than ${MAX_DIRS} directories, too many to check from each; run each folder in a subshell, (cd x && make), or join the whole line with &&`);
     return u;
   };
   const scopes: Scope[] = [{ depth: pipelines[0]?.depth ?? 0, now: [start], failed: [], seen: [start], last: [start] }];
   for (const p of pipelines) {
+    onTime(start.deadline);
     while (scopes.length > 1 && scopes[scopes.length - 1].depth > p.depth) scopes.pop();
     let top = scopes[scopes.length - 1];
     if (p.depth > top.depth) {

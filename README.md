@@ -125,8 +125,10 @@ Relative paths are read from the directory the command runs in: the agent's work
 (Claude Code reports it after a `cd`; Codex names a `workdir`), then any `cd`, `pushd`,
 `Set-Location`, `env -C` or `sudo -D` earlier in the same command line. After `&&` only the new
 directory counts; after `;`, `||` or `&` the `cd` may have failed, so both count, which is why
-`cd dist && rm -rf *` passes and `cd dist; rm -rf *` does not. When the session moves to another
-project (`/cd`), that project's hook files are the ones protected.
+`cd dist && rm -rf *` passes and `cd dist; rm -rf *` does not. Each such `cd` doubles the places
+the rest may run, so past 1024 of them (about nine `cd x; make; cd ..` round trips) the guard asks;
+`(cd x && make)` per folder, or `&&` throughout, keeps the count at one. When the session moves to
+another project (`/cd`), that project's hook files are the ones protected.
 
 `ah rules` prints the full list with each rule's provenance. The authoritative definition is the
 fixture corpus: [`fixtures/`](fixtures/README.md) holds about 430 calls that must be denied,
