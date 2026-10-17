@@ -671,6 +671,10 @@ test("the writing cmdlets bind their parameters: a value is not a file, a colon-
     "Set-Content -Pa notes.txt -Va .ruff.toml",
     "Out-File -FilePath notes.txt -InputObject @'\n.claude/settings.json\n'@",
     "Set-Content -LiteralPath notes.txt .ruff.toml",
+    // An array value naming protected paths is text written into the file.
+    "Add-Content -Path .gitignore -Value '.env', '.claude/settings.local.json'",
+    "Set-Content -Path .dockerignore -Value 'node_modules', '.git'",
+    "Set-Content -Path notes.txt -Value a , .ruff.toml",
   ]) {
     assert.equal(win(c).verdict, "allow", c);
   }
@@ -692,16 +696,24 @@ test("the writing cmdlets bind their parameters: a value is not a file, a colon-
     "Set-Content -Path a.txt ,.ruff.toml -Value x",
     "Set-Content -Path:a.txt, .ruff.toml -Value x",
     "Set-Content -Value 'x,' .ruff.toml",
+    "Set-Content -Value a, 'b,' .ruff.toml",
+    // A quoted value ending in a comma does not swallow the -Path after it.
+    "Set-Content 'x,' -Path .ruff.toml",
+    "Set-Content @'\n[lint]\nselect = [\"E\",\n'@ -Path .ruff.toml",
+    // A parameter it does not know may take a value, so the word after it may be the path.
+    "Set-Content -Unknown v .ruff.toml",
   ]) {
     assert.equal(verdictOf(win(c)), "deny shell.write-lint-config", c);
   }
+  assert.equal(verdictOf(win("Add-Content 'x,' -Path .claude/settings.json")), "deny shell.hook-tamper");
   assert.equal(verdictOf(win("'x' | Out-File -FilePath a.txt, .git/hooks/pre-commit")), "deny shell.write-git-internals");
   assert.equal(verdictOf(win("New-Item -Path a, .claude -Name settings.json")), "deny shell.hook-tamper");
   assert.equal(win("Set-Content -Path notes.txt -Value a, b").verdict, "allow");
   // Thousands of distinct names joined to thousands of paths ask rather than build them all.
   const t = performance.now();
   const many = (flag: string, n: number) => Array.from({ length: n }, (_, i) => `${flag}a${i}`).join(" ");
-  assert.equal(verdictOf(decideAll([{ kind: "shell", command: `New-Item ${many("-Name ", 12_000)} ${many("", 12_000)}` }], WINDOWS_CODEX)), "ask guard.time-limit");
+  const array = Array.from({ length: 12_000 }, (_, i) => `b${i}`).join(",");
+  assert.equal(verdictOf(decideAll([{ kind: "shell", command: `New-Item -Path ${array} ${many("-Name ", 12_000)}` }], WINDOWS_CODEX)), "ask guard.time-limit");
   assert.ok(performance.now() - t < 1500, `took ${Math.round(performance.now() - t)} ms`);
 });
 
@@ -721,6 +733,7 @@ test("bracket scans that never close are not repeated, class names are not objec
     ["runs of [:", "rm -rf " + "[:".repeat(60_000) + "]", "allow"],
     ["runs of [[: before one :]", "rm -rf " + "[[:".repeat(40_000) + ":]", "allow"],
     ["a protected start among many, with many names", "find .git " + "a ".repeat(100_000) + "-name config ".repeat(200) + "-delete", "deny"],
+    ["long starts joined to many names", "find " + Array.from({ length: 10 }, (_, i) => "d".repeat(17_000) + i).join(" ") + " \\( " + Array.from({ length: 600 }, (_, i) => `-name n${i}`).join(" -o ") + " \\) -delete", "ask"],
     ["valueless filters before nested groups", "find . -name '*.pyc' -delete " + "\\( -newerzz ".repeat(40_000) + "-name y " + "\\) ".repeat(40_000), "allow"],
   ] as const) {
     const t = performance.now();

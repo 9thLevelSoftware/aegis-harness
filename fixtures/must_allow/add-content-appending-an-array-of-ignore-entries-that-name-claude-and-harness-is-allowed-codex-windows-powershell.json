@@ -1,0 +1,13 @@
+{
+  "name": "Add-Content appending an array of ignore entries that name .claude and .harness is allowed (Codex, Windows PowerShell)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "Add-Content -Path .gitignore -Value '.claude/settings.local.json', '.harness/'"
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

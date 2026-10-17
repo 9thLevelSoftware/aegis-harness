@@ -303,7 +303,7 @@ function stageRules(s: Stage, ctx: Context): Decision[] {
 
   // A redirected group is a `:` stand-in carrying the redirections; its reasons name the group.
   const writer = s.group === undefined ? s : { ...s, cmd: /^\s*\{/.test(s.raw) ? "{ ... }" : "( ... )" };
-  for (const target of writeTargetsOf(s)) {
+  for (const target of writeTargetsOf(s, ctx.deadline)) {
     onTime(ctx.deadline);
     append(out, writeRules(target, writer, ctx));
   }
@@ -311,15 +311,22 @@ function stageRules(s: Stage, ctx: Context): Decision[] {
 }
 
 /**
- * Past this many paths made by joining one list to another (find's starts with its names,
- * New-Item's paths with its names), the guard asks rather than build them all: a few hundred
- * KB of command could otherwise name billions.
+ * Past this many paths, or this many characters of them, made by joining one list to another
+ * (find's starts with its names, New-Item's paths with its names), the guard asks rather than
+ * build them all: a few hundred KB of command could otherwise name billions. The lists come in
+ * without repeats, so the joined paths need no Set, which hashes a string over 16 K characters
+ * by its length alone and grows in the square of how many there are.
  */
 const MAX_JOINED = 100_000;
+const MAX_JOINED_CHARS = 10_000_000;
 
 function joinAll(dirs: readonly string[], names: readonly string[], out: string[]): void {
-  if (dirs.length * names.length > MAX_JOINED) throw new TimeLimit(`it names more than ${MAX_JOINED} paths`);
-  for (const n of names) for (const d of dirs) out.push(`${d.replace(/[\\/]+$/, "")}/${n}`);
+  const sum = (xs: readonly string[]) => xs.reduce((n, x) => n + x.length + 1, 0);
+  if (dirs.length * names.length > MAX_JOINED || names.length * sum(dirs) + dirs.length * sum(names) > MAX_JOINED_CHARS) {
+    throw new TimeLimit(`it names more than ${MAX_JOINED} paths, or ${MAX_JOINED_CHARS} characters of them`);
+  }
+  const trimmed = dirs.map((d) => d.replace(/[\\/]+$/, ""));
+  for (const n of names) for (const d of trimmed) out.push(`${d}/${n}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -719,7 +726,14 @@ function findRules(s: Stage, ctx: Context): Decision[] {
     const distinct = [...new Set(starts)];
     joinAll(distinct, [...names], named);
     const guarded = new Set(["git-internals", "harness", "hook-config", "home-config", "lint-config", "test-config"]);
-    return [...new Set([...distinct, ...named])].filter((t) => guarded.has(classifyWhole(t, ctx).category)).map((t) => judgeRemoveTarget(t, false, false, stage, ctx)).filter((d) => d.verdict !== "allow");
+    const out: Decision[] = [];
+    for (const t of [...distinct, ...named]) {
+      onTime(ctx.deadline);
+      if (!guarded.has(classifyWhole(t, ctx).category)) continue;
+      const d = judgeRemoveTarget(t, false, false, stage, ctx);
+      if (d.verdict !== "allow") out.push(d);
+    }
+    return out;
   }
   return starts.map((t) => judgeRemoveTarget(t, true, true, stage, ctx));
 }
@@ -1590,66 +1604,97 @@ function destructiveCodeKind(code: string, cmd: string): string | null {
 const CMDLET_VALUED: Record<string, boolean> = {
   path: true, literalpath: true, pspath: true, lp: true, filepath: true, name: true,
   value: false, target: false, inputobject: false, encoding: false, itemtype: false, type: false, filter: false, include: false, exclude: false,
-  credential: false, stream: false, width: false, erroraction: false, ea: false, warningaction: false, wa: false, informationaction: false,
+  credential: false, stream: false, width: false, options: false, erroraction: false, ea: false, warningaction: false, wa: false, informationaction: false,
   infa: false, errorvariable: false, ev: false, warningvariable: false, wv: false, informationvariable: false, iv: false, outvariable: false,
   ov: false, outbuffer: false, ob: false, pipelinevariable: false, pv: false, progressaction: false, proga: false,
 };
 const CMDLET_SWITCHES = ["force", "nonewline", "append", "noclobber", "passthru", "whatif", "wi", "confirm", "cf", "asbytestream", "verbose", "vb", "debug", "db", "usetransaction", "usetx"];
 
+type CmdletRole = "path" | "name" | "value";
+
 /**
  * The files New-Item, Set-Content, Add-Content and Out-File write. Named parameters bind first
  * and may be cut to any prefix PowerShell can tell apart; the arguments left over bind in order
- * to the path and then the value (Out-File: the encoding). A value, such as a here-string's body,
- * is not a file. A prefix that could be a switch or a parameter it does not know leaves the next
- * argument to bind as a path, so a guess goes the cautious way. `a,b` and `a, b` are one array
- * and write both; since a quoted `'a,'` would make the next word an argument of its own, a word
- * that continues a value's array is judged as a path too.
+ * to the path and then the value (Out-File: the encoding), and any past those make PowerShell
+ * refuse the command. A value, such as a here-string's body, is not a file. A parameter it does
+ * not know, or a prefix that could be a switch, is read both as taking a value and as not.
+ *
+ * A comma joins words into one array (`a, b` and `a ,b` write both), but the quotes are gone by
+ * now, so a word ending in `,` may instead have been `'x,'`, after which the next word stands on
+ * its own, and a `-Path` after such a comma may be a parameter or text. Every reading is followed
+ * at once, as a small set of states (positionals so far, an array still open, a value expected),
+ * and a word is a file if any reading binds it to the path.
  */
-function cmdletPaths(cmd: string, args: readonly string[]): string[] {
-  const units: string[][] = [];
-  for (const a of args) {
-    const last = units[units.length - 1];
-    if (last !== undefined && (last[last.length - 1].endsWith(",") || a.startsWith(","))) last.push(a);
-    else units.push([a]);
-  }
-  const paths: string[] = [];
-  const names: string[] = [];
-  const left: string[][] = [];
-  let pathBound = false;
-  for (let j = 0; j < units.length; j++) {
-    const m = /^-([A-Za-z]+)(?::(.*))?$/s.exec(units[j][0]);
-    if (m === null) {
-      left.push(units[j]);
-      continue;
-    }
+function cmdletPaths(cmd: string, args: readonly string[], deadline: number | undefined): string[] {
+  const params = args.map((w) => {
+    const m = /^-([A-Za-z]+)(?::(.*))?$/s.exec(w);
+    if (m === null) return null;
     const key = m[1].toLowerCase();
     const valued = Object.keys(CMDLET_VALUED).filter((n) => n.startsWith(key));
     const exact = Object.hasOwn(CMDLET_VALUED, key);
-    const takes = exact || (valued.length > 0 && !CMDLET_SWITCHES.some((n) => n.startsWith(key)));
-    const inline = m[2] !== undefined && m[2] !== "";
-    if (!takes || inline) append(paths, units[j].slice(1));
-    if (!takes) continue;
-    const words = inline ? [m[2] as string, ...units[j].slice(1)] : units[++j] ?? [];
-    if (!(exact ? CMDLET_VALUED[key] : valued.some((n) => CMDLET_VALUED[n]))) append(paths, words.slice(1));
-    else if (exact ? key === "name" : valued.every((n) => n === "name")) append(names, words);
-    else {
-      append(paths, words);
-      pathBound = true;
-    }
+    const switches = CMDLET_SWITCHES.some((n) => n.startsWith(key));
+    const takes = exact || (valued.length > 0 && !switches);
+    // A known switch takes nothing; one it does not know, or a prefix of both kinds, may take a value.
+    const maybeTakes = !takes && (valued.length > 0 || !switches);
+    const isPath = exact ? CMDLET_VALUED[key] : valued.some((n) => CMDLET_VALUED[n]);
+    const role: CmdletRole = !isPath ? "value" : (exact ? key === "name" : valued.every((n) => n === "name")) ? "name" : "path";
+    return { takes, maybeTakes, role, inline: m[2] !== undefined && m[2] !== "" ? m[2] : undefined };
+  });
+  // Whether a named path parameter is bound: surely, when it follows no comma; maybe, when it does.
+  const pathParam = (j: number) => params[j]?.takes === true && params[j]?.role === "path";
+  const surely = args.some((w, j) => pathParam(j) && !(args[j - 1] ?? "").endsWith(","));
+  const maybe = args.some((_, j) => pathParam(j));
+  const full = cmd === "out-file" ? ["path", "encoding"] : cmd === "new-item" || cmd === "ni" ? ["path"] : ["path", "value"];
+  const paths = new Set<string>();
+  const names = new Set<string>();
+  interface State { pos: number; open: CmdletRole | null; last: CmdletRole | null; expect: CmdletRole | null }
+  for (const bound of surely ? [true] : maybe ? [true, false] : [false]) {
+    const slots = full.filter((p) => p !== "path" || !bound);
+    let states = new Map<string, State>([["0", { pos: 0, open: null, last: null, expect: null }]]);
+    args.forEach((w, j) => {
+      if ((j & 1023) === 0) onTime(deadline);
+      const next = new Map<string, State>();
+      const emit = (st: State) => next.set(`${st.pos}|${st.open}|${st.last}|${st.expect}`, st);
+      // The word, or a parameter's inline value, takes a role; a trailing comma may keep its array open.
+      const take = (role: CmdletRole, text: string, st: State) => {
+        if (role === "path") paths.add(text);
+        else if (role === "name") names.add(text);
+        emit({ ...st, open: null, last: role, expect: null });
+        if (text.endsWith(",")) emit({ ...st, open: role, last: role, expect: null });
+      };
+      const fresh = (st: State) => {
+        const p = params[j];
+        if (p === null) take(slots[st.pos] === "path" ? "path" : "value", w, { ...st, pos: Math.min(st.pos + 1, 3) });
+        else if (!p.takes) {
+          emit({ ...st, open: null, last: null, expect: null });
+          if (p.maybeTakes && p.inline === undefined) emit({ ...st, open: null, last: null, expect: p.role });
+        } else if (p.inline !== undefined) take(p.role, p.inline, st);
+        else emit({ ...st, open: null, last: null, expect: p.role });
+      };
+      for (const st of states.values()) {
+        if (st.expect !== null) take(st.expect, w, st);
+        else if (st.open !== null) {
+          take(st.open, w, st);
+          if (params[j] !== null) fresh(st);
+        } else {
+          if (w.startsWith(",") && st.last !== null) take(st.last, w, st);
+          fresh(st);
+        }
+      }
+      states = next;
+    });
   }
-  const order = (cmd === "out-file" ? ["path", "encoding"] : cmd === "new-item" || cmd === "ni" ? ["path"] : ["path", "value"]).filter((p) => p !== "path" || !pathBound);
-  left.forEach((unit, k) => append(paths, order[k] === undefined || order[k] === "path" ? unit : unit.slice(1)));
   const dirs = new Set<string>();
   for (const p of paths) {
     dirs.add(p);
     for (const q of p.split(",")) if (q !== "") dirs.add(q);
   }
   const out = [...dirs, ...names];
-  joinAll([...dirs], [...new Set(names)], out);
+  joinAll([...dirs], [...names], out);
   return out;
 }
 
-function writeTargetsOf(s: Stage): string[] {
+function writeTargetsOf(s: Stage, deadline: number | undefined): string[] {
   const targets = [...s.writes];
   const positionals = s.argv.slice(1).filter((a) => !a.startsWith("-"));
   switch (s.cmd) {
@@ -1684,7 +1729,7 @@ function writeTargetsOf(s: Stage): string[] {
     case "add-content":
     case "ac":
     case "out-file":
-      append(targets, cmdletPaths(s.cmd, s.argv.slice(1)));
+      append(targets, cmdletPaths(s.cmd, s.argv.slice(1), deadline));
       break;
     case "git":
       break;

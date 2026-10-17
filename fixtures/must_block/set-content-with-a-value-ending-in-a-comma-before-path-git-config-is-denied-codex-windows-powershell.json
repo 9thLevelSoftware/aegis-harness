@@ -1,0 +1,13 @@
+{
+  "name": "Set-Content with a value ending in a comma before -Path .git/config is denied (Codex, Windows PowerShell)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "Set-Content 'x,' -Path .git/config"
+    }
+  },
+  "rule": "shell.write-git-internals",
+  "source": "BUG-2026-019"
+}
