@@ -1,0 +1,12 @@
+{
+  "name": "writing ../.git/hooks/pre-commit from a subdirectory session is denied",
+  "cwd": "/home/dev/project/sub",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo 'exit 0' > ../.git/hooks/pre-commit"
+    }
+  },
+  "rule": "shell.write-git-internals",
+  "source": "BUG-2026-019"
+}

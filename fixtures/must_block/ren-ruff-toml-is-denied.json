@@ -1,0 +1,12 @@
+{
+  "name": "ren .ruff.toml is denied",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "ren .ruff.toml ruff.off"
+    }
+  },
+  "rule": "shell.write-lint-config",
+  "source": "BUG-2026-019"
+}

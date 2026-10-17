@@ -1,0 +1,11 @@
+{
+  "name": "chmod -x .claude, which hides the hook settings, is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "chmod -x .claude"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

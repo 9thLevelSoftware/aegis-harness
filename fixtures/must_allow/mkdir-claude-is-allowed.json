@@ -1,0 +1,11 @@
+{
+  "name": "mkdir .claude is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mkdir -p .claude/commands"
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

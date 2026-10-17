@@ -1,0 +1,12 @@
+{
+  "name": "Rename-Item of a source file is allowed",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Rename-Item -Path src\\old.ts -NewName new.ts"
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

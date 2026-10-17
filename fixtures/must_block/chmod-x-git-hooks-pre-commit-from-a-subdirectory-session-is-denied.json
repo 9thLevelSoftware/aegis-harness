@@ -1,0 +1,12 @@
+{
+  "name": "chmod -x ../.git/hooks/pre-commit from a subdirectory session is denied",
+  "cwd": "/home/dev/project/sub",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "chmod -x ../.git/hooks/pre-commit"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

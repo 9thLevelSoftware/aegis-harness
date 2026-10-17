@@ -51,6 +51,18 @@ source:
       and got allow for each. pwsh 7 treats its first positional word as -File and powershell.exe
       as -Command, and both accept any unambiguous prefix of a parameter name; pnpm documents -c
       and --shell-mode as one option of exec and dlx.
+  - kind: session
+    date: 2026-10-17
+    note: >-
+      A third review, of ah init and ah doctor on Windows, WSL and linked worktrees, checked with
+      the binaries: Claude Code on Windows reads .claude/settings.local.json only from the folder a
+      session starts in, keys workspace trust with forward slashes and looks it up at the main
+      checkout, then from the session folder up to the git top level, and takes managed policy from
+      HKLM and HKCU SOFTWARE\Policies\ClaudeCode (value Settings) as well as files, the first
+      source to set a key winning (HKLM, then files, then HKCU); Codex reads a linked worktree's
+      .codex/hooks.json and config.toml from the main checkout but its AGENTS.md from the worktree.
+      Git for Windows' default core.symlinks=false checks a committed symlink out as a plain file
+      holding the link's target, and git takes an edit to it for a new target.
 root_cause: >-
   The README told people to paste JSON into settings files. Whether the hook then ran depended on
   rules the README did not know: which files each agent loads and from which directory, what makes
@@ -100,7 +112,14 @@ impact: >-
   `cmd /c start /b rmdir /s /q C:\Users\dev`); and from a session rooted inside a hook directory
   (`<top>/.codex`, `<top>/.claude`, `<top>/.husky`) `rm hooks.json` or a Write of
   settings.local.json. Meanwhile `.\scripts\shutdown.ps1`, `.\scripts\format.ps1 C:` and
-  `.\tools\git.ps1 push --force` were refused as if they were the system commands.
+  `.\tools\git.ps1 push --force` were refused as if they were the system commands. The third review found
+  `rm -rf .claude`, `mv .claude /tmp/x` (and `../.claude` from a subdirectory), `chmod -x .claude`,
+  `find .claude -delete` and `mv ~/.claude` still passed, because the policy names the files inside
+  `.claude`, not the directory; `git rm .ruff.toml`, `git rm -r .claude`, `git mv` of a lint config
+  and `git clean -fdx -- .claude` passed because git's own deletes were never judged; and from a
+  subdirectory or a linked worktree, `rm` and `chmod -x` of the top level's or main checkout's
+  `.git/hooks/pre-commit` passed. PowerShell `Rename-Item`, cmd `ren` and `rename` were never
+  judged at all, so renaming `.ruff.toml` or `.codex\hooks.json` away passed.
 countermeasure:
   kind: test
   ref:
@@ -109,6 +128,8 @@ countermeasure:
     - tests/hook-config-layers.test.ts
     - tests/shell-rules.test.ts
     - tests/shell-parser.test.ts
+    - tests/init-doctor-platforms.test.ts
+    - tests/wiring-git-windows.test.ts
   change: >-
     `ah init` writes the hook and the AGENTS.md block from what the agents' documents and binaries
     say, refuses to write a file it cannot read back exactly, keeps every other byte, appends
@@ -147,7 +168,14 @@ countermeasure:
     paths inside the project, so a session rooted in `<top>/.codex` cannot remove hooks.json; for
     those paths only layers below the home directory count, so a project inside ~/.codex (Codex's
     worktrees) is not made of hook files. Rules now also see commands inside loops and blocks, so
-    `for d in dist/*; do rm -rf "$d"; done` asks like `rm -rf "$d"` does. Still beyond any
+    `for d in dist/*; do rm -rf "$d"; done` asks like `rm -rf "$d"` does. After the third review:
+    removing, moving or chmod-ing a directory that holds the literal head of a protected glob
+    (`.claude` holds `.claude/settings.json`, `~/.claude` the user's settings) counts as doing it
+    to that path; `.git` in any directory above the project root, and in a worktree's main
+    checkout, is git internals (a stale `*.lock` still passes); `git rm` (not `--cached`),
+    `git mv` and a scoped `git clean -f` are judged like rm and mv on their paths, from `git -C`'s
+    directory, and `Rename-Item`, `ren` and `rename` like mv. A protected basename (`lefthook.yml`) inside a directory being removed is not seen,
+    since the guard reads no filesystem. Still beyond any
     deny-list: variable indirection (`A=ah; $A init --remove`, `$(which ah) init --remove`,
     `$s = '...'; iex $s`), arbitrary interpreter programs that build the command at run time, and
     text that is transformed on its way into a shell (`echo ... | tee log | sh`, `| sed ... | sh`,

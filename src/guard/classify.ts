@@ -50,6 +50,8 @@ export interface PathInfo {
   category: PathCategory;
   /** The glob that decided the category, when one did. */
   matched?: string;
+  /** For git-internals: the path from the repository's own directory, `.git` or `.git/...`. */
+  gitRel?: string;
   isTestFile: boolean;
   hasVariable: boolean;
 }
@@ -90,7 +92,7 @@ export function classifyPath(input: string, ctx: Context): PathInfo {
     if (rel === ".") return base("project-root");
     let m: string | undefined;
     if ((m = matchGlobs(rel, policy.harnessPaths, platform))) return base("harness", m);
-    if (rel === ".git" || rel.startsWith(".git/")) return base("git-internals", ".git/**");
+    if (rel === ".git" || rel.startsWith(".git/")) return { ...base("git-internals", ".git/**"), gitRel: rel };
     // A session started inside a hook directory (`<top>/.codex`) has the hook files themselves in the project.
     if ((m = matchGlobs(rel, policy.hookConfigPaths, platform) ?? hookConfigAbove(abs, ctx, true))) return base("hook-config", m);
     if ((m = matchGlobs(rel, policy.lockfilePaths, platform))) return base("lockfile", m);
@@ -108,6 +110,8 @@ export function classifyPath(input: string, ctx: Context): PathInfo {
     return base("normal");
   }
 
+  const gitRel = gitDirAbove(abs, ctx);
+  if (gitRel !== undefined) return { ...base("git-internals", ".git/**"), gitRel };
   const hook = hookConfigAbove(abs, ctx, false);
   if (hook !== undefined) return base("hook-config", hook);
   if (isSystemPath(abs)) return base("system");
@@ -129,14 +133,68 @@ export function classifyPath(input: string, ctx: Context): PathInfo {
  * made of hook files, and the home's own agent settings are home configuration.
  */
 function hookConfigAbove(abs: string, ctx: Context, inProject: boolean): string | undefined {
-  const layers = ancestors(ctx.projectRoot, ctx.platform).slice(1);
-  if (ctx.mainCheckout !== undefined) layers.push(...ancestors(ctx.mainCheckout, ctx.platform));
-  for (const dir of layers) {
+  for (const dir of layersAbove(ctx)) {
     if (inProject && ctx.homeDir !== undefined && relativeTo(dir, ctx.homeDir, ctx.platform) !== null) continue;
     const r = relativeTo(dir, abs, ctx.platform);
     if (r === null || r === ".") continue;
     const m = ctx.policy.hookConfigPaths.find((g) => globToRegExp(g, ctx.platform).test(r));
     if (m !== undefined) return m;
+  }
+  return undefined;
+}
+
+/** Every directory above the project root, nearest first, then, in a linked worktree, the main checkout's twin and its ancestors. */
+function layersAbove(ctx: Context): string[] {
+  const layers = ancestors(ctx.projectRoot, ctx.platform).slice(1);
+  if (ctx.mainCheckout !== undefined) layers.push(...ancestors(ctx.mainCheckout, ctx.platform));
+  return layers;
+}
+
+/**
+ * `abs` inside the `.git` of a directory above the project, as `.git` or
+ * `.git/...`: a session in <top>/sub works in <top>'s repository, and one in
+ * a linked worktree shares its main checkout's hooks.
+ */
+function gitDirAbove(abs: string, ctx: Context): string | undefined {
+  for (const dir of layersAbove(ctx)) {
+    const r = relativeTo(dir, abs, ctx.platform);
+    if (r !== null && (r === ".git" || r.startsWith(".git/"))) return r;
+  }
+  return undefined;
+}
+
+/** A glob's leading literal segments (`.claude/hooks` from `.claude/hooks/**`), or null for one that matches a basename at any depth. */
+function literalHead(glob: string): string | null {
+  if (!glob.includes("/")) return null;
+  const head: string[] = [];
+  for (const seg of glob.split("/")) {
+    if (/[*?[{]/.test(seg)) break;
+    head.push(seg);
+  }
+  return head.length === 0 ? null : head.join("/");
+}
+
+/**
+ * What removing or moving the directory `abs` takes with it that the policy
+ * protects, though no glob names the directory itself: `.claude` holds
+ * `.claude/settings.json`, `~/.claude` the user's agent settings. Only a
+ * glob's literal head counts; where a basename glob (`lefthook.yml`) sits in
+ * a tree only the filesystem knows, and the guard is purely lexical.
+ */
+export function protectedInside(abs: string, ctx: Context): { category: "home-config" | "hook-config"; matched: string } | undefined {
+  const holds = (dir: string, globs: readonly string[]): string | undefined =>
+    globs.find((g) => {
+      const head = literalHead(g);
+      if (head === null) return false;
+      const d = normalize(driveForm(dir, ctx.platform));
+      const r = relativeTo(abs, `${d.endsWith("/") ? d : `${d}/`}${head}`, ctx.platform);
+      return r !== null && r !== ".";
+    });
+  const home = holds(ctx.homeDir ?? "~", ctx.policy.homeSensitivePaths);
+  if (home !== undefined) return { category: "home-config", matched: home };
+  for (const dir of [normalize(driveForm(ctx.projectRoot, ctx.platform)), ...layersAbove(ctx)]) {
+    const hook = holds(dir, ctx.policy.hookConfigPaths);
+    if (hook !== undefined) return { category: "hook-config", matched: hook };
   }
   return undefined;
 }

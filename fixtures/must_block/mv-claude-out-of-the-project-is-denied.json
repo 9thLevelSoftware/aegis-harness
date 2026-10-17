@@ -1,0 +1,11 @@
+{
+  "name": "mv .claude out of the project is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mv .claude /tmp/claude-settings"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

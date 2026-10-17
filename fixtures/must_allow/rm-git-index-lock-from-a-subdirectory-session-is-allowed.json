@@ -1,0 +1,12 @@
+{
+  "name": "rm ../.git/index.lock from a subdirectory session is allowed",
+  "cwd": "/home/dev/project/sub",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -f ../.git/index.lock"
+    }
+  },
+  "near": "shell.rm-git-dir",
+  "source": "BUG-2026-019"
+}

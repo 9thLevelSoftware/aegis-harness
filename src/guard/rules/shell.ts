@@ -1,4 +1,4 @@
-import { classifyPath, isBlockDevice, type PathInfo } from "../classify.ts";
+import { classifyPath, isBlockDevice, protectedInside, type PathInfo } from "../classify.ts";
 import { ALLOW, ask, deny, strictest, type Context, type Decision, type ShellCall } from "../model.ts";
 import { globToRegExp, hasVariable, isTempPath, normalize } from "../paths.ts";
 import { findSecrets, redact } from "../secrets.ts";
@@ -17,6 +17,8 @@ const ENV_LISTERS = new Set(["gci", "get-childitem", "dir", "ls"]);
 const FILE_READERS = new Set(["cat", "less", "more", "head", "tail", "type", "get-content", "gc", "bat", "strings", "xxd", "hexdump", "od", "base64", "tac", "nl", "view"]);
 const REMOVERS = new Set(["rm", "rmdir", "rd", "del", "erase", "remove-item", "ri", "unlink", "shred"]);
 const MOVERS = new Set(["mv", "move", "move-item", "mi"]);
+/** Rename-Item and cmd's ren take a path and a new name; util-linux and perl `rename` take an expression, then the files. */
+const RENAMERS = new Set(["rename-item", "rni", "ren", "rename"]);
 const COPIERS = new Set(["cp", "copy", "copy-item", "cpi", "install"]);
 const POWER = new Set(["shutdown", "reboot", "halt", "poweroff", "telinit", "stop-computer", "restart-computer"]);
 const GIT_HOOKED = new Set(["commit", "push", "merge", "rebase", "cherry-pick", "revert", "am", "apply", "checkout", "switch"]);
@@ -337,6 +339,18 @@ function stripWipeSuffix(t: string): string {
   }
 }
 
+/**
+ * A path whose removal, move or permission change takes a whole directory
+ * with it: one that holds hook wiring or agent settings counts as them
+ * (`rm -rf .claude` removes `.claude/settings.json`).
+ */
+function classifyWhole(t: string, ctx: Context): PathInfo {
+  const info = classifyPath(t, ctx);
+  if (info.category !== "normal" && info.category !== "temp" && info.category !== "outside-project") return info;
+  const inside = protectedInside(info.abs, ctx);
+  return inside === undefined ? info : { ...info, category: inside.category, matched: `it holds ${inside.matched}` };
+}
+
 function judgeRemoveTarget(target: string, destructive: boolean, recursive: boolean, s: Stage, ctx: Context): Decision {
   let t = target.replace(/^["']+|["']+$/g, "");
   if (t === "" || t === "--") return ALLOW;
@@ -388,7 +402,7 @@ function judgeRemoveTarget(target: string, destructive: boolean, recursive: bool
     }
   }
 
-  const info = classifyPath(t, ctx);
+  const info = classifyWhole(t, ctx);
   switch (info.category) {
     case "filesystem-root":
       return deny("shell.rm-recursive-root", `${s.cmd} targets the filesystem root (${t})`, "Nothing in a project needs the filesystem root deleted.");
@@ -397,7 +411,7 @@ function judgeRemoveTarget(target: string, destructive: boolean, recursive: bool
     case "project-root":
       return destructive ? deny("shell.rm-recursive-cwd", `${s.cmd} ${t} wipes the project`, "Delete specific paths instead.") : ALLOW;
     case "git-internals": {
-      const rel = info.rel ?? "";
+      const rel = info.gitRel ?? "";
       // A stale lock file (`index.lock`, `HEAD.lock`, `refs/heads/x.lock`) is the one thing under .git/ git itself tells the user to remove.
       if (rel !== ".git" && /\.lock$/i.test(rel)) return ALLOW;
       return rel === ".git"
@@ -507,17 +521,28 @@ function gitRules(s: Stage, ctx: Context): Decision[] {
   const out: Decision[] = [];
   const argv = s.argv;
   let i = 1;
+  // `git -C dir rm x` removes dir/x; each -C is taken relative to the one before.
+  let cdir = "";
   while (i < argv.length && argv[i].startsWith("-")) {
     const a = argv[i];
     if (a === "-c" && HOOK_CONFIG_KEY.test(argv[i + 1] ?? "")) {
       out.push(deny("shell.hook-bypass", `git -c ${argv[i + 1]} disables hooks for this command`, HOOK_BYPASS_REMEDIATION));
     }
+    if (a === "-C" && argv[i + 1]) cdir = /^([\\/~]|[A-Za-z]:)/.test(argv[i + 1]) ? argv[i + 1] : cdir === "" ? argv[i + 1] : `${cdir}/${argv[i + 1]}`;
     if (["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"].includes(a)) i += 2;
     else i++;
   }
   const sub = argv[i];
   if (sub === undefined) return out;
   const rest = argv.slice(i + 1);
+  const at = (p: string): string => (cdir === "" || /^([\\/~]|[A-Za-z]:)/.test(p) ? p : `${cdir}/${p}`);
+  /** git rm, git mv and git clean delete from the work tree like rm and mv do. */
+  const removes = (paths: string[], destructive: boolean, recursive: boolean): void => {
+    for (const p of paths) {
+      const d = judgeRemoveTarget(at(p), destructive, recursive, { ...s, cmd: `git ${sub}` }, ctx);
+      if (d.verdict !== "allow") out.push(d);
+    }
+  };
 
   if (rest.includes("--no-verify")) {
     out.push(deny("shell.hook-bypass", `git ${sub} --no-verify skips the project's hooks`, HOOK_BYPASS_REMEDIATION));
@@ -549,6 +574,20 @@ function gitRules(s: Stage, ctx: Context): Decision[] {
       if (!dry && !ignoredOnly && !scoped && (f.short.has("f") || f.long.has("force"))) {
         out.push(deny("shell.git-clean", `git clean ${rest.join(" ")} removes every untracked file in the tree`, "Run `git clean -n` to list what would go, then clean named paths (`git clean -f -- dist/`) or only ignored files (`git clean -fdX`). Untracked files may be the user's uncommitted work."));
       }
+      if (!dry && scoped && (f.short.has("f") || f.long.has("force"))) removes(f.positionals, true, f.short.has("d"));
+      break;
+    }
+    case "rm": {
+      // --cached only untracks; the file stays where it is.
+      const f = flagsOf(rest, 0, ["--pathspec-from-file"]);
+      if (!f.long.has("cached") && !f.short.has("n") && !f.long.has("dry-run")) removes(f.positionals, f.short.has("r"), f.short.has("r"));
+      break;
+    }
+    case "mv": {
+      const f = flagsOf(rest, 0);
+      if (f.short.has("n") || f.long.has("dry-run") || f.positionals.length < 2) break;
+      removes(f.positionals.slice(0, -1), true, false);
+      out.push(...writeRules(at(f.positionals[f.positionals.length - 1]), { ...s, cmd: "git mv" }, ctx));
       break;
     }
     case "checkout":
@@ -788,7 +827,7 @@ function permissionRules(s: Stage, ctx: Context): Decision[] {
   }
   const { recursive, mode, targets } = parsePermissionArgs(s);
   for (const t of targets) {
-    const info = classifyPath(t, ctx);
+    const info = classifyWhole(t, ctx);
     if (info.category === "hook-config" || info.category === "git-internals") {
       if (s.cmd === "chmod" && /(^|,)[ugoa]*-[rwx]*x|^0*[0-6][0-6][0-6]$/.test(mode)) {
         out.push(deny("shell.hook-tamper", `chmod ${mode} ${t} disables a hook`, "Hooks stay executable. Tell the user if a hook blocks legitimate work."));
@@ -927,6 +966,11 @@ function copyOperands(s: Stage): { sources: string[]; dest: string | undefined }
 
 /** Moving a protected path away is the same act as deleting it, so a mv source is judged like an rm target. */
 function moveSourceRules(s: Stage, ctx: Context): Decision[] {
+  if (RENAMERS.has(s.cmd)) {
+    // `rename` names its files after the expression; every word is judged, which only matters for a protected path.
+    const sources = s.cmd === "rename" ? flagsOf(s.argv, 1).positionals : copyOperands({ ...s, cmd: "move-item" }).sources;
+    return sources.map((src) => judgeRemoveTarget(src, true, false, s, ctx)).filter((d) => d.verdict !== "allow");
+  }
   if (!MOVERS.has(s.cmd)) return [];
   const { sources } = copyOperands(s);
   return sources.map((src) => judgeRemoveTarget(src, true, false, s, ctx)).filter((d) => d.verdict !== "allow");

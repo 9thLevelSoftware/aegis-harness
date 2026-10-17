@@ -161,7 +161,26 @@ test("the guard reads the worktree layout itself: a session in <worktree>/sub ca
     assert.equal(verdictOf(run("Bash", { command: `rm '${join(s.main, ".codex", "hooks.json")}'` }).decision), "deny shell.hook-tamper");
     assert.equal(verdictOf(run("Bash", { command: `sed -i /guard.mjs/d '${join(s.main, ".claude", "settings.local.json")}'` }).decision), "deny shell.hook-tamper");
     assert.equal(run("Bash", { command: `cat '${hooks}'` }).decision.verdict, "allow");
+    // The directories that hold that wiring, and the main checkout's git hooks, which the worktree runs.
+    assert.equal(verdictOf(run("Bash", { command: `mv '${join(s.main, ".claude")}' /tmp/x` }).decision), "deny shell.hook-tamper");
+    assert.equal(verdictOf(run("Bash", { command: `rm '${join(s.main, ".git", "hooks", "pre-commit")}'` }).decision), "deny shell.rm-git-dir");
+    assert.equal(verdictOf(run("Bash", { command: `chmod -x '${join(s.main, ".git", "hooks", "pre-push")}'` }).decision), "deny shell.hook-tamper");
+    assert.equal(run("Bash", { command: `rm -f '${join(s.main, ".git", "index.lock")}'` }).decision.verdict, "allow");
   } finally {
     s.done();
   }
+});
+
+test("a directory that holds hook wiring counts as it, and one beside it does not", () => {
+  const c = (p: string, ctx: Context = POSIX) => classifyPath(p, ctx).category;
+  const run = (command: string, ctx: Context = POSIX) => verdictOf(evaluate({ hook_event_name: "PreToolUse", session_id: "t", tool_use_id: "t", cwd: ctx.projectRoot, tool_name: "Bash", tool_input: { command } }, { root: ctx.projectRoot, home: ctx.homeDir, platform: ctx.platform, log: false }, {}).decision);
+  // classifyPath stays about the path itself, so creating and listing .claude are untouched.
+  assert.equal(c(".claude"), "normal");
+  assert.equal(run("rm -r .claude"), "deny shell.hook-tamper");
+  assert.equal(run("rm -r ../.claude", SUB), "deny shell.hook-tamper");
+  assert.equal(run("mv ../../.claude x", { ...POSIX, projectRoot: "/home/dev/project/a/b" }), "deny shell.hook-tamper");
+  assert.equal(run("rm -r sub/.claude"), "allow", "Claude Code reads .claude/ at the root and above, not in a subdirectory");
+  assert.equal(run("rm -r .claude/skills"), "allow");
+  assert.equal(run("ls .claude && mkdir -p .claude/agents"), "allow");
+  assert.equal(run("Remove-Item -Recurse .CLAUDE", WINDOWS_CODEX), "deny shell.hook-tamper");
 });
