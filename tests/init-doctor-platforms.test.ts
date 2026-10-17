@@ -29,7 +29,8 @@ interface Sandbox {
 }
 
 function sandbox(): Sandbox {
-  const base = realpathSync(mkdtempSync(join(tmpdir(), "ah-platforms-")));
+  // Native, so the paths match git's spelling on Windows (no 8.3 names such as RUNNER~1).
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), "ah-platforms-")));
   const root = join(base, "proj");
   const home = join(base, "home");
   mkdirSync(root, { recursive: true });
@@ -164,7 +165,9 @@ test("claude: doctor warns when it cannot read the registry policy", { skip }, (
 test("claude: workspace trust is looked up the way Claude Code keys it", { skip }, () => {
   const s = sandbox();
   try {
-    const trust = (keys: string[]) => writeFileSync(join(s.home, ".claude.json"), JSON.stringify({ projects: Object.fromEntries(keys.map((k) => [k, { hasTrustDialogAccepted: true }])) }));
+    // Keyed the way Claude Code writes them: forward slashes on Windows.
+    const key = (p: string) => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
+    const trust = (keys: string[]) => writeFileSync(join(s.home, ".claude.json"), JSON.stringify({ projects: Object.fromEntries(keys.map((k) => [key(k), { hasTrustDialogAccepted: true }])) }));
     const trustWarn = (m: Machine) => /workspace trust is not accepted/.test(titles(doctorClaude(m, { found: false, stdout: "" }, []), "warn"));
 
     // Windows keys use forward slashes.

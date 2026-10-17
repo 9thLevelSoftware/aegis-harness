@@ -37,15 +37,16 @@ export function codexHome(m: Machine): string {
   const set = m.env.CODEX_HOME;
   if (set === undefined || set === "") return join(m.home, ".codex");
   try {
-    return realpathSync(set);
+    return realpathSync.native(set);
   } catch {
     return set;
   }
 }
 
+/** The real path, long names and true case on Windows (8.3 names such as RUNNER~1 expanded), or `p` when it does not exist. */
 export function canonical(p: string): string {
   try {
-    return realpathSync(p);
+    return realpathSync.native(p);
   } catch {
     return p;
   }
