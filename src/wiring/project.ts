@@ -7,7 +7,7 @@
  * (BUG-2026-006).
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from "node:path";
 import { readText, writeAtomic } from "./files.ts";
@@ -42,20 +42,47 @@ function git(cwd: string, args: string[]): { ok: boolean; out: string; raw: stri
 }
 
 /**
- * An absolute path git printed, spelled for `os`. Git for Windows prints
- * C:/..., but an MSYS2 or Cygwin git first on PATH prints /c/... or
- * /cygdrive/c/..., which path.resolve on Windows takes for C:\c\...
+ * An absolute path git printed, spelled for `os`, or null when only the git
+ * that printed it knows where it is. Git for Windows prints C:/..., but an
+ * MSYS2 or Cygwin git first on PATH prints /c/... or /cygdrive/c/..., which
+ * path.resolve on Windows takes for C:\c\..., and MSYS2's own git prints a
+ * repository under its home as /home/dev/..., somewhere inside its install.
  */
-export function fromGitPath(os: Os, p: string): string {
+export function fromGitPath(os: Os, p: string): string | null {
   if (os !== "win32") return posix.resolve(p);
   const drive = /^\/(?:cygdrive\/)?([A-Za-z])(\/.*)?$/.exec(p);
-  return win32.resolve(drive ? `${drive[1].toUpperCase()}:${drive[2] ?? "/"}` : p);
+  if (drive) return win32.resolve(`${drive[1].toUpperCase()}:${drive[2] ?? "/"}`);
+  return /^[\\/](?![\\/])/.test(p) ? null : win32.resolve(p);
 }
 
-/** The repository's top level, or null outside a repository (or without git). */
+/**
+ * A path git printed when run in `dir`. A relative one is taken from the
+ * directory git ran in as git sees it, symlinks resolved, so it holds
+ * whichever git printed it. An absolute one goes through fromGitPath, then,
+ * on Windows, through cygpath, which belongs to the git that printed it.
+ */
+function gitPath(dir: string, p: string): string | null {
+  const os = currentOs();
+  if (!(os === "win32" ? win32.isAbsolute(p) : p.startsWith("/"))) {
+    try {
+      return resolve(realpathSync(dir), p);
+    } catch {
+      return resolve(dir, p);
+    }
+  }
+  const mapped = fromGitPath(os, p);
+  if (mapped !== null || os !== "win32") return mapped;
+  const r = spawnSync("cygpath", ["-w", p], { encoding: "utf8", windowsHide: true });
+  const out = r.status === 0 ? (r.stdout ?? "").trim() : "";
+  return /^(?:[A-Za-z]:\\|\\\\)/.test(out) ? out : null;
+}
+
+/** The repository's top level, or null outside a work tree (or without git). */
 export function gitTopLevel(dir: string): string | null {
-  const r = git(dir, ["rev-parse", "--show-toplevel"]);
-  return r.ok && r.out !== "" ? fromGitPath(currentOs(), r.out) : null;
+  // --show-cdup is relative, so no git's spelling of an absolute path comes into it.
+  const r = git(dir, ["rev-parse", "--is-inside-work-tree", "--show-cdup"]);
+  const [inside, cdup = ""] = r.raw.split(/\r?\n/);
+  return r.ok && inside === "true" ? gitPath(dir, cdup === "" ? "." : cdup) : null;
 }
 
 /**
@@ -65,9 +92,9 @@ export function gitTopLevel(dir: string): string | null {
 export function mainCheckoutRoot(dir: string): string | null {
   const top = gitTopLevel(dir);
   if (top === null) return null;
-  const common = git(dir, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-  if (!common.ok || common.out === "") return top;
-  const commonDir = fromGitPath(currentOs(), common.out);
+  const common = git(dir, ["rev-parse", "--git-common-dir"]);
+  const commonDir = common.ok && common.out !== "" ? gitPath(dir, common.out) : null;
+  if (commonDir === null) return top;
   return commonDir.endsWith(`${sep}.git`) || commonDir.endsWith("/.git") ? dirname(commonDir) : top;
 }
 
@@ -121,7 +148,8 @@ interface InRepo {
   fromDir: string;
   /** The file relative to the repository root, as git spells it (`/` separators). */
   fromTop: string;
-  excludePath: string;
+  /** Null when git named it by a path that cannot be placed on this machine. */
+  excludePath: string | null;
 }
 
 /**
@@ -136,8 +164,8 @@ function inRepo(file: string): InRepo | null {
   const prefix = git(dir, ["rev-parse", "--show-prefix"]);
   if (top === null || !prefix.ok) return null;
   const fromDir = relative(dir, file);
-  const info = git(dir, ["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"]);
-  const excludePath = info.ok && info.out !== "" ? fromGitPath(currentOs(), info.out) : join(top, ".git", "info", "exclude");
+  const info = git(dir, ["rev-parse", "--git-path", "info/exclude"]);
+  const excludePath = info.ok && info.out !== "" ? gitPath(dir, info.out) : join(top, ".git", "info", "exclude");
   return { dir, fromDir, fromTop: prefix.out + fromDir.split(sep).join("/"), excludePath };
 }
 
@@ -148,16 +176,19 @@ function excludeLine(fromTop: string): string {
 
 /**
  * Add `file` to the repository's `.git/info/exclude` (local to this clone,
- * never committed) unless git already ignores or tracks it. Returns what it did.
+ * never committed) unless git already ignores or tracks it. Returns what it
+ * did; "unmapped" when git named the exclude file by a path that cannot be
+ * placed (MSYS2's git, with no cygpath beside it), so nothing was written.
  * A file without a final newline gets one before ah's lines and none after
  * them, so unexcludeLocally takes out exactly what went in.
  */
-export function excludeLocally(file: string, dryRun: boolean): "excluded" | "already-ignored" | "tracked" | "no-repo" {
+export function excludeLocally(file: string, dryRun: boolean): "excluded" | "already-ignored" | "tracked" | "no-repo" | "unmapped" {
   const status = gitStatusOf(file);
   if (status === "tracked") return "tracked";
   if (status === "ignored") return "already-ignored";
   const r = inRepo(file);
   if (status === "no-repo" || r === null) return "no-repo";
+  if (r.excludePath === null) return "unmapped";
   if (dryRun) return "excluded";
   const current = readText(r.excludePath).text ?? "";
   const line = excludeLine(r.fromTop);
@@ -174,7 +205,7 @@ export function excludeLocally(file: string, dryRun: boolean): "excluded" | "alr
  */
 export function unexcludeLocally(file: string, dryRun: boolean): boolean {
   const r = inRepo(file);
-  if (r === null) return false;
+  if (r === null || r.excludePath === null) return false;
   const current = readText(r.excludePath).text;
   if (current === null) return false;
   const line = excludeLine(r.fromTop);

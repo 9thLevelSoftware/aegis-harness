@@ -4,20 +4,22 @@
  * Git for Windows' default) is never written into, CLAUDE.md, AGENTS.md or
  * AGENTS.override.md alike, and a block an older ah left in one comes out to
  * the target's exact bytes. The paths an MSYS2 or Cygwin git prints
- * (/c/..., /cygdrive/c/...) are read as the drive paths they are. The text
- * link is made by hand in the index, so this runs the same on every OS.
+ * (/c/..., /cygdrive/c/...) are read as the drive paths they are, and one
+ * only that git can place (/home/dev/...) is not guessed at: ah asks git for
+ * paths relative to where it ran. The text link is made by hand in the index,
+ * so this runs the same on every OS.
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { delimiter, join, relative } from "node:path";
 import { test } from "node:test";
 import { upsertBlock } from "../src/wiring/text-block.ts";
 import { agentsBlockLines, AGENTS_BLOCK_BODY } from "../src/wiring/agents-md.ts";
 import { writeAtomic } from "../src/wiring/files.ts";
 import { claudeMdState, planInstructions, rootTextLinks, type InstructionEdit } from "../src/wiring/instructions.ts";
-import { fromGitPath, symlinkCheckedOutAsText } from "../src/wiring/project.ts";
+import { excludeLocally, fromGitPath, gitTopLevel, mainCheckoutRoot, symlinkCheckedOutAsText } from "../src/wiring/project.ts";
 
 function git(cwd: string, ...args: string[]): string {
   const r = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -209,8 +211,36 @@ test("paths from an MSYS2 or Cygwin git become drive paths on Windows, and stay 
     ["//server/share/proj", "\\\\server\\share\\proj"],
   ];
   for (const [from, want] of cases) assert.equal(fromGitPath("win32", from), want, from);
+  for (const from of ["/home/dev/proj/.git/info/exclude", "/mnt/c/Users/dev/proj", "/usr/src/proj", "\\Users\\dev\\proj"]) assert.equal(fromGitPath("win32", from), null, `${from} is somewhere only that git knows`);
   for (const os of ["linux", "darwin"] as const) {
     for (const p of ["/c/Users/dev/proj", "/cygdrive/c/Users/dev", "/home/dev/proj", "/Users/dev/proj"]) assert.equal(fromGitPath(os, p), p, `${os} ${p}`);
     assert.equal(fromGitPath(os, "/home/dev/proj/"), "/home/dev/proj");
+  }
+});
+
+test("a git whose absolute paths only it can place still finds the repository and its exclude file, from a symlink into a subdirectory too", { skip: process.platform === "win32" ? "a shell script stands in for git" : false }, () => {
+  const base = mkdtempSync(join(tmpdir(), "ah-gitpath-"));
+  const path = process.env.PATH;
+  try {
+    const root = join(base, "proj");
+    mkdirSync(join(root, "sub", "deep"), { recursive: true });
+    git(root, "init", "-q");
+    symlinkSync(join(root, "sub", "deep"), join(base, "deep"));
+    const real = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+    const bin = join(base, "bin");
+    mkdirSync(bin);
+    // Like MSYS2's git, which prints /home/dev/... for a repository under its own install.
+    writeFileSync(join(bin, "git"), `#!/bin/sh\nout=$("${real}" "$@") || exit $?\nprintf '%s\\n' "$out" | sed 's#^/#/msys64/#'\n`, { mode: 0o755 });
+    process.env.PATH = `${bin}${delimiter}${path}`;
+    const top = realpathSync(root);
+    for (const dir of [root, join(root, "sub", "deep"), join(base, "deep")]) {
+      assert.equal(gitTopLevel(dir), top, dir);
+      assert.equal(mainCheckoutRoot(dir), top, dir);
+    }
+    assert.equal(excludeLocally(join(base, "deep", "settings.local.json"), false), "excluded");
+    assert.match(readFileSync(join(root, ".git", "info", "exclude"), "utf8"), /^\/sub\/deep\/settings\.local\.json$/m);
+  } finally {
+    process.env.PATH = path;
+    rmSync(base, { recursive: true, force: true });
   }
 });
