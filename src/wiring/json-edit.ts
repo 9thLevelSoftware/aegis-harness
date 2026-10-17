@@ -5,7 +5,8 @@
  * lose the person's layout. So members and elements whose value is unchanged
  * keep their exact text (indentation, line breaks, number spelling) and the
  * whitespace around them, before a comma too; one that moved takes its text
- * along. Only what differs is written fresh, laid out like its neighbours, and
+ * along, and one that changed is edited from the old element it shares most
+ * with. Only what differs is written fresh, laid out like its neighbours, and
  * a value that cannot be edited in place (its keys would have to change order)
  * is written fresh where it stands, so the rest of the file never notices.
  * Removing what was added gives back the original bytes.
@@ -209,19 +210,29 @@ class Editor {
   }
 
   private array(n: Node, before: unknown[], after: unknown[], at: At): string {
-    // Align unchanged elements (longest common subsequence). In each gap between
-    // them an added element takes the text of an equal one dropped elsewhere (it
-    // moved), or is edited in place from the dropped one it shares most with, or
-    // is written fresh in a dropped one's place.
+    // Align unchanged elements: as many as can stay, and of the alignments that
+    // keep that many, the one that shifts them least, so an edited element
+    // meets its old self in the same gap even beside an equal sibling. In each
+    // gap an added element takes the text of an equal one dropped elsewhere (it
+    // moved), or is paired with a dropped one in order and sits in its place.
+    // Its text is edited from the dropped element anywhere in the array that it
+    // shares most with (its partner on a tie), even one another added element
+    // is edited from too, so a group split in two (ah's entry lifted out of a
+    // person's group) keeps the text of both halves. With none it is written fresh.
     const a = before.map((v) => JSON.stringify(v));
     const b = after.map((v) => JSON.stringify(v));
-    const L = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
-    for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) L[i][j] = a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    // Score: K per element kept, less how far each moves; K outweighs any total shift.
+    const K = (a.length + 1) * (b.length + 1);
+    const L = Array.from({ length: a.length + 1 }, () => new Float64Array(b.length + 1));
+    const keep = (i: number, j: number) => a[i] === b[j] && L[i][j] === L[i + 1][j + 1] + K - Math.abs(i - j);
+    for (let i = a.length - 1; i >= 0; i--) {
+      for (let j = b.length - 1; j >= 0; j--) L[i][j] = Math.max(L[i + 1][j], L[i][j + 1], a[i] === b[j] ? L[i + 1][j + 1] + K - Math.abs(i - j) : 0);
+    }
     type Gap = { dropped: number[]; added: number[] };
     const steps: (number | Gap)[] = [];
     let gap: Gap = { dropped: [], added: [] };
     for (let i = 0, j = 0; i < a.length || j < b.length; ) {
-      if (i < a.length && j < b.length && a[i] === b[j]) {
+      if (i < a.length && j < b.length && keep(i, j)) {
         steps.push(gap, i++);
         gap = { dropped: [], added: [] };
         j++;
@@ -230,6 +241,18 @@ class Editor {
     }
     steps.push(gap);
     const gaps = steps.filter((x): x is Gap => typeof x !== "number");
+    const dropped = gaps.flatMap((g) => g.dropped);
+    const scores = new Map<number, number | null>();
+    const score = (i: number, j: number) => {
+      const key = i * (b.length + 1) + j;
+      if (!scores.has(key)) scores.set(key, overlap(before[i], after[j]));
+      return scores.get(key) as number | null;
+    };
+    const source = (j: number, partner: number | undefined) =>
+      dropped.reduce((best, i) => {
+        const s = score(i, j);
+        return s !== null && s > (best === undefined ? 0 : (score(best, j) as number)) ? i : best;
+      }, partner);
     // Equal elements never share a gap (they would extend the alignment), so a match is a move.
     const moved = new Map<number, number>();
     for (const j of gaps.flatMap((g) => g.added)) {
@@ -247,10 +270,10 @@ class Editor {
         pieces.push({ from: step, body: () => this.text(n.items[step].value) });
         continue;
       }
-      const { content, slot } = pair(before, after, step.dropped, step.added, moved);
+      const { content, slot } = pair(step.dropped, step.added, (i, j) => (moved.has(j) ? null : score(i, j)));
       for (const j of step.added) {
         const m = moved.get(j);
-        const i = content.get(j);
+        const i = m === undefined ? source(j, content.get(j)) : undefined;
         let body: Piece["body"];
         if (m !== undefined) body = () => this.text(n.items[m].value);
         else if (i !== undefined) body = (at) => this.render(n.items[i].value, before[i], after[j], at);
@@ -341,12 +364,13 @@ class Editor {
 
 /**
  * Match the dropped elements of a gap to its added ones, in order, keeping the
- * most text. `content` pairs are edited in place; `slot` says whose whitespace
+ * most text (`fit`, null where a pair cannot be edited in place).
+ * `content` is each added element's partner; `slot` says whose whitespace
  * each added element takes, so one written fresh still sits where its
  * predecessor sat. Elements that moved here keep their own text and take a slot only.
  */
-function pair(before: unknown[], after: unknown[], dropped: number[], added: number[], moved: Map<number, number>) {
-  const score = dropped.map((i) => added.map((j) => (moved.has(j) ? null : overlap(before[i], after[j]))));
+function pair(dropped: number[], added: number[], fit: (i: number, j: number) => number | null) {
+  const score = dropped.map((i) => added.map((j) => fit(i, j)));
   const best = Array.from({ length: dropped.length + 1 }, () => new Array<number>(added.length + 1).fill(0));
   for (let x = dropped.length - 1; x >= 0; x--) {
     for (let y = added.length - 1; y >= 0; y--) {

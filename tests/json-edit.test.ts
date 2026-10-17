@@ -75,8 +75,32 @@ test("a user's entry keeps its text when ah's entry beside it, keys in another o
   const out = edit(original, (v) => ({ hooks: { PreToolUse: [group, { matcher: "Bash", hooks: [v.hooks.PreToolUse[0].hooks[0]] }] } }));
   assert.equal(
     out,
-    '{\n  "hooks": {\n    "PreToolUse": [\n      {\n        "matcher": "Bash",\n        "hooks": [\n          {\n            "type": "command",\n            "command": "node guard.mjs"\n          }\n        ]\n      },\n      {\n        "matcher": "Bash",\n        "hooks": [\n          { "type": "command", "timeout": 30.0, "command": "python3 audit.py" }\n        ]\n      }\n    ]\n  }\n}\n',
+    '{\n  "hooks": {\n    "PreToolUse": [\n      {\n        "matcher": "Bash",\n        "hooks": [\n          { "type": "command", "command": "node guard.mjs" }\n        ]\n      },\n      {\n        "matcher": "Bash",\n        "hooks": [\n          { "type": "command", "timeout": 30.0, "command": "python3 audit.py" }\n        ]\n      }\n    ]\n  }\n}\n',
   );
+});
+
+test("when ah's entry is lifted out of a person's group, both halves keep their text", () => {
+  const ah = '{"type": "command", "command": "/usr/bin/node", "args": ["/opt/ah/dist/guard.mjs", "--agent", "claude"], "timeout": 5}';
+  const user = '{ "type": "command", "command": "echo \\u00e9 \\/tmp", "timeout": 30.0 }';
+  const g = (matcher: string, entries: string[]) => `      {\n        "matcher": "${matcher}",\n        "hooks": [\n          ${entries.join(",\n          ")}\n        ]\n      }`;
+  const file = (groups: string[]) => `{\n  "hooks": {\n    "PreToolUse": [\n${groups.join(",\n")}\n    ]\n  }\n}\n`;
+  const only = (entry: string) => ({ matcher: "Bash|Edit", hooks: [JSON.parse(entry)] });
+  // ah's entry equals the one it writes and is longer than the person's, so it used to win their group's text.
+  assert.equal(edit(file([g("Bash|Edit", [ah, user])]), () => ({ hooks: { PreToolUse: [only(ah), only(user)] } })), file([g("Bash|Edit", [ah]), g("Bash|Edit", [user])]));
+  // Codex keeps the person's group first.
+  assert.equal(edit(file([g("Bash|Edit", [user, ah])]), () => ({ hooks: { PreToolUse: [only(user), only(ah)] } })), file([g("Bash|Edit", [user]), g("Bash|Edit", [ah])]));
+  // ah's current group, already in the file after the person's, moves up past it.
+  const old = '{ "type": "command", "command": "node /old/dist/guard.mjs --agent claude" }';
+  const current = `      {"matcher": "Bash|Edit", "hooks": [${ah}]}`;
+  const out = edit(file([g("Write", [user, old]), current]), (v) => ({ hooks: { PreToolUse: [v.hooks.PreToolUse[1], { matcher: "Write", hooks: [v.hooks.PreToolUse[0].hooks[0]] }] } }));
+  assert.equal(out, file([current, g("Write", [user])]));
+});
+
+test("an edit to one of two equal elements spelled differently stays on that element", () => {
+  const original = '{\n  "allow": [\n    {"tool": "Bash", "timeout": 30.0},\n    {"tool": "Bash", "timeout": 30}\n  ]\n}\n';
+  const out = edit(original, (v) => ({ allow: [{ ...v.allow[0], note: "x" }, v.allow[1]] }));
+  assert.equal(out, '{\n  "allow": [\n    {"tool": "Bash", "timeout": 30.0, "note": "x"},\n    {"tool": "Bash", "timeout": 30}\n  ]\n}\n');
+  assert.equal(edit(out, () => JSON.parse(original)), original);
 });
 
 test("members whose keys changed order, and elements that moved, keep their text", () => {

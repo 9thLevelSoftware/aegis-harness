@@ -115,6 +115,7 @@ function generator(seed: number) {
     return (indent, outer) => object(f, indent, fields, inner(outer)).text;
   }
 
+  let serial = 100;
   function entry(f: Fmt, ah: boolean): (indent: string, outer: Layout) => string {
     const fields: [string, string][] = [["type", str("command")]];
     if (ah) {
@@ -125,36 +126,46 @@ function generator(seed: number) {
       if (chance(0.6)) fields.push(["timeout", pick(["5", "10", "5.0"])]);
     } else {
       fields.push(["command", str(pick(["npx prettier --write", "python3 check.py", "echo é", "node scripts/guard.mjs"]))]);
-      if (chance(0.4)) fields.push(["timeout", pick(["30", "1.0"])]);
+      if (chance(0.6)) fields.push(["timeout", pick(["30", "1.0", `${serial++}.0`])]);
     }
     if (chance(0.2)) fields.reverse(); // written by hand, keys in another order
     const typed = fields.map(([k, t]): [string, (indent: string, layout: Layout) => string] => [k, () => t]);
     return (indent, outer) => object(f, indent, typed, outer === "lines" || outer === "hug" ? undefined : outer).text;
   }
 
-  function group(f: Fmt, kind: "user" | "ah" | "mixed"): (indent: string, outer: Layout) => string {
-    const els = Array.from({ length: kind === "ah" ? 1 + (chance(0.2) ? 1 : 0) : 1 + Math.floor(rnd() * 2) }, () => entry(f, kind === "ah"));
-    if (kind === "mixed") els.splice(Math.floor(rnd() * (els.length + 1)), 0, entry(f, true));
-    const matcher = str(pick(["Bash", "^Bash$", "Write|Edit", "*", ""]));
+  /** A matcher group; the text of each of its user entries goes into `users`. */
+  function group(f: Fmt, kind: "user" | "ah" | "mixed", users: string[]): (indent: string, outer: Layout) => string {
+    const mine = Array.from({ length: kind === "ah" ? 1 + (chance(0.2) ? 1 : 0) : 1 + Math.floor(rnd() * 2) }, () => kind === "ah");
+    if (kind === "mixed") mine.splice(Math.floor(rnd() * (mine.length + 1)), 0, true);
+    const els = mine.map((ah) => entry(f, ah));
+    const matcher = str(pick(["Bash", "^Bash$", "Write|Edit", "*", "", "Bash|Edit"]));
     const fields: [string, (indent: string, layout: Layout) => string][] = [
       ["matcher", () => matcher],
-      ["hooks", (indent, layout) => array(f, indent, els, layout === "lines" || layout === "hug" ? undefined : layout).text],
+      [
+        "hooks",
+        (indent, layout) => {
+          const a = array(f, indent, els, layout === "lines" || layout === "hug" ? undefined : layout);
+          users.push(...a.parts.filter((_, k) => !mine[k]));
+          return a.text;
+        },
+      ],
     ];
     if (chance(0.2)) fields.reverse();
     return (indent, outer) => object(f, indent, fields, outer === "lines" || outer === "hug" ? undefined : outer).text;
   }
 
-  /** A settings file, with the text of each top-level member and of each PreToolUse group. */
-  return function doc(): { text: string; members: Map<string, string>; groups: string[] } {
+  /** A settings file, with the text of each top-level member, of each PreToolUse group and of each user entry. */
+  return function doc(): { text: string; members: Map<string, string>; groups: string[]; users: string[] } {
+    const users: string[] = [];
     const f: Fmt = { eol: chance(0.25) ? "\r\n" : "\n", unit: pick(["  ", "    ", "\t", " "]), colon: pick([": ", ":", " : "]), commaFirst: chance(0.08), loose: chance(0.3) };
     const top: [string, (indent: string, layout: Layout) => string][] = [];
     for (const k of new Set(Array.from({ length: Math.floor(rnd() * 4) }, () => pick(["permissions", "env", "model", "$schema", "statusLine", "é", "1", "__proto__"])))) top.push([k, value(f, 1)]);
     let groups: string[] = [];
     if (chance(0.75)) {
       const events: [string, (indent: string, layout: Layout) => string][] = [];
-      if (chance(0.4)) events.push(["PostToolUse", (indent) => array(f, indent, [group(f, "user")]).text]);
+      if (chance(0.4)) events.push(["PostToolUse", (indent) => array(f, indent, [group(f, "user", users)]).text]);
       if (chance(0.85)) {
-        const gs = Array.from({ length: Math.floor(rnd() * 4) }, () => group(f, pick(["user", "user", "ah", "mixed"] as const)));
+        const gs = Array.from({ length: Math.floor(rnd() * 4) }, () => group(f, pick(["user", "user", "ah", "mixed", "mixed"] as const), users));
         const layout: Layout = chance(0.2) ? "hug" : "lines";
         events.push(["PreToolUse", (indent) => {
           const a = array(f, indent, gs, layout);
@@ -169,7 +180,7 @@ function generator(seed: number) {
     const root = object(f, "", top, layoutFor(true));
     const members = new Map(top.map(([k], i) => [k, root.parts[i]]));
     const text = (chance(0.1) ? "﻿" : "") + (chance(0.1) ? f.eol : "") + root.text + pick([f.eol, "", f.eol + f.eol, " " + f.eol]);
-    return { text, members, groups };
+    return { text, members, groups, users };
   };
 }
 
@@ -194,12 +205,16 @@ const ops: Record<string, Op> = {
 const undo: Record<string, Op | undefined> = { "add for claude": ops.remove, "add for codex": ops.remove, "set hooks.PreToolUse": ops["drop the hooks key"] };
 
 const edit = (text: string, value: unknown) => editJson(text, value, detectStyle(text));
+/** Every hook entry in a settings value, as JSON. */
+const entriesOf = (v: Obj): string[] =>
+  Object.values((v.hooks as Obj | undefined) ?? {}).flatMap((gs) => (Array.isArray(gs) ? gs : []).flatMap((g) => ((g as Obj).hooks as unknown[] | undefined) ?? []).map(S));
 
 test("random settings files keep every byte the edit did not change", () => {
   const doc = generator(20261017);
   const pick = rng(7);
   const names = Object.keys(ops);
   let roundTrips = 0;
+  let split = 0;
   for (let n = 0; n < 2500; n++) {
     const d = doc();
     const before = parse(d.text);
@@ -218,11 +233,19 @@ test("random settings files keep every byte the edit did not change", () => {
       if (Object.hasOwn(target, k) && S(before[k]) === S(target[k])) assert.ok(out.includes(text), `${where}: member ${k} keeps its text\n${JSON.stringify(out)}`);
     }
     const pre = (target.hooks as Obj | undefined)?.PreToolUse;
-    if (Array.isArray(pre)) {
-      ((before.hooks as Obj | undefined)?.PreToolUse as unknown[] | undefined)?.forEach((g, i) => {
-        if (pre.some((x) => S(x) === S(g))) assert.ok(out.includes(d.groups[i]), `${where}: group ${i} keeps its text\n${JSON.stringify(out)}`);
-      });
-    }
+    const kept = (((before.hooks as Obj | undefined)?.PreToolUse as unknown[] | undefined) ?? []).map((g) => Array.isArray(pre) && pre.some((x) => S(x) === S(g)));
+    kept.forEach((k, i) => {
+      if (k) assert.ok(out.includes(d.groups[i]), `${where}: group ${i} keeps its text\n${JSON.stringify(out)}`);
+    });
+    // A person's entry keeps its text wherever its value is still listed, also when ah's entry was lifted out of its group.
+    const left = new Set(entriesOf(target));
+    const values = d.users.map((t) => S(JSON.parse(t)));
+    d.users.forEach((t, k) => {
+      if (values.indexOf(values[k]) !== values.lastIndexOf(values[k]) || !left.has(values[k])) return;
+      assert.ok(out.includes(t), `${where}: user entry ${t} keeps its text\n${JSON.stringify(out)}`);
+      const home = d.groups.findIndex((g) => g.includes(t));
+      if (home >= 0 && !kept[home]) split++;
+    });
     assert.equal(edit(out, ops[name](parse(out))), out, `${where}: doing it again changes nothing`);
     const back = undo[name]?.(parse(out));
     if (back && S(back) === S(before)) {
@@ -231,4 +254,42 @@ test("random settings files keep every byte the edit did not change", () => {
     }
   }
   assert.ok(roundTrips > 500, `only ${roundTrips} round trips were checked`);
+  assert.ok(split > 100, `only ${split} entries in changed groups were checked`);
+});
+
+test("an edit to one of several equal elements spelled differently stays on that element", () => {
+  const rnd = rng(31);
+  const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length)];
+  for (let n = 0; n < 1500; n++) {
+    const lines = rnd() < 0.5;
+    const build = (els: string[]) => (lines ? `{\n  "allow": [\n    ${els.join(",\n    ")}\n  ]\n}\n` : `{"allow": [${els.join(", ")}]}`);
+    const els = Array.from({ length: 2 + Math.floor(rnd() * 4) }, () => `{"tool": ${pick(['"Bash"', '"B\\u0061sh"'])}, "timeout": ${pick(["30", "30.0", "3e1"])}}`);
+    const text = build(els);
+    const before = parse(text) as { allow: Obj[] };
+    const x = Math.floor(rnd() * els.length);
+    const allow = before.allow.slice();
+    const change = pick(["note", "timeout", "remove", "insert"]);
+    if (change === "note") allow[x] = { ...allow[x], note: "x" };
+    else if (change === "timeout") allow[x] = { ...allow[x], timeout: 31 };
+    else if (change === "remove") allow.splice(x, 1);
+    else allow.splice(x, 0, { tool: "Bash", timeout: 30 });
+    const where = `case ${n} (${change} ${x}) on ${JSON.stringify(text)}`;
+    const out = edit(text, { allow });
+    assert.equal(S(parse(out)), S({ allow }), `${where}: parses to the target`);
+    if (change === "remove") {
+      // All are equal, so any one of them may go; the rest keep their text.
+      assert.ok(els.some((_, k) => out === build(els.filter((_, i) => i !== k))), `${where}: the others keep their text\n${JSON.stringify(out)}`);
+    } else {
+      let at = 0;
+      els.forEach((t, k) => {
+        if (k === x && change !== "insert") return;
+        const found = out.indexOf(t, at);
+        assert.ok(found >= 0, `${where}: element ${k} keeps its text, in order\n${JSON.stringify(out)}`);
+        at = found + t.length;
+      });
+    }
+    assert.equal(edit(out, { allow }), out, `${where}: doing it again changes nothing`);
+    // Taking out what was added gives back the bytes; a changed value's old spelling is gone.
+    if (change === "note" || change === "insert") assert.equal(edit(out, before), text, `${where}: undoing it gives back the original\n${JSON.stringify(out)}`);
+  }
 });
