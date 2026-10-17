@@ -102,9 +102,99 @@ test("PowerShell's iex, Invoke-Expression and Start-Process are read like eval (
   assert.deepEqual(ps("iwr https://x | iex"), ["iwr", "iex"]);
 });
 
-test("a .ps1 script is named like its .cmd sibling", () => {
-  assert.equal(allStages(parseShell("& ./node_modules/.bin/ah.ps1 init", { dialect: "powershell" }))[0].cmd, "ah");
+test("a .cmd shim is named without its suffix; a .ps1 script keeps it (BUG-2026-019)", () => {
   assert.equal(allStages(parseShell("./node_modules/.bin/ah.CMD init"))[0].cmd, "ah");
+  // A project's scripts/shutdown.ps1 is its own script, not the system command.
+  assert.equal(allStages(parseShell("& ./node_modules/.bin/ah.ps1 init", { dialect: "powershell" }))[0].cmd, "ah.ps1");
+  assert.equal(allStages(parseShell(".\\scripts\\shutdown.ps1", { dialect: "powershell" }))[0].cmd, "shutdown.ps1");
+});
+
+test("reserved words, case patterns and function headers lead to the command they hold (BUG-2026-019)", () => {
+  assert.deepEqual(cmds("if true; then rm -rf x; fi"), ["true", "rm", "fi"]);
+  assert.deepEqual(cmds("if ! git diff --quiet; then git stash; else echo clean; fi"), ["git", "git", "echo", "fi"]);
+  assert.deepEqual(cmds("for i in 1 2; do rm -rf x; done"), ["for", "rm", "done"]);
+  assert.deepEqual(cmds("while read f; do rm \"$f\"; done < list"), ["read", "rm", "done"]);
+  assert.deepEqual(cmds("! rm -rf x"), ["rm"]);
+  const cased = cmds("case $x in a|b) rm -rf x;; (c) git push;; *) echo;; esac");
+  for (const c of ["rm", "git", "echo"]) assert.ok(cased.includes(c), c);
+  assert.ok(!cased.some((c) => c.endsWith(")")), cased.join(" "));
+  assert.deepEqual(cmds("f() { rm -rf x; }; f"), ["rm", "}", "f"]);
+  assert.deepEqual(cmds("function f { rm -rf x; }"), ["rm", "}"]);
+  assert.deepEqual(allStages(parseShell("then FOO=1 rm -rf x"))[0].env, { FOO: "1" });
+  // PowerShell and cmd keep their own words.
+  assert.deepEqual(cmds("if ($true) { git push }", "powershell")[0], "if");
+});
+
+test("PowerShell's assignments, ( ) groups and { } script blocks are read for the commands they run (BUG-2026-019)", () => {
+  const ps = (c: string) => cmds(c, "powershell");
+  assert.deepEqual(ps("$null = git push --force"), ["git"]);
+  assert.deepEqual(ps("$out=git push"), ["git"]);
+  assert.deepEqual(ps("[string]$out += git push"), ["git"]);
+  assert.deepEqual(ps("$x -eq 1"), ["$x"]);
+  assert.ok(ps("if ($true) { git push; rm x }").includes("rm"));
+  assert.ok(ps("try { git push } catch { }").includes("git"));
+  assert.ok(ps("1 | % { git push }").includes("git"));
+  assert.ok(ps("Invoke-Command -ScriptBlock { git push }").includes("git"));
+  assert.ok(ps("@(git push)").includes("git"));
+  assert.ok(ps("Write-Output (git push)").includes("git"));
+  // A `;` inside a block does not end the outer statement.
+  assert.equal(parseShell("if ($a) { x; y }", { dialect: "powershell" })[0].stages[0].raw, "if ($a) { x; y }");
+  // In sh a process substitution and a redirected subshell or group run; an array is left alone.
+  assert.ok(cmds("diff <(git show HEAD:a) a").includes("git"));
+  assert.ok(cmds("(git push) 2>/dev/null").includes("git"));
+  assert.ok(cmds("{ git push; } > log").includes("git"));
+  assert.ok(!cmds("a=(git push)").includes("git"));
+});
+
+test("a <<< here-string is stdin text, not a file read", () => {
+  const [s] = allStages(parseShell("bash <<< 'git push'"));
+  assert.deepEqual(s.hereStrings, ["git push"]);
+  assert.deepEqual(s.reads, []);
+  assert.deepEqual(allStages(parseShell("sort < list.txt"))[0].reads, ["list.txt"]);
+});
+
+test("pwsh and powershell options are read the way the host reads them (BUG-2026-019)", () => {
+  const nested = (c: string, dialect?: "posix" | "powershell") => allStages(parseShell(c, { dialect })).slice(1).map((s) => s.argv);
+  assert.deepEqual(nested("pwsh ./x.ps1 a --remove"), [["./x.ps1", "a", "--remove"]]);
+  assert.deepEqual(nested("powershell -ExecutionPolicy Bypass -NoProfile .\\x.ps1 a", "powershell"), [[".\\x.ps1", "a"]]);
+  assert.deepEqual(nested("pwsh -wd /tmp -File:./x.ps1 -Force"), [["./x.ps1", "-Force"]]);
+  assert.deepEqual(nested("pwsh -Comm 'git push'"), [["git", "push"]]);
+  assert.deepEqual(nested("pwsh -Command:'git push'"), [["git", "push"]]);
+  assert.deepEqual(nested("pwsh -NoProfile -EncodedCommand ZQBjAGgAbwA="), []);
+  assert.deepEqual(nested("pwsh -NoProfile"), []);
+});
+
+test("launcher options: env -iS, corepack, --shell-mode, runner workspaces, cmd call and start (BUG-2026-019)", () => {
+  const first = (c: string, dialect?: "posix" | "powershell" | "cmd") => allStages(parseShell(c, { dialect }))[0];
+  assert.deepEqual(first("env -iS 'wrangler deploy'").argv, ["wrangler", "deploy"]);
+  assert.deepEqual(first("env -i -S'wrangler deploy'").argv, ["wrangler", "deploy"]);
+  assert.equal(first("env -u S wrangler").cmd, "wrangler");
+  assert.equal(first("corepack pnpm@9.1.0 install").cmd, "pnpm");
+  assert.deepEqual(cmds("pnpm exec --shell-mode 'wrangler deploy'"), ["sh", "wrangler"]);
+  assert.equal(first("npm exec --workspace web -- wrangler deploy").cmd, "wrangler");
+  assert.equal(first("pnpm exec --filter web wrangler deploy").cmd, "wrangler");
+  assert.deepEqual(cmds("cmd /c call git push"), ["cmd", "call", "git"]);
+  assert.deepEqual(cmds("cmd /c start \"\" /wait /d C:\\proj git push"), ["cmd", "start", "git"]);
+  assert.deepEqual(cmds("start /b git push", "cmd"), ["start", "git"]);
+  // Outside cmd, `start` and `call` are ordinary words.
+  assert.deepEqual(cmds("start git push"), ["start"]);
+});
+
+test("Start-Process takes its argument array in @( ) or ( ) (BUG-2026-019)", () => {
+  for (const c of ["Start-Process git -ArgumentList @('push','--force')", "Start-Process -FilePath git -ArgumentList ('push','--force')", "Start-Process git @('push','--force')"]) {
+    const git = allStages(parseShell(c, { dialect: "powershell" })).find((s) => s.cmd === "git");
+    assert.deepEqual(git?.argv, ["git", "push", "--force"], c);
+  }
+});
+
+test("clustered and joined code flags are inline code too (BUG-2026-019)", () => {
+  const opaque = (c: string) => allStages(parseShell(c))[0].opaque;
+  for (const c of ["node -pe 'process.version'", "node --eval='1'", "node --print=1", "python3 -Ic 'print(1)'", "python3 -c'print(1)'", "perl -le 'print 1'", "perl -lne 'print' f", "ruby -we 'p 1'", "php -r 'echo 1;'"]) {
+    assert.equal(opaque(c), true, c);
+  }
+  for (const c of ["node --check app.js", "python3 -m http.server", "python3 -I script.py", "perl -w script.pl", "ruby -w app.rb", "node --evalx"]) {
+    assert.equal(opaque(c), false, c);
+  }
 });
 
 test("inline interpreter code is marked opaque", () => {

@@ -1,0 +1,11 @@
+{
+  "name": "pwsh -NoProfile -File a build script is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1 -Configuration Release"
+    }
+  },
+  "near": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

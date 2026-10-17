@@ -321,6 +321,38 @@ test("ah init --remove is denied however the CLI is spelled; reading and dry run
   assert.equal(sh(`python3 -c "import os; os.system('ah init --remove')"`).reason, "python3 inline code runs ah init --remove removes the guard's hook wiring");
 });
 
+test("the second review's spellings of ah init --remove are denied; their near misses pass (BUG-2026-019)", () => {
+  const denied = [
+    "node -e 'require(\"child_process\").execSync(`ah init --remove`)'", `node -e "require('child_process').spawn('ah', ['init', '--remove'])"`,
+    `node -e "require('child_process').execFileSync('node', ['dist/ah.mjs', 'init', '--uninstall'])"`, "pwsh -NoProfile ./node_modules/.bin/ah.ps1 init --remove",
+    "pwsh -Fi node_modules/.bin/ah.ps1 init --remove", "pwsh -File:node_modules/.bin/aegis.ps1 init --remove", "pnpm dlx --shell-mode 'ah init --remove'",
+    "while true; do ah init --remove; done", "! ah init --remove", "case x in x) ah init --remove;; esac", "f() { ah init --remove; }; f", "diff <(ah init --remove) /dev/null",
+    "printf '%s\\n' 'ah init --remove' | bash", "echo -e 'ah init --remove\\n' | sh -s", `node --eval="require('child_process').execSync('ah init --remove')"`,
+    `perl -le 'system "ah init --remove"'`, `ruby -we 'system("ah init --remove")'`, "cmd /c call ah init --remove", "cmd /c start \"\" /wait ah init --remove",
+    "bash <<< 'ah init --remove'", "{ ah init --remove; } > /dev/null", "(ah init --remove) 2>/dev/null",
+  ];
+  for (const c of denied) assert.equal(verdictOf(sh(c)), "deny shell.hook-tamper", c);
+  const deniedWin = [
+    "powershell .\\node_modules\\.bin\\ah.ps1 init --remove", "$out = ah init --remove", "if ($true) { ah init --remove }", "1 | % { ah init --remove }",
+    "Start-Job { ah init --remove }", "@(ah init --remove)", "Start-Process -FilePath ah -ArgumentList ('init','--remove')", "echo 'ah init --remove' | Invoke-Expression",
+    "Invoke-Expression -Comm 'ah init --remove'", "Write-Output 'ah init --remove' | iex",
+  ];
+  for (const c of deniedWin) assert.equal(verdictOf(win(c)), "deny shell.hook-tamper", c);
+  assert.equal(verdictOf(win("$null = Remove-Item -Recurse -Force C:\\Users\\dev")), "deny shell.rm-recursive-home");
+  assert.equal(verdictOf(sh("(rm -rf ~) 2>/dev/null")), "deny shell.rm-recursive-home");
+  assert.equal(verdictOf(win("cmd /c start /b rmdir /s /q C:\\Users\\dev")), "deny shell.rm-recursive-home");
+  assert.equal(verdictOf(sh(`node -pe "require('child_process').execSync('rm -rf /home/dev/work')"`)), "ask shell.interpreter-destructive");
+  const allowed = [
+    `node -e "require('child_process').spawnSync('ah', ['init', '--dry-run', '--remove'])"`, "node -e 'console.log(`ah init --remove`)'", "pwsh ./node_modules/.bin/ah.ps1 doctor",
+    "pwsh -ExecutionPolicy Bypass ./scripts/build.ps1 init --remove", "echo 'ah init --remove' | cat", "echo 'ah init --remove' | sh -c 'cat'", "echo 'ah init --remove' > notes.txt",
+    "if [ -d dist ]; then rm -rf dist; fi", "pnpm exec --shell-mode 'ah init'", "node -pe 'process.version'", "(rm -rf dist) 2>/dev/null", "bash <<< 'ah doctor'",
+  ];
+  for (const c of allowed) assert.equal(sh(c).verdict, "allow", c);
+  for (const c of [".\\scripts\\shutdown.ps1", ".\\scripts\\reboot.ps1", ".\\init.ps1 0", ".\\scripts\\format.ps1 C:", ".\\tools\\git.ps1 push --force", ".\\find.ps1 . -delete", "'ah doctor' | iex"]) {
+    assert.equal(win(c).verdict, "allow", c);
+  }
+});
+
 test("writes to the PowerShell profile are home rc-file writes", () => {
   for (const c of ["Set-Content -Path $PROFILE -Value 'x'", "Add-Content $PROFILE 'x'", "Out-File -FilePath $PROFILE -InputObject x", "echo 'x' >> $PROFILE", "Set-Content -Path $PROFILE.CurrentUserAllHosts -Value x"]) {
     assert.equal(verdictOf(win(c)), "deny shell.write-home-config", c);

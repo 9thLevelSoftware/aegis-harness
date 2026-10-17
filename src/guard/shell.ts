@@ -3,18 +3,19 @@
  *
  * It is not a shell. It splits a command line into pipelines and stages,
  * tokenizes each stage with quote awareness, peels off wrappers such as
- * `sudo`, `env`, `xargs` and `timeout`, records redirection targets, and
- * recurses into `sh -c "..."`, `pwsh -Command "..."`, `cmd /c ...`, `eval`,
- * `iex`, `Start-Process`, `npx -c`, `$(...)` and backtick substitutions, so
- * that rules see every command that will actually run. On input it cannot
- * make sense of it degrades to a whitespace split rather than throwing: the
- * guard must never crash open.
+ * `sudo`, `env`, `xargs` and `timeout` and the reserved words of compound
+ * commands, records redirection targets, and recurses into `sh -c "..."`,
+ * `pwsh -Command "..."`, `cmd /c ...`, `eval`, `iex`, `Start-Process`,
+ * `npx -c`, `$(...)` and backtick substitutions, process substitutions and
+ * PowerShell's `( )` and `{ }` blocks, so that rules see every command that
+ * will actually run. On input it cannot make sense of it degrades to a
+ * whitespace split rather than throwing: the guard must never crash open.
  */
 
 export interface Stage {
   /** Arguments after env assignments and wrappers were removed. `argv[0]` is the command. */
   argv: string[];
-  /** Normalized command name: basename, lowercase, without `.exe`/`.cmd`/`.bat`/`.ps1`. */
+  /** Normalized command name: basename, lowercase, without `.exe`/`.cmd`/`.bat`. */
   cmd: string;
   /** Leading `VAR=value` assignments and those passed through `env`/`sudo`. */
   env: Record<string, string>;
@@ -24,6 +25,8 @@ export interface Stage {
   writes: string[];
   /** Files read through `<`. */
   reads: string[];
+  /** Text fed to stdin through a `<<<` here-string. */
+  hereStrings: string[];
   /** True when the stage carries code the parser cannot see (encoded or interpreter one-liners). */
   opaque: boolean;
   raw: string;
@@ -56,7 +59,7 @@ const INTERPRETERS_WITH_INLINE_CODE: Record<string, string[]> = {
 
 const WRAPPERS = new Set([
   "sudo", "doas", "command", "exec", "nohup", "time", "nice", "ionice", "timeout",
-  "env", "xargs", "builtin", "stdbuf", "chronic", "caffeinate", "unbuffer", "setsid",
+  "env", "xargs", "builtin", "stdbuf", "chronic", "caffeinate", "unbuffer", "setsid", "corepack",
 ]);
 /** Options that consume the following token, per wrapper. */
 const WRAPPER_OPTS_WITH_ARG: Record<string, Set<string>> = {
@@ -77,6 +80,7 @@ const WRAPPER_OPTS_WITH_ARG: Record<string, Set<string>> = {
   chronic: new Set(),
   unbuffer: new Set(),
   setsid: new Set(),
+  corepack: new Set(),
 };
 /** Wrappers whose first positional argument is not the command. */
 const WRAPPER_POSITIONAL_SKIP: Record<string, number> = { timeout: 1 };
@@ -157,8 +161,13 @@ function splitTop(s: string, dialect: ShellDialect): Split {
   // `outerDouble` remembers whether the enclosing text was double-quoted, because
   // quoting starts afresh inside `$( )` and resumes when it closes.
   const subs: { start: number; outerDouble: boolean }[] = [];
-  let parenDepth = 0;
+  // Open `( )` groups, and `{ }` script blocks in PowerShell, with where their text starts and
+  // whether it runs as a command where it stands: every group in PowerShell and cmd
+  // (`$null = (ah x)`, `if ($c) { ah x }`, `1 | % { ah x }`), and in sh a subshell or process
+  // substitution (`(rm -rf x) 2>/dev/null`, `diff <(ah x) y`), not an array (`a=(x y)`).
+  const groups: { start: number; runs: boolean }[] = [];
   let braceDepth = 0;
+  let braceStart = 0;
 
   const endStage = () => {
     stages.push(cur);
@@ -249,28 +258,31 @@ function splitTop(s: string, dialect: ShellDialect): Split {
       cur += c;
       continue;
     }
-    if (c === "(") {
+    if (c === "(" || (c === "{" && dialect === "powershell")) {
       // Process substitution `<(` / `>(` and subshells both nest.
-      parenDepth++;
+      groups.push({ start: i + 1, runs: dialect !== "posix" || prev === "" || /[\s<>;&|(]/.test(prev) });
       cur += c;
       continue;
     }
-    if (c === ")" && parenDepth > 0) {
-      parenDepth--;
+    if ((c === ")" || (c === "}" && dialect === "powershell")) && groups.length > 0) {
+      const group = groups.pop() as { start: number; runs: boolean };
+      // Only the outermost group that runs is recorded; parsing it finds the inner ones once.
+      if (group.runs && !groups.some((g) => g.runs)) substitutions.push(s.slice(group.start, i));
       cur += c;
       continue;
     }
-    if (parenDepth > 0) {
+    if (groups.length > 0) {
       cur += c;
       continue;
     }
     if (c === "{" && (cur.trim() === "" ) && (next === " " || next === "\t" || next === "\n")) {
-      braceDepth++;
+      if (braceDepth++ === 0) braceStart = i + 1;
       cur += c;
       continue;
     }
     if (c === "}" && braceDepth > 0 && /(^|[\s;])$/.test(cur)) {
-      braceDepth--;
+      // `{ rm -rf x; } > log`: a redirected group is not unwrapped whole, so its commands are recorded here.
+      if (--braceDepth === 0) substitutions.push(s.slice(braceStart, i));
       cur += c;
       continue;
     }
@@ -391,7 +403,11 @@ function tokenize(stage: string, dialect: ShellDialect): Token[] {
       if (has && /^\d+$/.test(cur)) { op = cur; cur = ""; has = false; }
       else flush();
       op += c;
-      if (next === c) { op += c; i++; }
+      if (next === c) {
+        op += c;
+        i++;
+        if (c === "<" && stage[i + 1] === "<") { op += c; i++; }
+      }
       else if (c === ">" && (next === "&" || next === "|")) { op += next; i++; }
       tokens.push({ text: op, op });
       continue;
@@ -412,12 +428,35 @@ function tokenize(stage: string, dialect: ShellDialect): Token[] {
 }
 
 const ENV_ASSIGN = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s;
+/** `$null = `, `$out += `, `[string]$x=`: PowerShell keeps or drops a command's output, and the command still runs. */
+const PWSH_ASSIGNMENT = /^(?:\s*(?:\[[\w.]+\]\s*)*\$[\w:{}.[\]]+\s*(?:[-+*/%]|\?\?)?=(?!=)\s*)+/;
+/** Words that lead a command inside a compound command once the splitter has cut it at `;`: `then cmd`, `do cmd`, `! cmd`. */
+const COMPOUND_LEADS = new Set(["if", "then", "elif", "else", "while", "until", "do", "!", "{", "coproc"]);
+
+/**
+ * Drop what POSIX sh puts before a command inside a compound command: reserved words, `case x in`,
+ * a case pattern (`x)`, `(x|y)`) and a function header (`f()`, `f ()`, `function f`), so that
+ * `if true; then ah init --remove; fi` is seen as `ah init --remove`.
+ */
+function stripCompoundLeads(argv: string[]): void {
+  for (let guard = 0; argv.length > 0 && guard < 8; guard++) {
+    const a = argv[0];
+    if (COMPOUND_LEADS.has(a)) argv.shift();
+    else if (a === "case" && argv[2] === "in") argv.splice(0, 3);
+    else if (a === "function" && argv.length > 1) argv.splice(0, argv[2] === "()" ? 3 : 2);
+    else if (argv[1] === "()") argv.splice(0, 2);
+    else if (/^\(?[^()]*\)$/.test(a) && a !== ")") argv.shift();
+    else if (/^[^()]+\(\)$/.test(a)) argv.shift();
+    else return;
+  }
+}
 
 function buildStage(text: string, dialect: ShellDialect): Stage {
-  const tokens = tokenize(text, dialect);
+  const tokens = tokenize(dialect === "powershell" ? text.replace(PWSH_ASSIGNMENT, "") : text, dialect);
   const argv: string[] = [];
   const writes: string[] = [];
   const reads: string[] = [];
+  const hereStrings: string[] = [];
   const env: Record<string, string> = {};
 
   for (let i = 0; i < tokens.length; i++) {
@@ -434,11 +473,14 @@ function buildStage(text: string, dialect: ShellDialect): Stage {
           writes.push(target.text);
         }
         if (isInput) reads.push(target.text);
+        if (t.op === "<<<") hereStrings.push(target.text);
       }
       continue;
     }
     argv.push(t.text);
   }
+
+  if (dialect === "posix") stripCompoundLeads(argv);
 
   // Leading VAR=value assignments.
   while (argv.length > 0) {
@@ -482,6 +524,8 @@ function buildStage(text: string, dialect: ShellDialect): Stage {
       if (skipPositional > 0) { skipPositional--; argv.shift(); continue; }
       break;
     }
+    // `corepack pnpm@9.1.0 ah`: corepack runs the package manager it names, at that version.
+    if (name === "corepack" && argv.length > 0) argv[0] = argv[0].replace(/^(npm|pnpm|yarn)@.*$/i, "$1");
   }
 
   // Package runners: `npx wrangler deploy` is a wrangler command.
@@ -494,22 +538,29 @@ function buildStage(text: string, dialect: ShellDialect): Stage {
   }
 
   const opaque = isOpaque(cmd, argv);
-  return makeStage(argv, env, wrappers, writes, opaque, text, reads);
+  return makeStage(argv, env, wrappers, writes, opaque, text, reads, hereStrings);
 }
 
-/** The string of `env -S STR`, `-SSTR`, `--split-string STR` or `--split-string=STR` at argv[0], shifted off argv; null for any other word. */
+/**
+ * The string of `env -S STR`, `-SSTR`, `--split-string STR` or `--split-string=STR` at argv[0],
+ * shifted off argv, with env's switches clustered before the S (`-iS STR`); null for any other word.
+ */
 function splitStringOf(argv: string[]): string | null {
   const a = argv[0];
+  const short = /^-[iv0]*S(.*)$/s.exec(a);
   let value: string | undefined;
-  if (a === "-S" || a === "--split-string") value = argv[1] ?? "";
-  else if (a.startsWith("--split-string=")) value = a.slice("--split-string=".length);
-  else if (a.startsWith("-S")) value = a.slice(2);
+  let separate = false;
+  if (a === "--split-string" || (short !== null && short[1] === "")) {
+    value = argv[1] ?? "";
+    separate = true;
+  } else if (a.startsWith("--split-string=")) value = a.slice("--split-string=".length);
+  else if (short !== null) value = short[1];
   if (value === undefined) return null;
-  argv.splice(0, a === "-S" || a === "--split-string" ? 2 : 1);
+  argv.splice(0, separate ? 2 : 1);
   return value;
 }
 
-function makeStage(argv: string[], env: Record<string, string>, wrappers: string[], writes: string[], opaque: boolean, raw: string, reads: string[] = []): Stage {
+function makeStage(argv: string[], env: Record<string, string>, wrappers: string[], writes: string[], opaque: boolean, raw: string, reads: string[] = [], hereStrings: string[] = []): Stage {
   return {
     argv,
     cmd: argv.length > 0 ? normalizeCmd(argv[0]) : (wrappers[wrappers.length - 1] ?? ""),
@@ -517,13 +568,14 @@ function makeStage(argv: string[], env: Record<string, string>, wrappers: string
     wrappers,
     writes,
     reads,
+    hereStrings,
     opaque,
     raw,
   };
 }
 
-/** Runner options that consume the next word. `-c`/`--call` carry a command line and are read, not skipped. */
-const RUNNER_OPTS_WITH_ARG = new Set(["-p", "--package", "--shell", "--from", "--with", "--python", "-w"]);
+/** Runner options that consume the next word. `-c`/`--call`/`--shell-mode` carry a command line and are read, not skipped. */
+const RUNNER_OPTS_WITH_ARG = new Set(["-p", "--package", "--shell", "--from", "--with", "--python", "-w", "--workspace", "--prefix", "-C", "--dir", "-F", "--filter", "--cwd"]);
 const TWO_WORD_RUNNERS: Record<string, Set<string>> = {
   npm: new Set(["exec", "x"]),
   pnpm: new Set(["dlx", "exec"]),
@@ -567,8 +619,8 @@ function unwrapRunner(argv: string[], wrappers: string[]): void {
     argv.splice(0, consumed);
     while (argv.length > 0 && argv[0].startsWith("-")) {
       const opt = argv.shift() as string;
-      if (opt === "-c" || opt === "--call" || opt.startsWith("--call=")) {
-        // `npx -c 'cmd'`, `npm exec --call 'cmd'`, `pnpm exec -c cmd`: the rest runs as a shell
+      if (opt === "-c" || opt === "--call" || opt.startsWith("--call=") || opt === "--shell-mode") {
+        // `npx -c 'cmd'`, `npm exec --call 'cmd'`, `pnpm exec -c cmd` (`--shell-mode`): the rest runs as a shell
         // command line, so the stage becomes that shell's `-c` and the parser reads the command inside.
         const line = opt.startsWith("--call=") ? [opt.slice("--call=".length), ...argv] : [...argv];
         argv.splice(0, argv.length, "sh", "-c", line.join(" "));
@@ -587,14 +639,14 @@ function unwrapRunner(argv: string[], wrappers: string[]): void {
 }
 
 /**
- * Basename, lowercase, no leading backslash, no Windows executable suffix. `.ps1`
- * counts as one: npm installs `ah.ps1` beside `ah.cmd`, and PowerShell runs either by name.
+ * Basename, lowercase, no leading backslash, no Windows executable suffix. `.ps1` is
+ * kept: a project's `scripts/shutdown.ps1` is its own script, not the system command.
  */
 export function normalizeCmd(token: string): string {
   let s = token.startsWith("\\") ? token.slice(1) : token;
   s = s.replace(/\\/g, "/");
   s = s.slice(s.lastIndexOf("/") + 1).toLowerCase();
-  s = s.replace(/\.(exe|cmd|bat|com|ps1)$/, "");
+  s = s.replace(/\.(exe|cmd|bat|com)$/, "");
   return s;
 }
 
@@ -603,9 +655,21 @@ function isOpaque(cmd: string, argv: string[]): boolean {
     return argv.some((a) => /^-(e|ec|enc|encodedcommand)$/i.test(a));
   }
   const flags = INTERPRETERS_WITH_INLINE_CODE[cmd];
-  if (flags) return argv.slice(1).some((a) => flags.includes(a));
+  if (flags) return argv.slice(1).some((a) => givesCode(a, flags));
   if (cmd === "base64" || cmd === "xxd") return false;
   return false;
+}
+
+/**
+ * True when `a` hands the interpreter inline code: a code flag itself (`-e`, `--eval`), joined to
+ * its code (`--eval=code`, `-cprint(1)`), or last in a cluster of short options (`-pe`, `-Ic`, `-le`).
+ */
+function givesCode(a: string, flags: readonly string[]): boolean {
+  return flags.some((f) =>
+    a === f ||
+    (f.startsWith("--") && a.startsWith(`${f}=`)) ||
+    (/^-[A-Za-z]$/.test(f) && (a.startsWith(f) || (/^-[A-Za-z]+$/.test(a) && a.endsWith(f[1])))),
+  );
 }
 
 interface Inline {
@@ -641,9 +705,63 @@ function startProcessCommand(argv: readonly string[]): string | null {
   list ??= positional.shift();
   if (file === undefined || file === "") return null;
   // The program is one word even with spaces in it; the arguments are a command line. An argument
-  // array arrives as one comma-joined word: `'init','--remove'` is `init,--remove`.
-  const program = /\s/.test(file) ? `'${file.replace(/'/g, "''")}'` : file;
-  return [program, ...(list ?? "").split(","), ...positional].filter((w) => w !== "").join(" ");
+  // array arrives as one comma-joined word: `'init','--remove'` is `init,--remove`, and
+  // `@('init','--remove')` or `('init','--remove')` is the same list in parentheses.
+  const args = (list ?? "").replace(/^@?\((.*)\)$/s, "$1");
+  return [programWord(file), ...args.split(","), ...positional].filter((w) => w !== "").join(" ");
+}
+
+/** A program path as one PowerShell word: quoted when it has spaces in it. */
+function programWord(file: string): string {
+  return /\s/.test(file) ? `'${file.replace(/'/g, "''")}'` : file;
+}
+
+/** cmd `start` options that take the next word. */
+const CMD_START_VALUED = new Set(["/d", "/node", "/affinity", "/machine"]);
+
+/** The command `start` runs in cmd: after a double-quoted window title and start's own `/` options. */
+function cmdStartCommand(stage: Stage): string[] {
+  const words = stage.argv.slice(1);
+  if (/^\s*start\s+"/i.test(stage.raw)) words.shift();
+  while (words.length > 0 && words[0].startsWith("/")) {
+    if (CMD_START_VALUED.has((words.shift() as string).toLowerCase())) words.shift();
+  }
+  return words;
+}
+
+/** PowerShell host options that take a value, as [name, shortest prefix the host accepts]: `-ex` is -ExecutionPolicy, `-wd` -WorkingDirectory. */
+const PWSH_VALUED: readonly (readonly [string, number])[] = [
+  ["executionpolicy", 2], ["ep", 2], ["windowstyle", 1], ["workingdirectory", 2], ["wd", 2], ["outputformat", 1], ["of", 2],
+  ["inputformat", 3], ["if", 2], ["version", 1], ["settingsfile", 8], ["configurationname", 6], ["configurationfile", 17],
+  ["custompipename", 3], ["encodedarguments", 8], ["ea", 2], ["psconsolefile", 3],
+];
+
+/** What a `pwsh`/`powershell` command line runs: a command string, or a script and its arguments. */
+export type PwshRun = { command: string } | { script: string; args: string[] };
+
+/**
+ * Read `pwsh`/`powershell` options the way the host does: any prefix it accepts (`-Comm`, `-Fi`),
+ * the colon form (`-File:x`), and the values of valued options (`-ExecutionPolicy Bypass`). The
+ * first word that is not an option is the script for pwsh 7 and the start of the command for
+ * Windows PowerShell; either way it runs with the words after it. Null for an encoded command or none.
+ */
+export function pwshRun(argv: readonly string[]): PwshRun | null {
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a.startsWith("-")) return { script: a, args: argv.slice(i + 1) };
+    const m = /^-([a-z?]+)(?::(.*))?$/is.exec(a);
+    if (m === null) continue;
+    const key = m[1].toLowerCase();
+    const rest = argv.slice(i + 1);
+    if ("commandwithargs".startsWith(key) || key === "cwa") return { command: (m[2] === undefined ? rest : [m[2], ...rest]).join(" ") };
+    if ("file".startsWith(key)) {
+      const script = m[2] ?? argv[i + 1];
+      return script === undefined ? null : { script, args: m[2] === undefined ? rest.slice(1) : rest };
+    }
+    if ("encodedcommand".startsWith(key) || key === "ec") return null;
+    if (m[2] === undefined && PWSH_VALUED.some(([name, min]) => key.length >= min && name.startsWith(key))) i++;
+  }
+  return null;
 }
 
 /** The command string carried by `sh -c`, `pwsh -Command`, `cmd /c`, `eval`, `iex`, `Start-Process`, `su -c`. */
@@ -672,14 +790,10 @@ function inlineCommandOf(stage: Stage, dialect: ShellDialect): Inline | null {
     return null;
   }
   if (PWSH.has(cmd)) {
-    for (let i = 1; i < argv.length; i++) {
-      if (/^-(c|command)$/i.test(argv[i])) return { command: argv.slice(i + 1).join(" "), dialect: "powershell" };
-    }
-    const positional = argv.slice(1).filter((a) => !a.startsWith("-"));
-    if (positional.length > 0 && !argv.some((a) => /^-(f|file)$/i.test(a))) {
-      return { command: positional.join(" "), dialect: "powershell" };
-    }
-    return null;
+    // `pwsh -Command 'cmd'`, and a script with its arguments (`pwsh -File x.ps1 a`, `pwsh x.ps1 a`) as the command line it amounts to.
+    const run = pwshRun(argv);
+    if (run === null) return null;
+    return { command: "command" in run ? run.command : [programWord(run.script), ...run.args].join(" "), dialect: "powershell" };
   }
   if (cmd === "cmd") {
     for (let i = 1; i < argv.length; i++) {
@@ -687,10 +801,18 @@ function inlineCommandOf(stage: Stage, dialect: ShellDialect): Inline | null {
     }
     return null;
   }
+  // cmd's `call cmd` and `start ["title"] [/b /wait ...] cmd`: the command after them runs.
+  if (dialect === "cmd" && (cmd === "call" || cmd === "start")) {
+    const run = cmd === "call" ? argv.slice(1) : cmdStartCommand(stage);
+    return run.length === 0 ? null : { command: run.join(" "), dialect: "cmd" };
+  }
   if (cmd === "eval") return { command: argv.slice(1).join(" "), dialect };
-  // PowerShell's eval: `iex 'cmd'`, `Invoke-Expression -Command 'cmd'`.
+  // PowerShell's eval: `iex 'cmd'`, `Invoke-Expression -Command 'cmd'`, `-Comm 'cmd'`, `-Command:'cmd'`.
   if (cmd === "iex" || cmd === "invoke-expression") {
-    const code = argv.slice(1).filter((a) => !/^-c(ommand)?$/i.test(a)).join(" ");
+    const code = argv.slice(1).map((a) => {
+      const m = /^-([a-z]+)(?::(.*))?$/is.exec(a);
+      return m !== null && "command".startsWith(m[1].toLowerCase()) ? (m[2] ?? "") : a;
+    }).filter((w) => w !== "").join(" ");
     return code === "" ? null : { command: code, dialect: "powershell" };
   }
   if (START_PROCESS.has(cmd) || (cmd === "start" && dialect === "powershell")) {

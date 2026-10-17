@@ -1,0 +1,13 @@
+{
+  "name": "a project script named shutdown.ps1 is allowed (Claude Code, Windows PowerShell)",
+  "agent": "claude",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": ".\\scripts\\shutdown.ps1"
+    }
+  },
+  "near": "shell.system-power",
+  "source": "BUG-2026-019"
+}

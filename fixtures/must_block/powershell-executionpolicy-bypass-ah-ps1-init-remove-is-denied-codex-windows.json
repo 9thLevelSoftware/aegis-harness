@@ -1,0 +1,13 @@
+{
+  "name": "powershell -ExecutionPolicy Bypass ah.ps1 init --remove is denied (Codex, Windows)",
+  "agent": "codex",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "powershell -ExecutionPolicy Bypass .\\node_modules\\.bin\\ah.ps1 init --remove"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

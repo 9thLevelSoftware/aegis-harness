@@ -2,7 +2,7 @@ import { classifyPath, isBlockDevice, type PathInfo } from "../classify.ts";
 import { ALLOW, ask, deny, strictest, type Context, type Decision, type ShellCall } from "../model.ts";
 import { globToRegExp, hasVariable, isTempPath, normalize } from "../paths.ts";
 import { findSecrets, redact } from "../secrets.ts";
-import { allStages, flagsOf, normalizeCmd, parseShell, subcommandIndex, type Pipeline, type Stage } from "../shell.ts";
+import { allStages, flagsOf, normalizeCmd, parseShell, pwshRun, subcommandIndex, type Pipeline, type ShellDialect, type Stage } from "../shell.ts";
 import { AH_INIT_VALUED_OPTIONS } from "../../wiring/init-options.ts";
 
 const FORK_BOMB = /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/;
@@ -60,6 +60,7 @@ export function shellRules(call: ShellCall, ctx: Context): Decision {
   }
 
   const pipelines = parseShell(raw, { dialect: ctx.shellDialect ?? "posix" });
+  pipelines.push(...pipedCommands(pipelines));
   for (const p of pipelines) decisions.push(...pipelineRules(p, ctx));
   for (const s of allStages(pipelines)) decisions.push(...stageRules(s, ctx));
   return strictest(decisions);
@@ -90,6 +91,51 @@ function pipelineRules(p: Pipeline, ctx: Context): Decision[] {
     }
   }
   return out;
+}
+
+/** Shells that run the command lines arriving on stdin, and the dialect they read them in. */
+const STDIN_SHELLS: Record<string, ShellDialect> = {
+  sh: "posix", bash: "posix", zsh: "posix", dash: "posix", ksh: "posix", mksh: "posix", ash: "posix",
+  iex: "powershell", "invoke-expression": "powershell", pwsh: "powershell", powershell: "powershell",
+};
+
+/**
+ * `echo 'ah init --remove' | sh`, `'ah init --remove' | iex`, `bash <<< 'ah init --remove'`: literal
+ * text fed to a shell that runs its stdin is a command line, parsed in that shell's dialect so that
+ * every rule sees it.
+ */
+function pipedCommands(pipelines: readonly Pipeline[], depth = 0): Pipeline[] {
+  const out: Pipeline[] = [];
+  for (const p of pipelines) {
+    for (let j = 0; j < p.stages.length; j++) {
+      const sink = p.stages[j];
+      const dialect = STDIN_SHELLS[sink.cmd];
+      if (dialect === undefined || !readsStdinAsCode(sink)) continue;
+      const text = sink.hereStrings.length > 0 ? sink.hereStrings.join("\n") : j > 0 ? literalOutput(p.stages[j - 1]) : null;
+      if (text === null) continue;
+      const inner = parseShell(text, { dialect });
+      out.push(...inner);
+      if (depth < 2) out.push(...pipedCommands(inner, depth + 1));
+    }
+  }
+  return out;
+}
+
+const ECHOES = new Set(["echo", "write-output", "write", "printf"]);
+
+/** The text a stage prints when all it prints is literal: `echo`, `printf` and `Write-Output` arguments, or a bare quoted string (PowerShell prints it). */
+function literalOutput(s: Stage): string | null {
+  const args = s.argv.slice(1);
+  if (s.cmd === "printf") {
+    const [format = "", ...values] = args;
+    let k = 0;
+    return format.replace(/%[sb]/g, () => values[k++] ?? "").replace(/\\n/g, "\n");
+  }
+  if (ECHOES.has(s.cmd)) {
+    while (/^-(?:[neE]+|NoEnumerate|InputObject)$/i.test(args[0] ?? "")) args.shift();
+    return args.join(" ").replace(/\\n/g, "\n");
+  }
+  return s.argv.length === 1 && /^\s*['"]/.test(s.raw) ? s.argv[0] : null;
 }
 
 /** The command as the reason text names it. A peeled wrapper such as `env` leaves argv empty, so fall back to the command name. */
@@ -1163,8 +1209,9 @@ function interpreterRules(s: Stage): Decision[] {
  * unwire or weaken the guard, so an agent that was refused could reach for them.
  * Plain `ah init` (re-wiring) and `ah doctor` pass. Spelled as `ah`, `npx
  * @9thlevel/aegis`, `node .../dist/ah.mjs`, `./dist/ah.mjs`, `ah.ps1`,
- * `pwsh -File ah.ps1`, `pnpm ah` or `yarn run ah`; the parser unwraps runners,
- * `env -S`, `npx -c`, `iex` and `Start-Process` before this sees the stage.
+ * `pwsh [-File] ah.ps1`, `pnpm ah` or `yarn run ah`; the parser unwraps runners,
+ * `env -S`, `npx -c`, `iex`, `Start-Process`, compound commands and PowerShell
+ * blocks, and shellRules parses text piped into a shell, before this sees the stage.
  */
 function ahCliRules(s: Stage): Decision[] {
   const args = ahArgs(s);
@@ -1194,8 +1241,10 @@ function ahInitTamper(options: readonly string[]): string | null {
   return null;
 }
 
-/** The ah CLI by its bin name, or by the bundle file run through its shebang or an interpreter. `ah.cmd` and `ah.ps1` arrive normalized to `ah`. */
-const AH_COMMAND = /^(?:ah|aegis)(?:\.m?js)?$/;
+/** The ah CLI by its bin name, its `ah.ps1` shim, or the bundle file run through its shebang or an interpreter. `ah.cmd` arrives normalized to `ah`. */
+const AH_COMMAND = /^(?:ah|aegis)(?:\.m?js|\.ps1)?$/;
+/** Runtime options before the script that take the next word: `bun --cwd dir`, `deno run --config file`. */
+const RUNTIME_OPTS_WITH_ARG: Record<string, Set<string>> = { bun: new Set(["--cwd"]), deno: new Set(["-c", "--config", "--import-map"]) };
 
 /** The arguments after `ah` when the stage runs the ah CLI, else null. */
 function ahArgs(s: Stage): string[] | null {
@@ -1204,19 +1253,19 @@ function ahArgs(s: Stage): string[] | null {
     for (let i = 1; i < s.argv.length; i++) {
       const a = s.argv[i];
       if (a === "run" && (s.cmd === "deno" || s.cmd === "bun")) continue;
-      if (INTERPRETER_VALUED_FLAGS.has(a)) {
+      if (INTERPRETER_VALUED_FLAGS.has(a) || RUNTIME_OPTS_WITH_ARG[s.cmd]?.has(a)) {
         i++;
         continue;
       }
       if (a.startsWith("-")) continue;
-      // `node dist/ah.mjs`, `node node_modules/.bin/ah` (the bin symlink), `bun ah`.
-      return AH_COMMAND.test(normalizeCmd(a)) ? s.argv.slice(i + 1) : null;
+      // `node dist/ah.mjs`, `node node_modules/.bin/ah` (the bin symlink), `bun ah`, `deno run npm:@9thlevel/aegis@0.0.1`.
+      return AH_COMMAND.test(normalizeCmd(a.replace(/^(npm:.+)@[^@/]*$/, "$1"))) ? s.argv.slice(i + 1) : null;
     }
   }
   if (s.cmd === "pwsh" || s.cmd === "powershell") {
-    // `pwsh -File node_modules/.bin/ah.ps1 init --remove`: the script's own arguments follow it.
-    const i = s.argv.findIndex((a) => /^-(f|file)$/i.test(a));
-    return i > 0 && AH_COMMAND.test(normalizeCmd(s.argv[i + 1] ?? "")) ? s.argv.slice(i + 2) : null;
+    // `pwsh -File node_modules/.bin/ah.ps1 init --remove`, `pwsh -NoProfile ./ah.ps1 init --remove`: the script's own arguments follow it.
+    const run = pwshRun(s.argv);
+    return run !== null && "script" in run && AH_COMMAND.test(normalizeCmd(run.script)) ? run.args : null;
   }
   if (s.cmd === "pnpm" || s.cmd === "yarn") {
     // `pnpm ah`, `yarn ah`, `yarn run ah`: the package manager runs a local bin by name.
@@ -1227,13 +1276,17 @@ function ahArgs(s: Stage): string[] | null {
   return null;
 }
 
-/** An `ah init` command line inside code, as one string or an argv list: `'ah init --remove'`, `['ah', 'init', '--remove']`. Runs to the end of the call or statement. */
-const AH_INIT_IN_CODE = /(?<![\w.-])(?:ah|aegis)(?:\.m?js)?['"]?(?:\s*,\s*['"]?|\s+)init\b([^;)\n]*)/g;
+/**
+ * An `ah init` command line inside code, as one string or an argv list: `'ah init --remove'`,
+ * `` `ah init --remove` ``, `['ah', 'init', '--remove']`, `spawnSync('ah', ['init', '--remove'])`.
+ * Runs to the end of the call or statement.
+ */
+const AH_INIT_IN_CODE = /(?<![\w.-])(?:ah|aegis)(?:\.m?js)?['"`]?(?:\s*,\s*\[?\s*['"`]?|\s+)init\b([^;)\n]*)/g;
 
 /** What an `ah init` spelled in inline code does to the guard, or null when the code runs none that weakens it. */
 function ahInitTamperInCode(code: string): string | null {
   for (const m of code.matchAll(AH_INIT_IN_CODE)) {
-    const what = ahInitTamper(m[1].split(/[\s'",\][]+/).filter((w) => w !== ""));
+    const what = ahInitTamper(m[1].split(/[\s'"`,\][]+/).filter((w) => w !== ""));
     if (what !== null) return what;
   }
   return null;
