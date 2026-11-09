@@ -1,0 +1,11 @@
+{
+  "name": "busybox rm -rf ~ is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "busybox rm -rf ~"
+    }
+  },
+  "rule": "shell.rm-recursive-home",
+  "source": "BUG-2026-021"
+}

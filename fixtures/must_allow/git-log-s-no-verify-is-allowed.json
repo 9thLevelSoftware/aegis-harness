@@ -1,0 +1,11 @@
+{
+  "name": "git log -S --no-verify is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git log -S --no-verify --oneline"
+    }
+  },
+  "near": "shell.hook-bypass",
+  "source": "BUG-2026-020"
+}

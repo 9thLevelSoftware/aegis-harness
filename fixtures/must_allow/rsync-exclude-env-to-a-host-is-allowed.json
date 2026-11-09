@@ -1,0 +1,11 @@
+{
+  "name": "rsync --exclude .env to a host is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rsync -az --exclude .env ./ deploy@example.com:/srv/app"
+    }
+  },
+  "near": "shell.credential-exfil",
+  "source": "BUG-2026-020"
+}

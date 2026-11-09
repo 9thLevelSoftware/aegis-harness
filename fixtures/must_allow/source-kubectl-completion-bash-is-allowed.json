@@ -1,0 +1,11 @@
+{
+  "name": "source <(kubectl completion bash) is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "source <(kubectl completion bash)"
+    }
+  },
+  "near": "shell.pipe-to-shell",
+  "source": "BUG-2026-020"
+}

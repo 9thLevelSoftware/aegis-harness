@@ -1,0 +1,13 @@
+{
+  "name": "rm -rf of a macOS temp directory is allowed",
+  "cwd": "/Users/dev/project",
+  "home": "/Users/dev",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf /var/folders/7x/k2j3h4g5f6d7s8a9q0w1e2r3t4y5u6i7/T/tmp.Xq3kLm9a"
+    }
+  },
+  "near": "shell.rm-outside-project",
+  "source": "BUG-2026-020"
+}

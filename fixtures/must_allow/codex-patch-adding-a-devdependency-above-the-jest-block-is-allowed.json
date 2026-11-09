@@ -1,0 +1,12 @@
+{
+  "name": "Codex patch adding a devDependency above the jest block is allowed",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "apply_patch",
+    "tool_input": {
+      "command": "*** Begin Patch\n*** Update File: package.json\n@@\n     \"typescript\": \"^5.6.0\",\n+    \"ts-jest\": \"^29.2.0\",\n   },\n   \"jest\": {\n     \"preset\": \"ts-jest\"\n*** End Patch"
+    }
+  },
+  "near": "edit.manifest-lint-section",
+  "source": "BUG-2026-020"
+}

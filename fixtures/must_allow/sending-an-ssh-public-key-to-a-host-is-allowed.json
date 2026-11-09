@@ -1,0 +1,11 @@
+{
+  "name": "sending an ssh public key to a host is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.ssh/id_ed25519.pub | ssh deploy@example.com \"cat >> ~/.ssh/authorized_keys\""
+    }
+  },
+  "near": "shell.credential-exfil",
+  "source": "BUG-2026-020"
+}

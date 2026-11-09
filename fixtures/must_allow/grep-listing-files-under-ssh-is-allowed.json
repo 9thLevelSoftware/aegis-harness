@@ -1,0 +1,13 @@
+{
+  "name": "Grep listing files under ~/.ssh is allowed",
+  "payload": {
+    "tool_name": "Grep",
+    "tool_input": {
+      "pattern": "BEGIN",
+      "path": "/home/dev/.ssh",
+      "output_mode": "files_with_matches"
+    }
+  },
+  "near": "tool.read-private-key",
+  "source": "BUG-2026-020"
+}

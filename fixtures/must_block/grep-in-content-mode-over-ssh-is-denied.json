@@ -1,0 +1,13 @@
+{
+  "name": "Grep in content mode over ~/.ssh is denied",
+  "payload": {
+    "tool_name": "Grep",
+    "tool_input": {
+      "pattern": "BEGIN",
+      "path": "/home/dev/.ssh",
+      "output_mode": "content"
+    }
+  },
+  "rule": "tool.read-private-key",
+  "source": "BUG-2026-020"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "aws s3 sync from a bucket to a local folder is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "aws s3 sync s3://prod-backups/2026-10-01 ./restore"
+    }
+  },
+  "near": "shell.deploy-or-publish",
+  "source": "BUG-2026-020"
+}

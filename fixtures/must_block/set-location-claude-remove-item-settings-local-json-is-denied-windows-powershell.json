@@ -1,0 +1,12 @@
+{
+  "name": "Set-Location .claude; Remove-Item settings.local.json is denied (Windows PowerShell)",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Set-Location .claude; Remove-Item settings.local.json"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-020"
+}

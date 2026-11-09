@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { atLeast, CLAUDE_MATCHER, CLAUDE_REQUIRED_TOOLS, claudeGroup, claudeMatcherCovers, parseVersion } from "../src/wiring/claude.ts";
 import type { Machine } from "../src/wiring/project.ts";
 
-const m: Machine = { root: "/home/dev/project", home: "/home/dev", os: "linux", env: {}, nodePath: "/usr/bin/node", guardPath: "/home/dev/.npm-global/lib/node_modules/@9thlevel/aegis/dist/guard.mjs" };
+const m: Machine = { root: "/home/dev/project", home: "/home/dev", os: "linux", env: {}, nodePath: "/usr/bin/node", guardPath: "/home/dev/.npm-global/lib/node_modules/@9thlevelsoftware/aegis/dist/guard.mjs" };
 
 test("the canonical entry is exec form with a timeout and nothing Claude Code would reject", () => {
   const g = claudeGroup(m, {}, []);

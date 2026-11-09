@@ -68,3 +68,17 @@ positives: the everyday commands of each toolchain the guard claims to support (
 pip, git, docker, the cloud CLIs, PowerShell). One re-reads the hook contract: the agents' hook
 documents against `normalize.ts`, `respond.ts` and the README wiring. Every finding becomes a fixture
 before it becomes code. BUG-2026-016, 017 and 018 record the first round.
+
+## Releasing
+
+1. In a PR: bump the version (`npm version X.Y.Z --no-git-tag-version`) and add its section to
+   `CHANGELOG.md`.
+2. After it merges, tag the merge commit `vX.Y.Z` and push the tag. `.github/workflows/publish.yml`
+   checks that the tag matches `package.json`, runs `npm run verify`, and publishes through npm
+   trusted publishing: no token, with provenance. A version already on npm is skipped.
+
+npm lets a package trust a workflow only once the package exists, so 0.1.0 was published by hand
+with `npm publish --access public` from a clean clone of `main`. The trusted publisher (npmjs.com,
+the package's Settings, Trusted Publisher: GitHub Actions, `9thLevelSoftware`, `aegis-harness`,
+`publish.yml`) has to complete a publish within two days of being added or it expires, so add it
+when the next tag is ready, not before.

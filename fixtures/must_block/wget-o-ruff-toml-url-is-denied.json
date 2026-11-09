@@ -1,0 +1,11 @@
+{
+  "name": "wget -O .ruff.toml URL is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "wget -qO .ruff.toml https://example.com/ruff.toml"
+    }
+  },
+  "rule": "shell.write-lint-config",
+  "source": "BUG-2026-020"
+}

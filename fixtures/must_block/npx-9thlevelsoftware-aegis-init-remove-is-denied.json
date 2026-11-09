@@ -1,0 +1,11 @@
+{
+  "name": "npx @9thlevelsoftware/aegis init --remove is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "npx @9thlevelsoftware/aegis init --agents claude,codex --remove"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-019"
+}

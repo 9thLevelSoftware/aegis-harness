@@ -350,7 +350,7 @@ export function doctorClaude(m: Machine, probe: CliProbe, registry: PolicySource
       const sub = (s: string) => s.replace(/\$\{CLAUDE_PROJECT_DIR\}/g, m.root);
       if (o.scope === "project" || (o.scope === "local" && m.os === "win32")) add("info", `${where} is read only by sessions started in ${dirname(dirname(o.file))}; one started in a subfolder runs without this hook`, m.os === "win32" ? "`ah init --scope user` covers every folder" : "`ah init --scope local` covers the whole repository");
       if (node && !findCommand(m, sub(node)) && exec) add("fail", `${where}: ${node} ${/[\\/]/.test(node) ? "does not exist" : "is not on PATH"}, so the hook cannot start${e.onFailure === "block" ? " and every matched call is blocked" : " and every call goes through unchecked"}`, "re-run `ah init` with the node you use now");
-      if (guard && !exists(sub(guard))) add("fail", `${where}: ${guard} does not exist`, "reinstall @9thlevel/aegis, then re-run `ah init`");
+      if (guard && !exists(sub(guard))) add("fail", `${where}: ${guard} does not exist`, "reinstall @9thlevelsoftware/aegis, then re-run `ah init`");
       out.push(...versionCheck("claude", m, where, node, guard));
       if (e.onFailure === "block") {
         if (atLeast(version, CLAUDE_MIN.onFailure) === false) add("warn", `${where}: onFailure needs Claude Code ${CLAUDE_MIN.onFailure} or later; this version ignores it and fails open`);
@@ -519,7 +519,7 @@ export function doctorCodex(m: Machine, probe: CliProbe, featuresList: string | 
     else add("ok", `${where}: ah hook bound for shell commands and apply_patch`);
     const { node, guard } = namedPaths(words);
     if (node && !findCommand(m, node)) add("fail", `${where}: ${node} ${/[\\/]/.test(node) ? "does not exist" : "is not on PATH"}, so the hook cannot start and Codex lets every call through`, "re-run `ah init` with the node you use now");
-    if (guard && !exists(guard)) add("fail", `${where}: ${guard} does not exist`, "reinstall @9thlevel/aegis, then re-run `ah init`");
+    if (guard && !exists(guard)) add("fail", `${where}: ${guard} does not exist`, "reinstall @9thlevelsoftware/aegis, then re-run `ah init`");
     out.push(...versionCheck("codex", m, where, node, guard));
     const untrustedProject = o.scope === "project" && !projectTrusted;
     if (untrustedProject) {

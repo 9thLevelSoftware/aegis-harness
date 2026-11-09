@@ -38,8 +38,8 @@ test("splitWords reads a quote inside quotes the way the shell each form is writ
 
 test("the exec form, the shell form, the Windows form and `ah guard` are ah's", () => {
   const owned = [
-    { type: "command", command: "/usr/local/bin/node", args: ["/home/dev/.npm-global/lib/node_modules/@9thlevel/aegis/dist/guard.mjs", "--agent", "claude"], timeout: 5 },
-    { type: "command", command: "/usr/bin/node /home/dev/project/node_modules/@9thlevel/aegis/dist/guard.mjs --agent codex" },
+    { type: "command", command: "/usr/local/bin/node", args: ["/home/dev/.npm-global/lib/node_modules/@9thlevelsoftware/aegis/dist/guard.mjs", "--agent", "claude"], timeout: 5 },
+    { type: "command", command: "/usr/bin/node /home/dev/project/node_modules/@9thlevelsoftware/aegis/dist/guard.mjs --agent codex" },
     { type: "command", command: "/usr/bin/node /home/dev/a/dist/guard.mjs --agent codex", commandWindows: `"C:\\Program Files\\nodejs\\node.exe" C:\\Users\\dev\\AppData\\Roaming\\npm\\node_modules\\@9thlevel\\aegis\\dist\\guard.mjs --agent codex` },
     { type: "command", command: "/usr/bin/node '/home/dev/My Tools/dist/guard.mjs' --agent codex --root /srv/app --no-log", commandWindows: "& 'C:\\Users\\dev\\my tools\\node.exe' 'C:\\Users\\dev\\My Tools\\dist\\guard.mjs' --agent codex" },
     { type: "command", command: "ah guard --agent claude" },
@@ -191,6 +191,9 @@ test("a guard.mjs that another package ships is not ah's", () => {
   writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "acme-guard" }));
   const entry = { type: "command", command: "node", args: [join(dir, "dist", "guard.mjs"), "--agent", "claude"] };
   assert.equal(isOwnedEntry(entry), false);
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "@9thlevelsoftware/aegis" }));
+  assert.ok(isOwnedEntry(entry));
+  // A checkout from before the first npm release, when the package was @9thlevel/aegis.
   writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "@9thlevel/aegis" }));
   assert.ok(isOwnedEntry(entry));
   rmSync(dir, { recursive: true, force: true });

@@ -108,6 +108,9 @@ export function guardArgs(words: readonly string[]): string[] | null {
   return null;
 }
 
+/** The package's names. It was `@9thlevel/aegis` before the first npm release, and a checkout from then still says so. */
+const OUR_PACKAGES: ReadonlySet<unknown> = new Set(["@9thlevelsoftware/aegis", "@9thlevel/aegis"]);
+
 /**
  * False only when the guard file belongs to some other package: dist/guard.mjs
  * is a common name. A guard that is gone (an old install) still counts, so
@@ -116,7 +119,7 @@ export function guardArgs(words: readonly string[]): string[] | null {
 function guardPackageIsOurs(guard: string): boolean {
   const pkg = guard.replace(GUARD_FILE, (m, sep: string) => `${sep}package.json`);
   try {
-    return (JSON.parse(readFileSync(pkg, "utf8")) as { name?: unknown }).name === "@9thlevel/aegis";
+    return OUR_PACKAGES.has((JSON.parse(readFileSync(pkg, "utf8")) as { name?: unknown }).name);
   } catch {
     return true;
   }

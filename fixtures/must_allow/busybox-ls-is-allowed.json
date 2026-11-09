@@ -1,0 +1,11 @@
+{
+  "name": "busybox ls is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "busybox ls -la"
+    }
+  },
+  "near": "shell.rm-recursive-home",
+  "source": "BUG-2026-021"
+}

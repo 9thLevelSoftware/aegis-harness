@@ -1,0 +1,11 @@
+{
+  "name": "perl -pi -e on eslint.config.js is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "perl -pi -e 's/error/off/g' eslint.config.js"
+    }
+  },
+  "rule": "shell.write-lint-config",
+  "source": "BUG-2026-020"
+}

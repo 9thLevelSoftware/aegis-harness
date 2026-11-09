@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf $pwd/dist in bash asks ($pwd is not $PWD there)",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf $pwd/dist"
+    }
+  },
+  "rule": "shell.rm-unresolved-variable",
+  "source": "BUG-2026-020"
+}

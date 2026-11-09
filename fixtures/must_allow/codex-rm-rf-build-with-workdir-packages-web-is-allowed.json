@@ -1,0 +1,13 @@
+{
+  "name": "Codex rm -rf build with workdir packages/web is allowed",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf build",
+      "workdir": "/home/dev/project/packages/web"
+    }
+  },
+  "near": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-020"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "mv /tmp/x/settings.local.json .claude/ is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mv /tmp/x/settings.local.json .claude/"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-020"
+}

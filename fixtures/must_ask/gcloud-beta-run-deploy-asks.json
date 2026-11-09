@@ -1,0 +1,11 @@
+{
+  "name": "gcloud beta run deploy asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gcloud beta run deploy api --source ."
+    }
+  },
+  "rule": "shell.deploy-or-publish",
+  "source": "BUG-2026-020"
+}

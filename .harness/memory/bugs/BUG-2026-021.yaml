@@ -1,0 +1,41 @@
+incident_id: BUG-2026-021
+date_recorded: 2026-11-09
+status: mitigated
+title: An audit of the 0.1.0 candidate found the agents' own sign-ins readable, xargs deletes unjudged and home caches undeletable
+observed_on: process (aegis-harness, a production-readiness audit of release/0.1.0 at 606918c)
+source:
+  - kind: session
+    date: 2026-11-09
+    note: >-
+      About 160 hand-written payloads were fed to dist/guard.mjs as JSON and never run. Every
+      finding below was reproduced against the built guard before it was fixed. The
+      credential paths are where each tool keeps its sign-in by default: Claude Code on Linux and
+      Windows, Codex, and the GitHub CLI (on Windows under %APPDATA%\GitHub CLI).
+root_cause: >-
+  The credential list named the stores of other tools (docker, kube, netrc, cloud CLIs) but not
+  the files of the two agents ah guards, nor the GitHub CLI, which those agents drive the most.
+  xargs was unwrapped like sudo, so `xargs rm -rf` reached the rm rule with no targets and
+  passed: its targets come from stdin. busybox was treated only as a shell launcher, so
+  `busybox rm -rf ~` was never read as rm. And any recursive delete under the home directory
+  outside the project was refused, package caches included.
+impact: >-
+  An agent could print or copy the OAuth tokens of Claude Code, Codex and gh with `cat`, `cp` or
+  Read, while `cat ~/.netrc` was refused. `echo ~ | xargs rm -rf` and `busybox rm -rf ~` passed.
+  `rm -rf ~/.cache/pip` and `rm -rf ~/.npm/_cacache`, routine cache clears, were denied.
+countermeasure:
+  kind: test
+  ref: fixtures/README.md
+  change: >-
+    ~/.claude/.credentials.json, ~/.codex/auth.json and gh's hosts.yml join the credential files,
+    for shell readers, Read and Grep alike. A recursive rm run by xargs asks
+    (shell.rm-unresolved-variable); xargs rm -f of files still passes. busybox followed by an
+    applet that is not a shell is peeled off like a wrapper. Known home caches (~/.cache,
+    ~/Library/Caches, ~/.npm/_cacache, _npx and _logs, ~/.pnpm-store, ~/.yarn/berry/cache,
+    ~/.gradle/caches, ~/.cargo/registry/cache and src, and their AppData\Local twins) count as
+    scratch space, and a `..` that climbs out of one does not. Eighteen fixtures.
+    Left open for 0.2.0, as the audit recommends: MCP shell and filesystem tools get only the
+    secret checks; `git branch -f main`, `git update-index --assume-unchanged` on a lint
+    config, an API key sent in a URL query, and `rm -rf` of a sibling worktree's node_modules.
+must_block_fixture: fixtures/must_block/cat-claude-credentials-json-is-denied.json
+must_allow_fixture: fixtures/must_allow/rm-rf-cache-pip-is-allowed.json
+expiry_policy: "re-run the probe pass before every minor release"

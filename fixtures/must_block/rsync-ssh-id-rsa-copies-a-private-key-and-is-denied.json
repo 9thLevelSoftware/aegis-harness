@@ -1,0 +1,11 @@
+{
+  "name": "rsync ~/.ssh/id_rsa . copies a private key and is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rsync -a ~/.ssh/id_rsa ."
+    }
+  },
+  "rule": "shell.credential-read",
+  "source": "BUG-2026-020"
+}

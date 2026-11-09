@@ -1,0 +1,11 @@
+{
+  "name": "(cd .git/hooks && rm pre-commit) in a subshell is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "(cd .git/hooks && rm pre-commit)"
+    }
+  },
+  "rule": "shell.rm-git-dir",
+  "source": "BUG-2026-020"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "Edit of CONTRIBUTING.md mentioning pylint disable=all is allowed",
+  "payload": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "/home/dev/project/CONTRIBUTING.md",
+      "old_string": "## Linting\n",
+      "new_string": "## Linting\n\nPRs adding `# pylint: disable=all` are rejected.\n"
+    }
+  },
+  "near": "edit.lint-suppression-blanket",
+  "source": "BUG-2026-020"
+}

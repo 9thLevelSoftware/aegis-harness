@@ -1,0 +1,12 @@
+{
+  "name": "Remove-Item * -Include .ruff.toml is denied (Windows PowerShell)",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Remove-Item * -Include .ruff.toml"
+    }
+  },
+  "rule": "shell.write-lint-config",
+  "source": "BUG-2026-020"
+}

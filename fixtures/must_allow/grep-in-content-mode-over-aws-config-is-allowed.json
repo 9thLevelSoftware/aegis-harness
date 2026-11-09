@@ -1,0 +1,13 @@
+{
+  "name": "Grep in content mode over ~/.aws/config is allowed",
+  "payload": {
+    "tool_name": "Grep",
+    "tool_input": {
+      "pattern": "region",
+      "path": "/home/dev/.aws/config",
+      "output_mode": "content"
+    }
+  },
+  "near": "tool.read-private-key",
+  "source": "BUG-2026-020"
+}

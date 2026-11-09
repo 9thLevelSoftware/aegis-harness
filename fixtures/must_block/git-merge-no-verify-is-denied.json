@@ -1,0 +1,11 @@
+{
+  "name": "git merge --no-verify is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git merge --no-verify feature"
+    }
+  },
+  "rule": "shell.hook-bypass",
+  "source": "BUG-2026-020"
+}

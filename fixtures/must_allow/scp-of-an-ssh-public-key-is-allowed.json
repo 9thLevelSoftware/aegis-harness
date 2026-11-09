@@ -1,0 +1,11 @@
+{
+  "name": "scp of an ssh public key is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "scp ~/.ssh/id_ed25519.pub deploy@example.com:/tmp/key.pub"
+    }
+  },
+  "near": "shell.credential-exfil",
+  "source": "BUG-2026-020"
+}

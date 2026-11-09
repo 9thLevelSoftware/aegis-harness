@@ -12,6 +12,7 @@ import type { Context, Decision, Platform } from "./model.ts";
 import { normalizeHookPayload, type Agent, type HookEvent } from "./normalize.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
 import { render, type AskFallback } from "./respond.ts";
+import { driveForm, isAbsolute, relativeTo, toPosix } from "./paths.ts";
 import { mainCheckoutOf } from "./worktree.ts";
 import { VERSION } from "../version.ts";
 
@@ -43,7 +44,13 @@ export function parseGuardArgs(argv: readonly string[]): GuardOptions {
 
 export function buildContext(event: HookEvent, o: GuardOptions, env: NodeJS.ProcessEnv = process.env): Context {
   const platform: Platform = o.platform ?? (env.AH_PLATFORM as Platform | undefined) ?? (process.platform === "win32" ? "windows" : "posix");
-  const projectRoot = o.root ?? env.AH_PROJECT_ROOT ?? env.CLAUDE_PROJECT_DIR ?? event.cwd ?? process.cwd();
+  // Claude Code keeps CLAUDE_PROJECT_DIR at the directory the session started in, while the payload's
+  // cwd follows Claude's `cd`. Relative paths resolve against the cwd. A cwd outside that directory
+  // means the user moved the session (`/cd`), and the project whose settings now apply is the new one.
+  const cwd = event.cwd !== undefined && isAbsolute(driveForm(toPosix(event.cwd), platform)) ? event.cwd : undefined;
+  const started = env.CLAUDE_PROJECT_DIR;
+  const moved = started !== undefined && cwd !== undefined && relativeTo(started, cwd, platform) === null;
+  const projectRoot = o.root ?? env.AH_PROJECT_ROOT ?? (moved ? cwd : started) ?? cwd ?? process.cwd();
   const homeDir = o.home ?? env.AH_HOME ?? (platform === "windows" ? (env.USERPROFILE ?? homedir()) : (env.HOME ?? homedir()));
   const agent = o.agent ?? event.agent;
   // The dialect follows the tool: Claude Code's PowerShell tool is PowerShell on any
@@ -51,6 +58,7 @@ export function buildContext(event: HookEvent, o: GuardOptions, env: NodeJS.Proc
   // (Bash and Monitor, Claude Code on Windows under Git Bash) is POSIX sh.
   const shellDialect = event.toolName === "PowerShell" || (platform === "windows" && agent === "codex") ? "powershell" : "posix";
   const ctx: Context = { projectRoot, homeDir, platform, shellDialect, policy: DEFAULT_POLICY };
+  if (cwd !== undefined) ctx.cwd = cwd;
   // A root spelled for another platform (a fixture replayed on this machine) is not on this disk.
   const mainCheckout = platform === HOST_PLATFORM ? mainCheckoutOf(projectRoot) : undefined;
   if (mainCheckout !== undefined) ctx.mainCheckout = mainCheckout;

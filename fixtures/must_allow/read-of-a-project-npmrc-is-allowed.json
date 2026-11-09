@@ -1,0 +1,11 @@
+{
+  "name": "Read of the project's .npmrc is allowed",
+  "payload": {
+    "tool_name": "Read",
+    "tool_input": {
+      "file_path": "/home/dev/project/.npmrc"
+    }
+  },
+  "near": "tool.read-private-key",
+  "source": "BUG-2026-020"
+}

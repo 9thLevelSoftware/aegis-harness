@@ -8,6 +8,7 @@
  * `apply_patch` through its shell tool with the patch as an argument or heredoc.
  */
 import type { ToolCall } from "./model.ts";
+import { isAbsolute, toPosix } from "./paths.ts";
 
 export type Agent = "claude" | "codex" | "unknown";
 
@@ -97,14 +98,17 @@ function codexCalls(toolName: string, input: unknown): ToolCall[] {
   const lower = toolName.toLowerCase();
   if (lower === "bash" || lower === "shell" || lower === "exec_command" || lower === "local_shell" || lower === "container.exec") {
     const command = i.command ?? i.cmd ?? i.argv;
+    // The command runs in `workdir` when Codex names one, so its relative paths resolve there.
+    const workdir = str(i.workdir);
+    const at = workdir === undefined ? {} : { cwd: workdir };
     const found = applyPatchViaShell(command);
     if (found !== undefined) {
       // The edit rules judge the patch; the shell rules still see the rest of the command line
       // (`cd x && apply_patch <<'EOF' ... EOF && rm -rf /`) with the patch body cut out.
-      const calls = parseApplyPatch(found.patch);
-      return found.rest === undefined ? calls : [...calls, { kind: "shell", command: found.rest }];
+      const calls = parseApplyPatch(found.patch, workdir);
+      return found.rest === undefined ? calls : [...calls, { kind: "shell", command: found.rest, ...at }];
     }
-    return [{ kind: "shell", command: commandText(command) }];
+    return [{ kind: "shell", command: commandText(command), ...at }];
   }
   if (lower === "apply_patch" || lower === "edit" || lower === "write") {
     const patch = str(i.command) ?? str(i.patch) ?? str(i.input) ?? "";
@@ -199,9 +203,10 @@ function shellQuote(s: string): string {
  * Parse Codex's apply_patch envelope into edit/write calls. Each `*** Update
  * File` becomes an edit whose old text is the removed and context lines and
  * whose new text is the added and context lines; `*** Add File` becomes a
- * write; `*** Delete File` becomes an edit to empty.
+ * write; `*** Delete File` becomes an edit to empty. Relative paths are relative to `workdir`
+ * when the shell call that carried the patch named one.
  */
-export function parseApplyPatch(patch: string): ToolCall[] {
+export function parseApplyPatch(patch: string, workdir?: string): ToolCall[] {
   const calls: ToolCall[] = [];
   const lines = patch.split(/\r?\n/);
   let i = 0;
@@ -209,7 +214,7 @@ export function parseApplyPatch(patch: string): ToolCall[] {
     const line = lines[i];
     let m: RegExpExecArray | null;
     if ((m = /^\*\*\* Add File: (.+)$/.exec(line))) {
-      const path = m[1].trim();
+      const path = under(workdir, m[1].trim());
       const body: string[] = [];
       i++;
       while (i < lines.length && !lines[i].startsWith("*** ")) {
@@ -220,19 +225,19 @@ export function parseApplyPatch(patch: string): ToolCall[] {
       continue;
     }
     if ((m = /^\*\*\* Delete File: (.+)$/.exec(line))) {
-      calls.push({ kind: "edit", path: m[1].trim(), oldText: "<deleted>", newText: "" });
+      calls.push({ kind: "edit", path: under(workdir, m[1].trim()), oldText: "<deleted>", newText: "" });
       i++;
       continue;
     }
     if ((m = /^\*\*\* Update File: (.+)$/.exec(line))) {
-      const path = m[1].trim();
+      const path = under(workdir, m[1].trim());
       let movedTo: string | undefined;
       const oldLines: string[] = [];
       const newLines: string[] = [];
       i++;
       while (i < lines.length && !/^\*\*\* (Add|Delete|Update) File:|^\*\*\* End Patch/.test(lines[i])) {
         const l = lines[i];
-        if ((m = /^\*\*\* Move to: (.+)$/.exec(l))) movedTo = m[1].trim();
+        if ((m = /^\*\*\* Move to: (.+)$/.exec(l))) movedTo = under(workdir, m[1].trim());
         else if (l.startsWith("@@")) { /* hunk header */ }
         else if (l.startsWith("+")) newLines.push(l.slice(1));
         else if (l.startsWith("-")) oldLines.push(l.slice(1));
@@ -248,4 +253,10 @@ export function parseApplyPatch(patch: string): ToolCall[] {
     i++;
   }
   return calls;
+}
+
+/** `path` as seen from the agent's working directory when it is relative to `workdir`. */
+function under(workdir: string | undefined, path: string): string {
+  if (workdir === undefined || workdir === "" || isAbsolute(toPosix(path)) || path.startsWith("~")) return path;
+  return `${workdir.replace(/[\\/]+$/, "")}/${path}`;
 }

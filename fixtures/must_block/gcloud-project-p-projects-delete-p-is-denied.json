@@ -1,0 +1,11 @@
+{
+  "name": "gcloud --project p projects delete p is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gcloud --project my-proj projects delete my-proj"
+    }
+  },
+  "rule": "shell.remote-destroy",
+  "source": "BUG-2026-020"
+}

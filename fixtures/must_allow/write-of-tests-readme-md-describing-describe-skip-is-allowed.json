@@ -1,0 +1,12 @@
+{
+  "name": "Write of tests/README.md describing describe.skip is allowed",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/home/dev/project/tests/README.md",
+      "content": "Use `describe.skip('...')` only with a bug record.\n"
+    }
+  },
+  "near": "edit.test-skip",
+  "source": "BUG-2026-020"
+}

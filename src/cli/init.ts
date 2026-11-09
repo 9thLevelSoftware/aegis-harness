@@ -147,7 +147,7 @@ export function init(o: InitOptions, env: NodeJS.ProcessEnv = process.env): Init
   const root = resolve(o.root);
   if (!existsSync(root)) return { ok: false, dryRun: o.dryRun, changes: [], next: [], error: `${root} does not exist` };
   const guardPath = o.guard ? resolve(o.guard) : defaultGuardPath();
-  if (!guardPath || !existsSync(guardPath)) return { ok: false, dryRun: o.dryRun, changes: [], next: [], error: "cannot find dist/guard.mjs next to ah; run `npm run build` in a checkout, or reinstall @9thlevel/aegis" };
+  if (!guardPath || !existsSync(guardPath)) return { ok: false, dryRun: o.dryRun, changes: [], next: [], error: "cannot find dist/guard.mjs next to ah; run `npm run build` in a checkout, or reinstall @9thlevelsoftware/aegis" };
   const m = defaultMachine(root, realpathSync(guardPath), env);
   if (o.node) m.nodePath = resolve(o.node);
   if (!o.remove) {

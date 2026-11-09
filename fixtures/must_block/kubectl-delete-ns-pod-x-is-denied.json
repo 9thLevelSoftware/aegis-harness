@@ -1,0 +1,11 @@
+{
+  "name": "kubectl delete ns,pod x is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "kubectl delete ns,pod staging"
+    }
+  },
+  "rule": "shell.remote-destroy",
+  "source": "BUG-2026-020"
+}

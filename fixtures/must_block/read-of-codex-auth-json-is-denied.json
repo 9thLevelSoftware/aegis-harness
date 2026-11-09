@@ -1,0 +1,11 @@
+{
+  "name": "Read of ~/.codex/auth.json is denied",
+  "payload": {
+    "tool_name": "Read",
+    "tool_input": {
+      "file_path": "/home/dev/.codex/auth.json"
+    }
+  },
+  "rule": "tool.read-private-key",
+  "source": "BUG-2026-021"
+}

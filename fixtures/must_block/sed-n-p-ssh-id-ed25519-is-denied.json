@@ -1,0 +1,11 @@
+{
+  "name": "sed -n p ~/.ssh/id_ed25519 is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sed -n p ~/.ssh/id_ed25519"
+    }
+  },
+  "rule": "shell.credential-read",
+  "source": "BUG-2026-020"
+}

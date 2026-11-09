@@ -1,0 +1,12 @@
+{
+  "name": "Write adding # ruff : noqa with a space before the colon is denied",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/home/dev/project/app/main.py",
+      "content": "# ruff : noqa\nimport os\n"
+    }
+  },
+  "rule": "edit.lint-suppression-blanket",
+  "source": "BUG-2026-020"
+}

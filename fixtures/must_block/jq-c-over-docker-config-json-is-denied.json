@@ -1,0 +1,11 @@
+{
+  "name": "jq -c over ~/.docker/config.json is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "jq -c . ~/.docker/config.json"
+    }
+  },
+  "rule": "shell.credential-read",
+  "source": "BUG-2026-020"
+}

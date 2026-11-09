@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { HookShapeError, planHooks } from "../src/wiring/hooks-json.ts";
 
-const GUARD = "/home/dev/.npm-global/lib/node_modules/@9thlevel/aegis/dist/guard.mjs";
+const GUARD = "/home/dev/.npm-global/lib/node_modules/@9thlevelsoftware/aegis/dist/guard.mjs";
 const entry = (extra: Record<string, unknown> = {}) => ({ type: "command", command: "/usr/bin/node", args: [GUARD, "--agent", "claude"], timeout: 5, ...extra });
 const group = (extra: Record<string, unknown> = {}) => ({ matcher: "Bash|Edit", hooks: [entry(extra)] });
 const build = () => group();

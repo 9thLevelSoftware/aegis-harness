@@ -1,0 +1,11 @@
+{
+  "name": "rsync -a /tmp/x/ .claude/ is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rsync -a /tmp/x/ .claude/"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-020"
+}

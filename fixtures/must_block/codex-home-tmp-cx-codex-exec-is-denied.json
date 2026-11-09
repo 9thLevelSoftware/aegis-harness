@@ -1,0 +1,11 @@
+{
+  "name": "CODEX_HOME=/tmp/cx codex exec is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "CODEX_HOME=/tmp/cx codex exec 'x'"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-020"
+}

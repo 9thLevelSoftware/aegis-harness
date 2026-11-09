@@ -1,0 +1,11 @@
+{
+  "name": "git grep for --no-verify is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git grep -n -e '--no-verify'"
+    }
+  },
+  "near": "shell.hook-bypass",
+  "source": "BUG-2026-020"
+}

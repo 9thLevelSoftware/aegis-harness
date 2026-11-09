@@ -1,0 +1,12 @@
+{
+  "name": "Select-String -Path a private key is denied (Windows PowerShell)",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Select-String -Path $HOME\\.ssh\\id_rsa -Pattern BEGIN"
+    }
+  },
+  "rule": "shell.credential-read",
+  "source": "BUG-2026-020"
+}

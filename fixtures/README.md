@@ -27,8 +27,10 @@ Optional fields:
 
 - `expect`: `"deny"`, `"allow"` or `"ask"`. Redundant with the directory and must agree with it;
   a fixture whose `expect` contradicts its directory is rejected when the corpus loads.
-- `cwd`: the project root the guard is given (`--root`). Defaults to `/home/dev/project`
-  (or `C:\Users\dev\project` when `platform` is `windows`).
+- `cwd`: the directory the agent is in, sent as the payload's `cwd`. Defaults to
+  `/home/dev/project` (or `C:\Users\dev\project` when `platform` is `windows`).
+- `root`: the project root the guard is given (`--root`). Defaults to `cwd`; set it apart for an
+  agent that has moved into a subfolder (`"cwd": "/home/dev/project/.claude"`).
 - `home`: the home directory (`--home`). Defaults to `/home/dev` (or `C:\Users\dev`).
 
 Paths in fixtures are never a real person's machine: only `/home/dev`, `/Users/dev`,

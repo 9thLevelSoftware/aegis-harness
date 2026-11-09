@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf /var/tmp/build-cache is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf /var/tmp/build-cache"
+    }
+  },
+  "near": "shell.rm-outside-project",
+  "source": "BUG-2026-020"
+}

@@ -14,6 +14,7 @@ import {
   added,
   gateScripts,
   occurrences,
+  sectionBodies,
   stripComments,
 } from "./content.ts";
 
@@ -84,9 +85,16 @@ function pathDecision(call: WriteCall | EditCall, info: PathInfo, before: string
 
 function manifestDecision(call: WriteCall | EditCall, info: PathInfo, before: string, after: string): Decision {
   const shown = info.rel ?? info.abs;
-  // Comments cannot configure a linter, so a comment that names a section does not count.
-  const touched = stripComments(call.kind === "write" ? after : `${before}\n${after}`);
-  const sections = MANIFEST_LINT_SECTIONS.filter((p) => occurrences(p, touched) > 0);
+  // Comments cannot configure a linter, so a comment that names a section does not count. An edit
+  // touches a section when the section's text differs between the old and new text: a header that
+  // only stands as unchanged context (a dependency added above `[tool.ruff]`) is not touched.
+  const sections = call.kind === "write"
+    ? MANIFEST_LINT_SECTIONS.filter((p) => occurrences(p, stripComments(after)) > 0)
+    : MANIFEST_LINT_SECTIONS.filter((p) => {
+      const was = sectionBodies(p, stripComments(before));
+      const now = sectionBodies(p, stripComments(after));
+      return was.length !== now.length || was.some((b, i) => b !== now[i]);
+    });
   if (sections.length > 0) {
     return deny("edit.manifest-lint-section", `${shown}: edit touches ${sections.map((s) => s.id).join(", ")}`, LINT_REMEDIATION);
   }
@@ -108,6 +116,9 @@ function manifestDecision(call: WriteCall | EditCall, info: PathInfo, before: st
   return ALLOW;
 }
 
+/** Prose files. MDX is left out: eslint-plugin-mdx applies the suppressions written in it. */
+const PROSE = /\.(md|markdown|txt|rst|adoc|asciidoc)$/i;
+
 function contentDecisions(info: PathInfo, before: string, after: string): Decision[] {
   const out: Decision[] = [];
   const shown = info.rel ?? info.abs;
@@ -125,6 +136,9 @@ function contentDecisions(info: PathInfo, before: string, after: string): Decisi
       out.push(ask("edit.secret-literal-suspect", `${shown}: looks like a ${hit.name}`, "If this is a real credential, move it to an environment variable."));
     }
   }
+
+  // A suppression or skip in prose (CLAUDE.md, a contributing guide) is described, not applied.
+  if (PROSE.test(shown)) return out;
 
   const blanket = added(BLANKET_SUPPRESSIONS, before, after);
   if (blanket.length > 0) {

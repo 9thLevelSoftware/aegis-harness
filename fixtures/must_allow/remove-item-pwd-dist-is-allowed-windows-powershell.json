@@ -1,0 +1,12 @@
+{
+  "name": "Remove-Item $pwd\\dist is allowed (Windows PowerShell)",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Remove-Item -Recurse -Force $pwd\\dist"
+    }
+  },
+  "near": "shell.rm-unresolved-variable",
+  "source": "BUG-2026-020"
+}

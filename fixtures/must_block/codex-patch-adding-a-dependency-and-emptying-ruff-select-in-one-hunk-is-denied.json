@@ -1,0 +1,12 @@
+{
+  "name": "Codex patch adding a dependency and emptying ruff select in one hunk is denied",
+  "agent": "codex",
+  "payload": {
+    "tool_name": "apply_patch",
+    "tool_input": {
+      "command": "*** Begin Patch\n*** Update File: pyproject.toml\n@@\n     \"fastapi>=0.115\",\n+    \"httpx>=0.27\",\n ]\n \n [tool.ruff]\n-select = [\"E\", \"F\"]\n+select = []\n*** End Patch"
+    }
+  },
+  "rule": "edit.manifest-lint-section",
+  "source": "BUG-2026-020"
+}

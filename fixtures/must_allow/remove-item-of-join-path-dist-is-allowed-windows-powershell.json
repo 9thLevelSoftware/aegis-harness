@@ -1,0 +1,12 @@
+{
+  "name": "Remove-Item of (Join-Path . 'dist') is allowed (Windows PowerShell)",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Remove-Item -Recurse -Force (Join-Path . 'dist')"
+    }
+  },
+  "near": "shell.rm-recursive-cwd",
+  "source": "BUG-2026-020"
+}

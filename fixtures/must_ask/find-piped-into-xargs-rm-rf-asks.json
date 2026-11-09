@@ -1,0 +1,11 @@
+{
+  "name": "find piped into xargs rm -rf asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . -type d -name node_modules | xargs rm -rf"
+    }
+  },
+  "rule": "shell.rm-unresolved-variable",
+  "source": "BUG-2026-021"
+}

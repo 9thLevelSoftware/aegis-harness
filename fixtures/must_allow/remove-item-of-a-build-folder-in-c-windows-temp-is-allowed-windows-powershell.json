@@ -1,0 +1,12 @@
+{
+  "name": "Remove-Item of a build folder in C:\\Windows\\Temp is allowed (Windows PowerShell)",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Remove-Item -Recurse -Force C:\\Windows\\Temp\\my-build"
+    }
+  },
+  "near": "shell.rm-outside-project",
+  "source": "BUG-2026-020"
+}

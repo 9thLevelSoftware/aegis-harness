@@ -1,0 +1,11 @@
+{
+  "name": "openssl rsa -in ~/.ssh/id_rsa -text is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "openssl rsa -in ~/.ssh/id_rsa -text"
+    }
+  },
+  "rule": "shell.credential-read",
+  "source": "BUG-2026-020"
+}

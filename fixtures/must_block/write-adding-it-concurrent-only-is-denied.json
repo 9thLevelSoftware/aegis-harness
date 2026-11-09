@@ -1,0 +1,12 @@
+{
+  "name": "Write adding it.concurrent.only is denied",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/home/dev/project/src/math.test.ts",
+      "content": "it.concurrent.only('adds', async () => {});\n"
+    }
+  },
+  "rule": "edit.test-only",
+  "source": "BUG-2026-020"
+}

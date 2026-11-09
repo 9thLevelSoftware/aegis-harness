@@ -1,0 +1,11 @@
+{
+  "name": "kubectl delete namespace/production is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "kubectl delete namespace/production"
+    }
+  },
+  "rule": "shell.remote-destroy",
+  "source": "BUG-2026-020"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "npm test 1>&.claude/settings.local.json is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "npm test 1>&.claude/settings.local.json"
+    }
+  },
+  "rule": "shell.hook-tamper",
+  "source": "BUG-2026-020"
+}

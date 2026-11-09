@@ -1,0 +1,12 @@
+{
+  "name": "a property of irm output is allowed (Windows PowerShell)",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "(irm https://api.example.com/v1/status).state"
+    }
+  },
+  "near": "shell.pipe-to-shell",
+  "source": "BUG-2026-020"
+}

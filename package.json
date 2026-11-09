@@ -1,6 +1,6 @@
 {
-  "name": "@9thlevel/aegis",
-  "version": "0.0.1",
+  "name": "@9thlevelsoftware/aegis",
+  "version": "0.1.0",
   "description": "ah: a PreToolUse guard for Codex and Claude Code. Vetoes destructive commands, hook bypasses, linter and test config edits, and credential leaks, with the fixture corpus that proves it.",
   "license": "MIT",
   "publishConfig": {
@@ -18,7 +18,8 @@
     "dist",
     "fixtures",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=22.18"

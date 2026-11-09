@@ -1,0 +1,11 @@
+{
+  "name": "yq -pi (ini input, not in place) reading under .github is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "yq -pi '.section' .github/workflows/settings.ini"
+    }
+  },
+  "near": "shell.write-ask-path",
+  "source": "BUG-2026-020"
+}
