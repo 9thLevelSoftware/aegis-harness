@@ -55,8 +55,66 @@ export function normalizeHookPayload(raw: unknown, hint?: Agent): HookEvent {
     sessionId: str(payload.session_id),
     permissionMode: str(payload.permission_mode),
   };
-  event.calls = agent === "codex" ? codexCalls(toolName, input) : claudeCalls(toolName, input);
+  event.calls = toolName.startsWith("mcp__") ? mcpCalls(toolName, input) : agent === "codex" ? codexCalls(toolName, input) : claudeCalls(toolName, input);
   return event;
+}
+
+// ---------------------------------------------------------------------------
+// MCP (both agents name them mcp__<server>__<tool>)
+
+/** What an MCP tool's name says it does, from the part after the server: `start_process`, `write_file`, `edit_block`. */
+const MCP_SHELL = /(^|_)(exec|execute|run|shell|bash|powershell|pwsh|terminal|command|process|spawn|interact)(_|$)/;
+const MCP_WRITE = /(^|_)(write|save|put|append|edit|replace|patch|update|create_file|new_file)(_|$)/;
+const MCP_REMOVE = /(^|_)(delete|remove|unlink|rmdir|move|rename|trash)(_|$)/;
+const MCP_READ = /(^|_)(read|view|cat|open|get_file|download)(_|$)/;
+const MCP_PATHS = ["path", "file_path", "filePath", "filename", "file", "target", "notebook_path"];
+const MCP_MOVE_PATHS = ["source", "destination", "src", "dest", "from", "to", "old_path", "new_path", "oldPath", "newPath"];
+
+/**
+ * An MCP tool that runs commands or writes files is judged like the built-in tool it stands in
+ * for (BUG-2026-023): a shell server's command by the shell rules, a filesystem server's write or
+ * edit by the edit rules, a delete or move as a write to each path it names. Tools are recognised
+ * by name and argument shape, never by server, so an unknown server is read the same way. The
+ * call is also kept whole for the secret-literal and private-key checks.
+ */
+function mcpCalls(toolName: string, input: unknown): ToolCall[] {
+  const i = dict(input);
+  const name = toolName.replace(/^mcp__.*__/, "").toLowerCase();
+  const whole: ToolCall = { kind: "other", toolName, input };
+  const calls: ToolCall[] = [];
+  const paths = (fields: readonly string[]) => fields.map((f) => str(i[f])).filter((p): p is string => p !== undefined && p !== "");
+
+  if (MCP_SHELL.test(name)) {
+    // `input` is what an interactive-process tool sends to a running shell.
+    const raw = i.command ?? i.cmd ?? i.script ?? i.code ?? (/(interact|stdin|send)/.test(name) ? i.input : undefined);
+    const args = Array.isArray(i.args) ? i.args : Array.isArray(i.arguments) ? i.arguments : undefined;
+    const command = typeof raw === "string" && args !== undefined && !/\s/.test(raw.trim()) ? commandText([raw, ...args]) : commandText(raw);
+    if (command.trim() !== "") {
+      const cwd = str(i.cwd) ?? str(i.workdir) ?? str(i.working_directory) ?? str(i.workingDirectory) ?? str(i.directory);
+      calls.push({ kind: "shell", command, ...(cwd === undefined ? {} : { cwd }) });
+    }
+  }
+  // A path beside `owner` and `repo` names a file in a remote repository (GitHub's create_or_update_file), not on this disk.
+  const remote = typeof i.owner === "string" && typeof i.repo === "string";
+  if (MCP_WRITE.test(name) && !remote) {
+    for (const path of paths(MCP_PATHS)) {
+      const oldText = str(i.old_string) ?? str(i.oldText) ?? str(i.old_str) ?? str(i.old_text);
+      const newText = str(i.new_string) ?? str(i.newText) ?? str(i.new_str) ?? str(i.new_text);
+      const edits = Array.isArray(i.edits) ? i.edits.map(dict) : [];
+      if (oldText !== undefined || newText !== undefined) calls.push({ kind: "edit", path, oldText: oldText ?? "", newText: newText ?? "" });
+      else if (edits.length > 0) {
+        for (const e of edits) calls.push({ kind: "edit", path, oldText: str(e.oldText) ?? str(e.old_string) ?? str(e.old_text) ?? "", newText: str(e.newText) ?? str(e.new_string) ?? str(e.new_text) ?? "" });
+      } else calls.push({ kind: "write", path, content: str(i.content) ?? str(i.text) ?? str(i.data) ?? str(i.body) ?? "" });
+    }
+  }
+  if (MCP_REMOVE.test(name) && !remote) {
+    for (const path of paths([...MCP_PATHS, ...MCP_MOVE_PATHS])) calls.push({ kind: "write", path, content: "" });
+  }
+  if (MCP_READ.test(name) && !remote && Array.isArray(i.paths)) {
+    // read_multiple_files: each path meets the Read tool's private-key rule.
+    for (const p of i.paths) if (typeof p === "string") calls.push({ kind: "other", toolName: "Read", input: { file_path: p } });
+  }
+  return [...calls, whole];
 }
 
 // ---------------------------------------------------------------------------

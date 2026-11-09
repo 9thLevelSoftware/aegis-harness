@@ -1,0 +1,14 @@
+{
+  "name": "an MCP read_multiple_files that includes ~/.codex/auth.json is denied",
+  "payload": {
+    "tool_name": "mcp__desktop-commander__read_multiple_files",
+    "tool_input": {
+      "paths": [
+        "/home/dev/project/README.md",
+        "/home/dev/.codex/auth.json"
+      ]
+    }
+  },
+  "rule": "tool.read-private-key",
+  "source": "BUG-2026-023"
+}

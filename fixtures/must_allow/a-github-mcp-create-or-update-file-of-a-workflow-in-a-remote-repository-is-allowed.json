@@ -1,0 +1,16 @@
+{
+  "name": "a GitHub MCP create_or_update_file of a workflow in a remote repository is allowed",
+  "payload": {
+    "tool_name": "mcp__github__create_or_update_file",
+    "tool_input": {
+      "owner": "o",
+      "repo": "r",
+      "path": ".github/workflows/ci.yml",
+      "content": "name: CI\n",
+      "message": "ci",
+      "branch": "feature"
+    }
+  },
+  "near": "edit.ci-config",
+  "source": "BUG-2026-023"
+}

@@ -1,0 +1,12 @@
+{
+  "name": "an MCP write_file of a source file is allowed",
+  "payload": {
+    "tool_name": "mcp__filesystem__write_file",
+    "tool_input": {
+      "path": "/home/dev/project/src/a.ts",
+      "content": "export const x = 1;\n"
+    }
+  },
+  "near": "edit.hook-config",
+  "source": "BUG-2026-023"
+}

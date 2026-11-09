@@ -9,6 +9,9 @@
 - `ah stats` counts denies, asks and overridden calls per rule from `.harness/metrics.jsonl`.
 - `ah init` keeps `.harness/metrics.jsonl` out of git through `.git/info/exclude`.
 - A deny now tells the agent that the user can set the rule to `ask` in `.harness/policy.json`.
+- MCP tools that run commands or write, edit, move or delete local files (Desktop Commander, the
+  filesystem server and the like) meet the shell and edit rules, not only the secret checks
+  (BUG-2026-023).
 - CI also runs on Node 24.
 
 ## 0.1.0

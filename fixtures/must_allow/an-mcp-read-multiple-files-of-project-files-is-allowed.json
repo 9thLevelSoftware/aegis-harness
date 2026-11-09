@@ -1,0 +1,14 @@
+{
+  "name": "an MCP read_multiple_files of project files is allowed",
+  "payload": {
+    "tool_name": "mcp__desktop-commander__read_multiple_files",
+    "tool_input": {
+      "paths": [
+        "/home/dev/project/README.md",
+        "/home/dev/project/package.json"
+      ]
+    }
+  },
+  "near": "tool.read-private-key",
+  "source": "BUG-2026-023"
+}

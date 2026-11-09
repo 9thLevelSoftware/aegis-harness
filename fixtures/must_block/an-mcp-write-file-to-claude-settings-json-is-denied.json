@@ -1,0 +1,12 @@
+{
+  "name": "an MCP write_file to .claude/settings.json is denied",
+  "payload": {
+    "tool_name": "mcp__filesystem__write_file",
+    "tool_input": {
+      "path": "/home/dev/project/.claude/settings.json",
+      "content": "{}"
+    }
+  },
+  "rule": "edit.hook-config",
+  "source": "BUG-2026-023"
+}

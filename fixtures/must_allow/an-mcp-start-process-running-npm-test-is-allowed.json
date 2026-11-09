@@ -1,0 +1,12 @@
+{
+  "name": "an MCP start_process running npm test is allowed",
+  "payload": {
+    "tool_name": "mcp__desktop-commander__start_process",
+    "tool_input": {
+      "command": "npm test",
+      "timeout_ms": 5000
+    }
+  },
+  "near": "shell.rm-recursive-home",
+  "source": "BUG-2026-023"
+}

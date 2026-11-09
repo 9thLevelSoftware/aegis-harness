@@ -1,0 +1,13 @@
+{
+  "name": "an MCP edit_block adding it.skip is denied",
+  "payload": {
+    "tool_name": "mcp__desktop-commander__edit_block",
+    "tool_input": {
+      "file_path": "/home/dev/project/src/a.test.ts",
+      "old_string": "it('adds'",
+      "new_string": "it.skip('adds'"
+    }
+  },
+  "rule": "edit.test-skip",
+  "source": "BUG-2026-023"
+}

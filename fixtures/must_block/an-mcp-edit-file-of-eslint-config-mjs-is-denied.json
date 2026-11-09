@@ -1,0 +1,17 @@
+{
+  "name": "an MCP edit_file of eslint.config.mjs is denied",
+  "payload": {
+    "tool_name": "mcp__filesystem__edit_file",
+    "tool_input": {
+      "path": "/home/dev/project/eslint.config.mjs",
+      "edits": [
+        {
+          "oldText": "rules: {",
+          "newText": "rules: { 'no-unused-vars': 'off',"
+        }
+      ]
+    }
+  },
+  "rule": "edit.lint-config",
+  "source": "BUG-2026-023"
+}

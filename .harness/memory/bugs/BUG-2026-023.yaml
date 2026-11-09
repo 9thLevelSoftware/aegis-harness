@@ -1,0 +1,39 @@
+incident_id: BUG-2026-023
+date_recorded: 2026-11-09
+status: mitigated
+title: MCP shell and filesystem tools bypassed every shell, path and content rule
+observed_on: process (aegis-harness, the production-readiness audit of 0.1.0)
+source:
+  - kind: session
+    date: 2026-11-09
+    note: >-
+      The audit sent `mcp__desktop-commander__start_process {"command": "rm -rf /home/dev"}` and
+      an MCP write_file to .claude/settings.json through dist/guard.mjs. Both passed, because MCP
+      calls met only the secret-literal and private-key read checks. Desktop Commander, the
+      reference filesystem server and similar shell servers are common in the maintainer's setup,
+      and both agents send their calls through the hook (the matchers include `mcp__.*`).
+root_cause: >-
+  normalize.ts turned every MCP call into an `other` call, which otherRules checks only for
+  credential literals and key reads. The shell, edit and content rules never saw a command or a
+  file write that arrived through an MCP server, so an agent could unwire its own hook or delete
+  the home directory by picking the MCP tool over the built-in one.
+impact: >-
+  Every guarantee in the README's table could be bypassed through any MCP server that runs
+  commands or writes files.
+countermeasure:
+  kind: test
+  ref: fixtures/README.md
+  change: >-
+    normalize.ts reads an MCP call by the tool's name, after the server, and by the shape of its
+    arguments. A shell-like name (exec, run, shell, terminal, command, process, interact) with a
+    `command`, `cmd`, `script` or `code` field, or `input` for an interactive process, becomes a
+    shell call, with `args` joined and `cwd` honoured. A write-like name with a path becomes a
+    write, or an edit when it carries old and new text or an `edits` list. A delete-like or
+    move-like name becomes a write to each path it names. A read with a `paths` list has each path
+    meet the Read rule. The whole call still gets the secret checks. A path beside `owner` and
+    `repo` names a file in a remote repository, not on this disk, and is left alone. Fifteen
+    fixtures. Known limit: a server whose tool names say nothing of what it does is still checked
+    only for secrets.
+must_block_fixture: fixtures/must_block/an-mcp-start-process-running-rm-rf-of-the-home-directory-is-denied.json
+must_allow_fixture: fixtures/must_allow/an-mcp-start-process-running-npm-test-is-allowed.json
+expiry_policy: "re-run the probe pass before every minor release"

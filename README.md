@@ -94,8 +94,11 @@ and Codex (`command` runs under `bash -c`; `commandWindows` is for Windows):
 `PowerShell` is in the Claude Code matcher because on Windows Claude Code routes shell commands
 through that tool (without Git Bash it does not register `Bash` at all); the guard parses it as
 PowerShell on any platform. `Monitor` runs a shell command in the background, so it gets the
-same checks as `Bash`. `Grep` prints the lines it finds, so a search of `~/.ssh` gets the private-key rule that `Read` gets. `mcp__.*` sends MCP tool calls through the guard for the credential-literal
-and private-key rules; the matchers are anchored because both agents read them as regexes. Git Bash and Cygwin drive spellings (`/c/Users/...`) are resolved against
+same checks as `Bash`. `Grep` prints the lines it finds, so a search of `~/.ssh` gets the private-key rule that `Read` gets. `mcp__.*` sends MCP tool calls through the guard: one whose
+name and arguments say it runs a command (`start_process`, `run_command` with `command`) meets the
+shell rules, one that writes, edits, moves or deletes a local file meets the edit rules, and every
+one meets the credential-literal and private-key rules (a server whose tool names say nothing of
+what they do gets only those); the matchers are anchored because both agents read them as regexes. Git Bash and Cygwin drive spellings (`/c/Users/...`) are resolved against
 the Windows project root and home; WSL `/mnt/c/...` is a Linux path. `MultiEdit` is a legacy entry for older installs. An allow prints
 nothing, so the per-call cost of a matched tool is one short-lived `node` process.
 
@@ -115,7 +118,7 @@ apply on top.
 | shell: deploy | `terraform destroy`, `gh repo delete`, `aws s3 rb`, `kubectl delete namespace` (or `ns/x`), and the `az`/`gcloud` deletes (`gcloud beta` and `alpha` included) of a resource group, project, cluster, database (Firestore included), bucket, storage account, VM or app (one blob, image tag or secret passes) | `npm publish`, `wrangler deploy`, `terraform apply`, `gh pr merge`, `supabase functions deploy`, `az deployment create` (`--dry-run`, `--what-if`, `--help` and `list`/`get`/`history` forms pass, as does `aws s3 sync` from a bucket to a local folder; `--dry-run=none` or `=false` is the real thing) |
 | edit: paths | `.harness/`, `.git/`, `.claude/settings*.json`, `.codex/`, `.husky/`, pre-commit and lefthook configs, `biome.json`, eslint and ruff configs, vitest/jest/playwright/pytest configs, lockfiles, home dotfiles, system paths | baselines and snapshots, `tsconfig*.json`, CI workflows, `.env*` (not `.env.example`), key files, files outside the project |
 | edit: content | credential literals; file-wide `eslint-disable`, `@ts-nocheck` (in any case), `pylint: disable=all`, `# ruff: noqa`; `.only` (`.only.each` and `it.concurrent.only` too), `fit('...')`; `.skip`/`test.fixme` with a title (`.skip.each` too), `@pytest.mark.skip`, `#[ignore]`, `@Disabled`, and an unconditional `t.Skip(`, `pytest.skip(` or `self.skipTest(` (a skip under a visible condition such as `if testing.Short()` or `test.skip(condition, reason)` passes); `"test": "echo ..."` or `\|\| true` in a gate script; `continue-on-error` or `if: false` in CI; `"strict": false` | `@ts-ignore`, bare `# noqa`, `istanbul ignore`, `pragma: no cover`, a changed gate script, any other workflow edit (`if: always()` included), a real-looking token in a test fixture. A suppression or skip written in prose (`.md`, `.txt`, `.rst`, such as a rule in `CLAUDE.md`) is text and passes |
-| other tools | `Read` of a private key or credential store, and `Grep` printing lines from one; a credential literal in any argument of a matched tool | |
+| other tools | `Read` of a private key or credential store, and `Grep` printing lines from one; a credential literal in any argument of a matched tool; MCP shell and file tools as their built-in twins above | |
 
 Hook files and `.git/` count wherever the agents load them from: in every directory above the
 folder a session started in, and in a linked worktree's main checkout, so a session in `sub/`

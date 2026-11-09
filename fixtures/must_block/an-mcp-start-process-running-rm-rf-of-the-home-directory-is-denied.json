@@ -1,0 +1,12 @@
+{
+  "name": "an MCP start_process running rm -rf of the home directory is denied",
+  "payload": {
+    "tool_name": "mcp__desktop-commander__start_process",
+    "tool_input": {
+      "command": "rm -rf /home/dev",
+      "timeout_ms": 5000
+    }
+  },
+  "rule": "shell.rm-recursive-home",
+  "source": "BUG-2026-023"
+}

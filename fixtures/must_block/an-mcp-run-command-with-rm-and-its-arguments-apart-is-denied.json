@@ -1,0 +1,15 @@
+{
+  "name": "an MCP run_command with rm and its arguments apart is denied",
+  "payload": {
+    "tool_name": "mcp__shell__run_command",
+    "tool_input": {
+      "command": "rm",
+      "args": [
+        "-rf",
+        "/home/dev"
+      ]
+    }
+  },
+  "rule": "shell.rm-recursive-home",
+  "source": "BUG-2026-023"
+}
