@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf ~/.npm/_cacache is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf ~/.npm/_cacache"
+    }
+  },
+  "near": "shell.rm-outside-project",
+  "source": "BUG-2026-021"
+}

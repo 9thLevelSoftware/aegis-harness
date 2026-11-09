@@ -18,6 +18,7 @@ import {
   bracketReader,
   segmentMatcher,
   stripQuotes,
+  toPosix,
 } from "./paths.ts";
 
 export type PathCategory =
@@ -59,6 +60,8 @@ export interface PathInfo {
   hasVariable: boolean;
 }
 
+/** Home-relative cache directories: XDG and macOS caches, and the npm, pnpm, yarn, pip, Gradle and Cargo download caches. */
+const HOME_CACHE = /^(\.cache|Library\/Caches|\.npm\/(_cacache|_npx|_logs)|\.pnpm-store|\.yarn\/berry\/cache|\.gradle\/caches|\.cargo\/registry\/(cache|src)|AppData\/Local\/(npm-cache|pip\/cache|pnpm-cache|Yarn\/Cache|Temp))(\/|$)/i;
 const HOME_SHAPED = /^(\/home\/[^/]+|\/Users\/[^/]+|\/root|[A-Za-z]:\/Users\/[^/]+)\/?$/i;
 const KEY_GLOB = /\.(pem|key|p12|pfx|jks|keystore)$|^id_(rsa|ed25519|ecdsa)$/;
 
@@ -120,6 +123,9 @@ export function classifyPath(input: string, ctx: Context): PathInfo {
   if (hook !== undefined) return base("hook-config", hook);
   // Temp first: /var/tmp, /dev/shm and C:\Windows\Temp sit inside system directories.
   if (isTempPath(abs) || isTempPath(stripped)) return base("temp");
+  // Package and build caches in the home directory are regenerated on demand: clearing one is
+  // everyday work, not a delete outside the project (BUG-2026-021).
+  if (homeRel !== null && HOME_CACHE.test(toPosix(homeRel)) && !/(^|\/)\.\.(\/|$)/.test(toPosix(homeRel))) return base("temp");
   if (isSystemPath(abs)) return base("system");
   return base("outside-project");
 }

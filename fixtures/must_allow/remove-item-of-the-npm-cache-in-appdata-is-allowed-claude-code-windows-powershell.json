@@ -1,0 +1,12 @@
+{
+  "name": "Remove-Item of the npm cache in AppData is allowed (Claude Code, Windows PowerShell)",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Remove-Item -Recurse -Force C:\\Users\\dev\\AppData\\Local\\npm-cache\\_cacache"
+    }
+  },
+  "near": "shell.rm-outside-project",
+  "source": "BUG-2026-021"
+}

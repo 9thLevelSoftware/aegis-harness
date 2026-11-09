@@ -18,9 +18,14 @@ export function isPublicPem(path: string): boolean {
   return PUBLIC_PEM.test(path);
 }
 
-/** Home-relative files that hold credentials by name alone: `~/.npmrc` (an npm token), unlike a project's `.npmrc`. */
+/**
+ * Home-relative files that hold credentials by name alone: `~/.npmrc` (an npm token), unlike a
+ * project's `.npmrc`; the agents' own sign-ins (`~/.claude/.credentials.json`, `~/.codex/auth.json`);
+ * and the GitHub CLI's token store (`~/.config/gh/hosts.yml`, `%APPDATA%\GitHub CLI\hosts.yml`).
+ * BUG-2026-021.
+ */
 export function isPrivateHomeFile(homeRel: string): boolean {
-  return /^\.npmrc$/i.test(homeRel);
+  return /^(\.npmrc|\.claude[\\/]\.credentials\.json|\.codex[\\/]auth\.json|\.config[\\/]gh[\\/]hosts\.ya?ml|AppData[\\/]Roaming[\\/]GitHub CLI[\\/]hosts\.ya?ml)$/i.test(homeRel);
 }
 
 /** Files in a credential store that hold no secret: SSH public keys, config, known_hosts, authorized_keys, environment and rc, and `~/.aws/config`. */

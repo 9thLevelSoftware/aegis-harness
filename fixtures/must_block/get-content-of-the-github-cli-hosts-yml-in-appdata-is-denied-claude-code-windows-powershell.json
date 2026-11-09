@@ -1,0 +1,12 @@
+{
+  "name": "Get-Content of the GitHub CLI hosts.yml in AppData is denied (Claude Code, Windows PowerShell)",
+  "platform": "windows",
+  "payload": {
+    "tool_name": "PowerShell",
+    "tool_input": {
+      "command": "Get-Content \"C:\\Users\\dev\\AppData\\Roaming\\GitHub CLI\\hosts.yml\""
+    }
+  },
+  "rule": "shell.credential-read",
+  "source": "BUG-2026-021"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "find piped into xargs rm -f of files is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . -name '*.pyc' | xargs rm -f"
+    }
+  },
+  "near": "shell.rm-unresolved-variable",
+  "source": "BUG-2026-021"
+}

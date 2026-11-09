@@ -1,0 +1,11 @@
+{
+  "name": "cat ~/.config/gh/hosts.yml is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.config/gh/hosts.yml"
+    }
+  },
+  "rule": "shell.credential-read",
+  "source": "BUG-2026-021"
+}

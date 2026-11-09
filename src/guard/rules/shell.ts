@@ -693,6 +693,11 @@ function removeRules(s: Stage, ctx: Context): Decision[] {
   const narrowed = !spec.recursive && filters.length > 0 && filters.every((f) => !/^\*(\.\*)?$/.test(f));
   const targets = narrowed ? spec.targets.flatMap((t) => (CWD_WIPE_LITERAL.test(stripQuotes(t)) ? filters : [t])) : spec.targets;
   for (const t of targets) out.push(judgeRemoveTarget(t, destructive, spec.recursive, s, ctx));
+  // `... | xargs rm -rf` deletes whatever arrives on stdin, which cannot be read before it runs,
+  // like `rm -rf "$d"` (BUG-2026-021). `xargs rm -f` of files is left alone.
+  if (spec.recursive && s.wrappers.includes("xargs")) {
+    out.push(ask("shell.rm-unresolved-variable", `xargs ${s.cmd} -r deletes the paths it reads from stdin, which cannot be verified`, "Name the directories (`rm -rf dist build`), or use `find ... -type d -name node_modules -prune -exec rm -rf {} +` so the guard can read what is deleted."));
+  }
   return out;
 }
 

@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf ~/.npm, which holds more than the cache, is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf ~/.npm"
+    }
+  },
+  "rule": "shell.rm-outside-project",
+  "source": "BUG-2026-021"
+}

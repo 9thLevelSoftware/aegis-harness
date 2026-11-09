@@ -1237,6 +1237,12 @@ function buildStage(text: string, dialect: ShellDialect, budget: ParseBudget): S
   };
   while (argv.length > 0 && guard++ < 8) {
     const name = normalizeCmd(argv[0]);
+    // `busybox rm -rf ~` runs the applet named next; `busybox sh -c` is read as a shell below (BUG-2026-021).
+    if (name === "busybox" && argv[1] !== undefined && !SH_FAMILY.has(normalizeCmd(argv[1])) && !argv[1].startsWith("-")) {
+      wrappers.push(name);
+      argv.shift();
+      continue;
+    }
     if (!WRAPPERS.has(name)) break;
     if (name === "command" && (argv[1] === "-v" || argv[1] === "-V")) break;
     wrappers.push(name);

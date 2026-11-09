@@ -1,0 +1,11 @@
+{
+  "name": "echo a path into xargs rm -rf asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo /home/dev | xargs rm -rf"
+    }
+  },
+  "rule": "shell.rm-unresolved-variable",
+  "source": "BUG-2026-021"
+}

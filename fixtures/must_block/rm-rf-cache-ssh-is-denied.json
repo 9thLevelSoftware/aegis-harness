@@ -1,0 +1,11 @@
+{
+  "name": "rm -rf ~/.cache/../.ssh is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf ~/.cache/../.ssh"
+    }
+  },
+  "rule": "shell.write-home-config",
+  "source": "BUG-2026-021"
+}
