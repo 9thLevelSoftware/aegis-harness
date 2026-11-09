@@ -26,7 +26,7 @@ export interface Rendered {
 export function explain(d: Decision, verb: string): string {
   const head = `[ah guard] ${verb} by ${d.rule ?? "policy"}: ${d.reason ?? ""}`.trim();
   const tail = d.remediation ? `\nDo instead: ${d.remediation}` : "";
-  const record = d.rule ? `\n(If this is a false positive, tell the user and record it: ah bug add --rule ${d.rule} --title "<what you were doing>")` : "";
+  const record = d.rule ? `\n(If this is a false positive, tell the user, who can set the rule to "ask" in .harness/policy.json, and record it: ah bug add --rule ${d.rule} --title "<what you were doing>")` : "";
   return `${head}${tail}${record}`;
 }
 

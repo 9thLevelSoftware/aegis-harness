@@ -6,7 +6,7 @@ decides in under 150 ms, and either stays silent or returns a deny with text the
 ```
 [ah guard] denied by shell.rm-recursive-root: rm targets the filesystem root (/)
 Do instead: Nothing in a project needs the filesystem root deleted. Name the specific directory.
-(If this is a false positive, tell the user and record it: ah bug add --rule shell.rm-recursive-root --title "<what you were doing>")
+(If this is a false positive, tell the user, who can set the rule to "ask" in .harness/policy.json, and record it: ah bug add --rule shell.rm-recursive-root --title "<what you were doing>")
 ```
 
 It is one process, no dependencies, no daemon, no network. It does not plan, orchestrate,
@@ -175,7 +175,25 @@ Fill in what happened, add a `must_allow` fixture, then change the rule. The rec
 see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Every deny and ask is also appended to `.harness/metrics.jsonl` (if `.harness/` exists), one JSON
-line each, so you can see what fires in a real project before touching a rule.
+line each, so you can see what fires in a real project before touching a rule: `ah stats` counts
+them per rule (`--days 7` for the last week). The log holds this machine's commands and paths, so
+`ah init` adds it to `.git/info/exclude`.
+
+## Overriding a rule
+
+When a rule is wrong for your project, set it in `.harness/policy.json` and commit the file:
+
+```json
+{"rules": {"edit.lint-config": "ask", "shell.git-discard-changes": "off"}}
+```
+
+`ask` puts the rule's denies to you instead (on Codex, which cannot ask, they stay denied unless
+`--ask-fallback warn`), `off` lets its calls through, `deny` hardens an ask. Each override applies
+where its rule fires, so turning one rule off never hides another in the same command, and a call
+it lets through is still logged (as `off`). No agent tool may write under `.harness/`, so the agent
+cannot loosen its own policy. A file that is not valid is ignored as a whole, never read as "off";
+`ah doctor` reports it and any rule id it does not know. The guard's own limits (`guard.*`,
+`shell.nesting-limit`, `shell.brace-expansion-limit`) cannot be overridden.
 
 ## Commands
 
@@ -186,6 +204,7 @@ line each, so you can see what fires in a real project before touching a rule.
 | `ah guard --agent claude\|codex [--root DIR] [--home DIR] [--platform posix\|windows] [--ask-fallback deny\|warn] [--no-log]` | the hook. Reads a PreToolUse payload on stdin. `--no-log` skips the `.harness/metrics.jsonl` line. Env overrides: `AH_PROJECT_ROOT`, `AH_HOME`, `AH_PLATFORM`; `CLAUDE_PROJECT_DIR` is honoured as the root. |
 | `ah test-hooks [--budget-ms N] [--json]` | runs the fixture corpus in-process and through `dist/guard.mjs`, reports p50/p95 latency. Also picks up `.harness/hook_tests/` in the current project. |
 | `ah bug add\|list` | incident records. |
+| `ah stats [--days N] [--json]` | denies, asks and overridden calls per rule, from `.harness/metrics.jsonl`. |
 | `ah rules` | every rule, its verdict and provenance. |
 
 ## Development

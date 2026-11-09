@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- `.harness/policy.json` overrides a rule for one project: `ask`, `off` or `deny`. An override applies
+  where its rule fires, so turning one rule off never hides another; the guard's own limits cannot be
+  overridden, and a file that is not valid is ignored as a whole. `ah doctor` reports problems in it
+  (BUG-2026-022).
+- `ah stats` counts denies, asks and overridden calls per rule from `.harness/metrics.jsonl`.
+- `ah init` keeps `.harness/metrics.jsonl` out of git through `.git/info/exclude`.
+- A deny now tells the agent that the user can set the rule to `ask` in `.harness/policy.json`.
+- CI also runs on Node 24.
+
 ## 0.1.0
 
 The first npm release.

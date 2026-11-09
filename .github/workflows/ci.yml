@@ -55,6 +55,23 @@ jobs:
           test "$(cat AGENTS.md)" = "# Scratch"
           test ! -e .claude/settings.local.json && test ! -e .codex/hooks.json
 
+  linux-node24:
+    # engines allows any Node from 22.18; the current LTS line must pass too.
+    name: Linux, Node 24
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm run test:ci
+      - run: npm run test:hooks
+
   windows:
     # Devil develops on Windows 11 (WSL2 is fine for v0). The guard must still
     # parse PowerShell and cmd commands and start fast on a Windows runner.

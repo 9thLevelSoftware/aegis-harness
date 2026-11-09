@@ -1,0 +1,39 @@
+incident_id: BUG-2026-022
+date_recorded: 2026-11-09
+status: mitigated
+title: A wrong deny had no way through but unwiring the hook, and the decision log had no reader and went into commits
+observed_on: process (aegis-harness, the production-readiness audit of 0.1.0)
+source:
+  - kind: session
+    date: 2026-11-09
+    note: >-
+      The audit found every verdict fixed in DEFAULT_POLICY: a project in the middle of an ESLint
+      migration, or a user who wants `git reset --hard` on a scratch branch, could only do the step
+      by hand or remove the hook. `ah init` created .harness/ but left .harness/metrics.jsonl
+      untracked and unignored in a user's project, so `git add -A` committed the log (checked in
+      a scratch repository), and no command read the log that BUG-2026-009 and CONTRIBUTING.md
+      name as the input to every rule change.
+root_cause: >-
+  The guard was built with no user-side policy, on the view that rules change only in reviewed
+  commits to ah. That holds for the defaults, but a project's own exceptions were never
+  provided for. The metrics log was written but never read, and nothing kept it out of git.
+impact: >-
+  This is the friction BUG-2026-015 records: one wrong deny with no escape is how an earlier
+  harness ended up bypassed or uninstalled. The log would leak the machine's commands and paths
+  into a project's history, and the quarterly "a rule nobody has seen fire" review had no tool.
+countermeasure:
+  kind: test
+  ref: tests/policy-overrides.test.ts
+  change: >-
+    `.harness/policy.json` sets a rule to "ask", "off" or "deny". The guard applies each override
+    where its rule fires, in deny() and ask(), so an "off" never hides a different rule's deny in
+    the same command. A call an "off" lets through is logged with verdict "off". The guard's own
+    limits (guard.*, shell.nesting-limit, shell.brace-expansion-limit) cannot be overridden. A
+    file that is not valid is ignored as a whole, and `ah doctor` reports it and unknown rule ids.
+    .harness/ is already closed to every agent tool, so the agent cannot write its own policy.
+    `ah stats` tallies the log per rule and verdict, with --days and --json. `ah init` adds
+    .harness/metrics.jsonl to .git/info/exclude, and `--remove` for both agents takes the line
+    out again once the log is gone.
+must_block_fixture: fixtures/must_block/write-of-harness-policy-json-turning-a-rule-off-is-denied.json
+must_allow_fixture: fixtures/must_allow/cat-harness-policy-json-is-allowed.json
+expiry_policy: "revisit after four weeks of dogfood metrics"
