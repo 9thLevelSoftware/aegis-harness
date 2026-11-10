@@ -9,6 +9,7 @@
  * `.ruff.toml` must be refused, `ls` must pass. Exits 1 when anything would
  * leave a call unguarded. Reads only; the canaries write nothing (AH_NO_LOG).
  */
+import { readPolicyFile } from "../guard/policy-file.ts";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
@@ -656,6 +657,10 @@ export function doctor(o: DoctorOptions, env: NodeJS.ProcessEnv = process.env, d
     checks.push(...doctorCodex(m, p, p.found ? deps.featuresList(m.root) : null, p.found ? (deps.codexListing?.(m.root) ?? null) : null));
   }
   if (!existsSync(join(m.root, ".harness"))) checks.push({ agent: "project", level: "info", title: "no .harness/ directory, so denies and asks are not logged to .harness/metrics.jsonl", fix: "`ah init` creates it" });
+  const policy = readPolicyFile(m.root);
+  for (const p of policy.problems) checks.push({ agent: "project", level: "warn", title: p, fix: "fix .harness/policy.json; `ah rules` lists the rule ids" });
+  const set = Object.entries(policy.overrides);
+  if (set.length > 0) checks.push({ agent: "project", level: "info", title: `.harness/policy.json overrides ${set.length} rule${set.length === 1 ? "" : "s"}: ${set.map(([id, v]) => `${id} ${v}`).join(", ")}` });
   const links = rootTextLinks(m.root);
   /** What a stale stand-in does now, and where ah's block goes once it is removed. */
   const hidden = (p: string): string => {

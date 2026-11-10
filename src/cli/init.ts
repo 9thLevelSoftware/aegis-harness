@@ -278,11 +278,14 @@ export function init(o: InitOptions, env: NodeJS.ProcessEnv = process.env): Init
     }
     // The exclude lines go once the file they cover is gone; a file that keeps your own settings stays excluded.
     // Instruction stand-ins count too, also when you deleted one yourself before --remove.
+    const keepWired = o.remove ? (["claude", "codex"] as AgentName[]).filter((a) => !o.agents.includes(a) && wired(m, a)) : [];
     const local = !o.remove
       ? []
       : [
           ...(o.agents.includes("claude") ? [claudeFileFor(m, "local"), join(root, "CLAUDE.local.md")] : []),
           ...(o.agents.includes("codex") ? [codexHooksFile(m, "local"), join(root, "AGENTS.override.md")] : []),
+          // Only once no agent is left wired; a log that is still there keeps its line.
+          ...(keepWired.length === 0 ? [join(root, ".harness", "metrics.jsonl")] : []),
         ];
     for (const f of new Set([...local, ...unexcluded])) {
       const gone = writes.some((w) => w.path === f && w.text === null) || (!existsSync(f) && !writes.some((w) => w.path === f));
@@ -292,7 +295,15 @@ export function init(o: InitOptions, env: NodeJS.ProcessEnv = process.env): Init
     }
     if (o.remove) {
       if (!o.dryRun) removeEmptyDirs([...writes.filter((w) => w.text === null).map((w) => dirname(w.path)), join(root, ".harness")]);
-    } else if (!o.dryRun) mkdirSync(join(root, ".harness"), { recursive: true });
+    } else {
+      if (!o.dryRun) mkdirSync(join(root, ".harness"), { recursive: true });
+      // The decision log holds this machine's commands and paths; it is for `ah stats` here, not for commits (BUG-2026-022).
+      // Only in local scope: --scope project and user leave git alone.
+      const log = join(root, ".harness", "metrics.jsonl");
+      const r = o.scope === "local" ? excludeLocally(log, o.dryRun) : "none";
+      if (r === "excluded") changes.push({ agent: "git", file: log, action: "excluded", detail: "added to .git/info/exclude: the guard's decision log holds this machine's commands and paths" });
+      if (r === "tracked") changes.push({ agent: "git", file: log, action: "skipped", detail: "tracked by git, so every deny and ask the guard logs goes into commits; untrack it (`git rm --cached`)" });
+    }
   } catch (err) {
     const left = undo(done);
     const what = done.length === 0 ? "nothing was written" : left.length === 0 ? "the files already written were put back as they were" : `could not put back ${left.join(", ")}`;

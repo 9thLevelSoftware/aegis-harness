@@ -11,6 +11,7 @@ import { decideAll } from "./decide.ts";
 import type { Context, Decision, Platform } from "./model.ts";
 import { normalizeHookPayload, type Agent, type HookEvent } from "./normalize.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
+import { readPolicyFile } from "./policy-file.ts";
 import { render, type AskFallback } from "./respond.ts";
 import { driveForm, isAbsolute, relativeTo, toPosix } from "./paths.ts";
 import { mainCheckoutOf } from "./worktree.ts";
@@ -62,6 +63,9 @@ export function buildContext(event: HookEvent, o: GuardOptions, env: NodeJS.Proc
   // A root spelled for another platform (a fixture replayed on this machine) is not on this disk.
   const mainCheckout = platform === HOST_PLATFORM ? mainCheckoutOf(projectRoot) : undefined;
   if (mainCheckout !== undefined) ctx.mainCheckout = mainCheckout;
+  // The user's per-rule overrides (BUG-2026-022). A file that is not valid gives none.
+  const policyFile = platform === HOST_PLATFORM ? readPolicyFile(projectRoot) : undefined;
+  if (policyFile !== undefined && Object.keys(policyFile.overrides).length > 0) ctx.overrides = policyFile.overrides;
   return ctx;
 }
 
@@ -83,21 +87,19 @@ function readStdin(): string {
 }
 
 function logDecision(ctx: Context, event: HookEvent, decision: Decision): void {
-  if (decision.verdict === "allow") return;
+  const off = decision.suppressed ?? [];
+  if (decision.verdict === "allow" && off.length === 0) return;
   try {
     const dir = join(ctx.projectRoot, ".harness");
     if (!existsSync(dir)) return;
-    const line = JSON.stringify({
-      ts: new Date().toISOString(),
-      event: "ah.guard.decision",
-      agent: event.agent,
-      tool: event.toolName,
-      verdict: decision.verdict,
-      rule: decision.rule,
-      reason: decision.reason,
-      session: event.sessionId,
-    });
-    appendFileSync(join(dir, "metrics.jsonl"), `${line}\n`);
+    const ts = new Date().toISOString();
+    const entry = (verdict: string, rule: string | undefined, reason: string | undefined) =>
+      JSON.stringify({ ts, event: "ah.guard.decision", agent: event.agent, tool: event.toolName, verdict, rule, reason, session: event.sessionId });
+    const lines: string[] = [];
+    if (decision.verdict !== "allow") lines.push(entry(decision.verdict, decision.rule, decision.reason));
+    // A rule set `off` in .harness/policy.json still counts as firing, so `ah stats` shows what the override lets through.
+    for (const rule of off) lines.push(entry("off", rule, "set off in .harness/policy.json"));
+    appendFileSync(join(dir, "metrics.jsonl"), `${lines.join("\n")}\n`);
   } catch {
     // Logging is best-effort; a logging failure never changes a decision.
   }

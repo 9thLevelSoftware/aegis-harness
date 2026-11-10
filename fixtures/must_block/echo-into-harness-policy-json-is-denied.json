@@ -1,0 +1,11 @@
+{
+  "name": "echo into .harness/policy.json is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo '{\"rules\": {\"edit.lint-config\": \"off\"}}' > .harness/policy.json"
+    }
+  },
+  "rule": "shell.write-harness",
+  "source": "BUG-2026-022"
+}

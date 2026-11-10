@@ -1,0 +1,11 @@
+{
+  "name": "an MCP create_directory of .claude is allowed",
+  "payload": {
+    "tool_name": "mcp__desktop-commander__create_directory",
+    "tool_input": {
+      "path": "/home/dev/project/.claude"
+    }
+  },
+  "near": "edit.hook-config",
+  "source": "BUG-2026-023"
+}

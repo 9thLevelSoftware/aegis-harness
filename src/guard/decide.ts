@@ -1,4 +1,4 @@
-import { ask, strictest, TimeLimit, TIME_LIMIT_MS, type Context, type Decision, type ToolCall } from "./model.ts";
+import { ask, strictest, TimeLimit, TIME_LIMIT_MS, withOverrides, type Context, type Decision, type ToolCall } from "./model.ts";
 import { editRules } from "./rules/edit.ts";
 import { otherRules } from "./rules/other.ts";
 import { shellRules } from "./rules/shell.ts";
@@ -23,6 +23,11 @@ export function decide(call: ToolCall, ctx: Context): Decision {
  */
 export function decideAll(calls: readonly ToolCall[], ctx: Context): Decision {
   const timed = ctx.deadline === undefined ? { ...ctx, deadline: performance.now() + TIME_LIMIT_MS } : ctx;
+  const { result, suppressed } = withOverrides(ctx.overrides, () => decideEach(calls, timed));
+  return suppressed.length === 0 ? result : { ...result, suppressed };
+}
+
+function decideEach(calls: readonly ToolCall[], timed: Context): Decision {
   return strictest(calls.map((c) => {
     try {
       return decide(c, timed);

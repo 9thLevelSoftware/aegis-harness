@@ -1,0 +1,12 @@
+{
+  "name": "an MCP interact_with_process sending Python to a REPL is allowed",
+  "payload": {
+    "tool_name": "mcp__desktop-commander__interact_with_process",
+    "tool_input": {
+      "pid": 12,
+      "input": "print(1 + 1)"
+    }
+  },
+  "near": "shell.git-discard-changes",
+  "source": "BUG-2026-023"
+}

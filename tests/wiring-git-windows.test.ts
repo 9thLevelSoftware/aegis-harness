@@ -175,7 +175,7 @@ test("ah init keeps the instruction files it makes for a text link out of git, -
     const r = init(o, env);
     assert.ok(r.ok, r.error);
     const git_ = r.changes.filter((ch) => ch.agent === "git");
-    assert.deepEqual(git_.map((ch) => [relative(c.root, ch.file), ch.action]), [[join(".claude", "settings.local.json"), "excluded"], [join(".codex", "hooks.json"), "excluded"], ["AGENTS.override.md", "excluded"]]);
+    assert.deepEqual(git_.map((ch) => [relative(c.root, ch.file), ch.action]), [[join(".claude", "settings.local.json"), "excluded"], [join(".codex", "hooks.json"), "excluded"], ["AGENTS.override.md", "excluded"], [join(".harness", "metrics.jsonl"), "excluded"]]);
     assert.match(git_[2].detail, /stands in for a symlink this checkout has as plain text/);
     assert.ok(readFileSync(exclude, "utf8").split("\n").includes("/AGENTS.override.md"));
     assert.equal(git(c.root, "status", "--porcelain", "--", "AGENTS.override.md"), "", "git does not offer the override for a commit");

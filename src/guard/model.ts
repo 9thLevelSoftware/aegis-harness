@@ -99,6 +99,8 @@ export interface Context {
    * timeout lets the call through. decideAll sets it, TIME_LIMIT_MS ahead; without it there is no limit.
    */
   deadline?: number;
+  /** Per-rule overrides from `.harness/policy.json`, read by buildContext. Absent means the defaults. */
+  overrides?: Readonly<Record<string, RuleOverride>>;
 }
 
 /** How long checking one hook event may take before the guard asks instead, well inside the hook's timeout. */
@@ -124,16 +126,67 @@ export interface Decision {
   reason?: string;
   /** What to do instead. Reaches the agent in the deny reason, and on ask (Claude Code) through `additionalContext`. */
   remediation?: string;
+  /** Rules that fired but were set `off` in `.harness/policy.json`; logged, never shown to the agent. */
+  suppressed?: string[];
 }
 
 export const ALLOW: Decision = Object.freeze({ verdict: "allow" });
 
+/**
+ * What the user set a rule to in `.harness/policy.json`: `ask` puts a deny to a human, `off` lets
+ * the call through, `deny` hardens an ask. BUG-2026-022.
+ */
+export type RuleOverride = "deny" | "ask" | "off";
+
+/** The file overrides are read from, relative to the project root. */
+export const POLICY_FILE = ".harness/policy.json";
+
+// The overrides of the decideAll call in progress. decideAll is synchronous and sets them from its
+// Context, so a decision stays a function of (call, context); deny() and ask() apply them where
+// each rule fires, before decisions are combined, so turning one rule off never hides another.
+let activeOverrides: Readonly<Record<string, RuleOverride>> | undefined;
+let suppressedRules: string[] = [];
+
+/** Run `fn` with `overrides` applied by deny() and ask(); also returns the rules an `off` silenced. */
+export function withOverrides<T>(overrides: Readonly<Record<string, RuleOverride>> | undefined, fn: () => T): { result: T; suppressed: string[] } {
+  const before = activeOverrides;
+  const beforeSuppressed = suppressedRules;
+  activeOverrides = overrides;
+  suppressedRules = [];
+  try {
+    const result = fn();
+    return { result, suppressed: [...new Set(suppressedRules)] };
+  } finally {
+    activeOverrides = before;
+    suppressedRules = beforeSuppressed;
+  }
+}
+
+/**
+ * The guard's own limits (guard.time-limit, guard.internal-error, shell.nesting-limit,
+ * shell.brace-expansion-limit) cannot be overridden: they ask when a call could not be checked,
+ * and switching one off would let through exactly the calls no rule has read.
+ */
+export function isLimitRule(rule: string): boolean {
+  return rule.startsWith("guard.") || rule.endsWith("-limit");
+}
+
+function decided(verdict: "deny" | "ask", rule: string, reason: string, remediation: string): Decision {
+  const o = isLimitRule(rule) ? undefined : activeOverrides?.[rule];
+  if (o === undefined || o === verdict) return { verdict, rule, reason, remediation };
+  if (o === "off") {
+    suppressedRules.push(rule);
+    return ALLOW;
+  }
+  return { verdict: o, rule, reason: `${reason} (${verdict} by default; ${o} by ${POLICY_FILE})`, remediation };
+}
+
 export function deny(rule: string, reason: string, remediation: string): Decision {
-  return { verdict: "deny", rule, reason, remediation };
+  return decided("deny", rule, reason, remediation);
 }
 
 export function ask(rule: string, reason: string, remediation: string): Decision {
-  return { verdict: "ask", rule, reason, remediation };
+  return decided("ask", rule, reason, remediation);
 }
 
 const RANK: Record<Verdict, number> = { allow: 0, ask: 1, deny: 2 };

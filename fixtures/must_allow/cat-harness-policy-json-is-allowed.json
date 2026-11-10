@@ -1,0 +1,11 @@
+{
+  "name": "cat .harness/policy.json is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat .harness/policy.json"
+    }
+  },
+  "near": "shell.write-harness",
+  "source": "BUG-2026-022"
+}

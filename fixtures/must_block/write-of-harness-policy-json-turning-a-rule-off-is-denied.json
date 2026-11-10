@@ -1,0 +1,12 @@
+{
+  "name": "Write of .harness/policy.json turning a rule off is denied",
+  "payload": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/home/dev/project/.harness/policy.json",
+      "content": "{\"rules\": {\"shell.git-discard-changes\": \"off\"}}"
+    }
+  },
+  "rule": "edit.harness-dir",
+  "source": "BUG-2026-022"
+}

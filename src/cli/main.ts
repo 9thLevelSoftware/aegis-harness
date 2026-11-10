@@ -4,6 +4,7 @@ import { runBug } from "./bug.ts";
 import { runDoctor, DOCTOR_HELP } from "./doctor.ts";
 import { INIT_HELP, runInit } from "./init.ts";
 import { runTestHooks } from "./test-hooks.ts";
+import { runStats, STATS_HELP } from "./stats.ts";
 
 const HELP = `ah ${VERSION}: a PreToolUse guard for Codex and Claude Code.
 
@@ -20,8 +21,10 @@ ${DOCTOR_HELP.replace(/^/gm, "  ").trimEnd()}
   ah bug add --rule RULE --title TEXT [--command TEXT] [--agent NAME] [--observed-on TEXT]
       Record an incident or false positive under .harness/memory/bugs/.
   ah bug list
+${STATS_HELP.replace(/^/gm, "  ").trimEnd()}
   ah rules
-      List every rule with its default verdict and provenance.
+      List every rule with its default verdict and provenance. Override one in .harness/policy.json:
+      {"rules": {"edit.lint-config": "ask"}} ("deny", "ask" or "off").
   ah version | ah help
 `;
 
@@ -38,6 +41,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       return runDoctor(rest);
     case "bug":
       return runBug(rest);
+    case "stats":
+      return runStats(rest);
     case "rules": {
       const { RULES } = await import("../guard/rules/registry.ts");
       for (const r of RULES) process.stdout.write(`${r.verdict.padEnd(5)} ${r.id.padEnd(36)} ${r.title}  [${r.provenance}]\n`);
