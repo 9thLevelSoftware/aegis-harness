@@ -1,0 +1,11 @@
+{
+  "name": "git switch --force-create=release/1.0 HEAD asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git switch --force-create=release/1.0 HEAD"
+    }
+  },
+  "rule": "shell.git-branch-reset",
+  "source": "BUG-2026-024"
+}

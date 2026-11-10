@@ -1,0 +1,11 @@
+{
+  "name": "git update-index --assume-unchanged of a local config is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git update-index --assume-unchanged config/local.json"
+    }
+  },
+  "near": "shell.write-lint-config",
+  "source": "BUG-2026-024"
+}

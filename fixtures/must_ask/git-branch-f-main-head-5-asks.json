@@ -1,0 +1,11 @@
+{
+  "name": "git branch -f main HEAD~5 asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git branch -f main HEAD~5"
+    }
+  },
+  "rule": "shell.git-branch-reset",
+  "source": "BUG-2026-024"
+}

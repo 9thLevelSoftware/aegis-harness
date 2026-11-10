@@ -1,0 +1,34 @@
+incident_id: BUG-2026-024
+date_recorded: 2026-11-10
+status: mitigated
+title: A protected branch could be moved, and a lint or hook config hidden from git, without a word from the guard
+observed_on: process (aegis-harness, the production-readiness audit of 0.1.0; left open in BUG-2026-021)
+source:
+  - kind: session
+    date: 2026-11-09
+    note: >-
+      The audit's probe found `git branch -f main HEAD~5` and `git update-index --assume-unchanged
+      .eslintrc.json` allowed by dist/guard.mjs, while `git update-ref -d refs/heads/main` and any
+      write to .eslintrc.json were refused. `git checkout -B main <rev>` and `git switch -C main`
+      reset main the same way.
+root_cause: >-
+  The git rules covered deleting a protected branch and force-pushing to one, but not moving one
+  locally. They covered writing a protected config, but not telling git to stop reporting
+  changes to it.
+impact: >-
+  An agent could move main to another commit, so the next ordinary push or merge carried the
+  wrong history. It could also edit a lint or hook config through a route the guard does not
+  see, then hide that edit from `git status` and `git diff`, so it never reached review.
+countermeasure:
+  kind: rule
+  ref: shell.git-branch-reset
+  change: >-
+    `git branch -f|--force <protected>`, `git branch -M|-C <x> <protected>` (and -m/-c with
+    --force), `git checkout -B <protected>` and `git switch -C|--force-create <protected>` ask
+    under the new rule shell.git-branch-reset. They ask rather than deny: the old commits stay in
+    the reflog, and `git checkout -B main origin/main` is a common way to resync. Force-pushing
+    the result is still denied. `git update-index --assume-unchanged` or `--skip-worktree` on a
+    lint, test or hook config is denied under that path's write rule. Ten fixtures.
+must_block_fixture: fixtures/must_block/git-update-index-assume-unchanged-eslintrc-json-is-denied.json
+must_allow_fixture: fixtures/must_allow/git-checkout-b-of-a-feature-branch-is-allowed.json
+expiry_policy: "permanent"

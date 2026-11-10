@@ -50,6 +50,7 @@ export const RULES: readonly RuleInfo[] = [
   { id: "shell.git-clean", title: "git clean removing untracked files", verdict: "deny", provenance: "blueprint §3.2 (ECC destructive-command guard)" },
   { id: "shell.git-stash-drop", title: "Dropping stashes", verdict: "deny", provenance: "blueprint §3.2 (ECC destructive-command guard)" },
   { id: "shell.git-branch-force-delete", title: "Force-deleting a local branch", verdict: "ask", provenance: "blueprint §3.2 (ECC destructive-command guard)" },
+  { id: "shell.git-branch-reset", title: "Moving a protected branch to another commit", verdict: "ask", provenance: "BUG-2026-024" },
   { id: "shell.git-rewrite-history", title: "History rewrite or reflog destruction", verdict: "deny", provenance: "blueprint §3.2 (ECC destructive-command guard)" },
   { id: "shell.git-global-config", title: "Changing the user's global git configuration", verdict: "ask", provenance: "blueprint §3.2 (ECC destructive-command guard)" },
 
