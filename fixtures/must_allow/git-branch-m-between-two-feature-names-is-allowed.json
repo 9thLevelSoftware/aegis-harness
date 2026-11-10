@@ -1,0 +1,11 @@
+{
+  "name": "git branch -M between two feature names is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git branch -M old-name new-name"
+    }
+  },
+  "near": "shell.git-branch-reset",
+  "source": "BUG-2026-024"
+}

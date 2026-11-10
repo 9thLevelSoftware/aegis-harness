@@ -1,0 +1,11 @@
+{
+  "name": "git update-index --assume-unchanged .eslintrc.json is denied",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git update-index --assume-unchanged .eslintrc.json"
+    }
+  },
+  "rule": "shell.write-lint-config",
+  "source": "BUG-2026-024"
+}

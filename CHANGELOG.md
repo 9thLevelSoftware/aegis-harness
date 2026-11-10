@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.1.0
+
+The first npm release.
+
+Since the release candidate:
 
 - `.harness/policy.json` overrides a rule for one project: `ask`, `off` or `deny`. An override applies
   where its rule fires, so turning one rule off never hides another; the guard's own limits cannot be
@@ -13,12 +17,13 @@
   filesystem server and the like) meet the shell and edit rules, not only the secret checks
   (BUG-2026-023).
 - CI also runs on Node 24.
+- Moving a protected branch (`git branch -f main`, `git checkout -B main`, `git switch -C main`)
+  asks, and `git update-index --assume-unchanged` or `--skip-worktree` on a lint, test or hook
+  config is denied (BUG-2026-024).
 
-## 0.1.0
+The candidate:
 
-The first npm release.
-
-- `ah guard`: the PreToolUse hook for Claude Code and Codex. 74 rules (46 deny, 28 ask) check
+- `ah guard`: the PreToolUse hook for Claude Code and Codex. 75 rules (46 deny, 29 ask) check
   shell commands (bash, PowerShell and cmd), file edits, reads, searches and MCP calls; anything
   else passes silently. Relative paths are read from the directory a command runs in, `cd` within
   the command included. Each rule traces to a blueprint section or an incident record under
@@ -30,8 +35,8 @@ The first npm release.
 - `ah doctor`: reads every settings file each agent loads, reports switches that turn hooks off,
   stale paths, duplicates and Codex hook trust, then runs each hook the way its agent would with
   three canaries.
-- `ah test-hooks`, `ah bug add|list`, `ah rules`, `ah version`.
-- A fixture corpus of 437 `must_block`, 72 `must_ask` and 338 `must_allow` calls, replayed in CI
+- `ah stats`, `ah test-hooks`, `ah bug add|list`, `ah rules`, `ah version`.
+- A fixture corpus of 449 `must_block`, 76 `must_ask` and 350 `must_allow` calls, replayed in CI
   on Linux and Windows within a p95 budget of 150 ms (400 ms on Windows). A probe pass before the
   release added 146 of them (BUG-2026-020), and an audit of the candidate 18 more
   (BUG-2026-021).

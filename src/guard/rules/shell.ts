@@ -1155,9 +1155,11 @@ function gitRules(s: Stage, ctx: Context): Decision[] {
       break;
     }
     case "checkout":
+      append(out, resetBranchRules(rest, ["-B"], ctx));
       append(out, checkoutRules(rest));
       break;
     case "switch":
+      append(out, resetBranchRules(rest, ["-C", "--force-create"], ctx));
       append(out, switchRules(rest));
       break;
     case "restore":
@@ -1173,6 +1175,25 @@ function gitRules(s: Stage, ctx: Context): Decision[] {
       const forceDelete = f.short.has("D") || ((f.short.has("d") || f.long.has("delete")) && (f.short.has("f") || f.long.has("force")));
       if (forceDelete) {
         out.push(ask("shell.git-branch-force-delete", `git branch -D ${f.positionals.join(" ")} deletes unmerged work`, "Confirm with the user that the branch is no longer needed, or use `git branch -d`, which refuses unmerged branches."));
+      }
+      // `git branch -f main HEAD~5` moves a protected branch; `-M x main` and `-C x main` overwrite it. It asks: the commits stay in the reflog, and a force-push is what loses them (BUG-2026-024).
+      const force = f.short.has("f") || f.long.has("force");
+      const overwrite = f.short.has("M") || f.short.has("C") || ((f.short.has("m") || f.long.has("move") || f.short.has("c") || f.long.has("copy")) && force);
+      const moved = overwrite ? f.positionals[f.positionals.length - 1] : force && !forceDelete ? f.positionals[0] : undefined;
+      if (moved !== undefined && branchProtected(moved, ctx)) {
+        out.push(ask("shell.git-branch-reset", `git branch ${rest.join(" ")} moves protected branch ${moved}; commits only it held are left to the reflog`, "Protected branches move by a reviewed merge. Work on a feature branch, or confirm with the user that the branch should move."));
+      }
+      break;
+    }
+    case "update-index": {
+      // `--assume-unchanged` and `--skip-worktree` make git stop reporting edits to a file, so a
+      // changed lint, test or hook config no longer shows in `git status` or `git diff` (BUG-2026-024).
+      if (!rest.some((a) => a === "--assume-unchanged" || a === "--skip-worktree")) break;
+      for (const a of rest) {
+        if (a.startsWith("-")) continue;
+        const info = classifyPath(a, ctx);
+        const rule = info.category === "lint-config" ? "shell.write-lint-config" : info.category === "test-config" ? "shell.write-test-config" : info.category === "hook-config" ? "shell.hook-tamper" : undefined;
+        if (rule !== undefined) out.push(deny(rule, `git update-index ${rest[0]} ${a} hides changes to ${info.category.replace("-", " ")} from git`, "Leave the file tracked as it is. If the change is right, it goes in a reviewed commit where it can be seen."));
       }
       break;
     }
@@ -1302,6 +1323,20 @@ function pushRules(rest: string[], ctx: Context): Decision[] {
 
 const WIPE_PATHSPEC = /^(\.|\.\/|\*|\*\*|:\/|:\/\.|\.\/\*|\.\*)$/;
 const FORCE_SWITCH_REMEDIATION = "Commit or `git stash push -u` the local changes first and switch without --force, or confirm with the user that the uncommitted work can go.";
+
+/** `git checkout -B main <rev>` and `git switch -C main <rev>` reset a branch that already exists to another commit (BUG-2026-024). */
+function resetBranchRules(rest: string[], flags: readonly string[], ctx: Context): Decision[] {
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    // `-B main`, `-Bmain`, `--force-create main`, `--force-create=main`.
+    const prefix = flags.map((f) => (f.startsWith("--") ? `${f}=` : f)).find((f) => a.startsWith(f) && a.length > f.length);
+    const name = flags.includes(a) ? rest[i + 1] : prefix !== undefined ? a.slice(prefix.length) : undefined;
+    if (name !== undefined && branchProtected(name, ctx)) {
+      return [ask("shell.git-branch-reset", `git ${rest.join(" ")} resets protected branch ${name}; commits only it held are left to the reflog`, "`git switch main` checks it out without moving it. Confirm with the user that the branch should be reset.")];
+    }
+  }
+  return [];
+}
 
 function checkoutRules(rest: string[]): Decision[] {
   const f = flagsOf(rest, 0, ["-b", "-B", "--orphan", "-t", "--track", "--conflict", "--pathspec-from-file", "--recurse-submodules"]);

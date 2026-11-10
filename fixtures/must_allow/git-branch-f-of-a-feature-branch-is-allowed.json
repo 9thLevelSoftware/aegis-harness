@@ -1,0 +1,11 @@
+{
+  "name": "git branch -f of a feature branch is allowed",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git branch -f feature HEAD~1"
+    }
+  },
+  "near": "shell.git-branch-reset",
+  "source": "BUG-2026-024"
+}

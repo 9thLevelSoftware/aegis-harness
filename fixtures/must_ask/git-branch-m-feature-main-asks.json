@@ -1,0 +1,11 @@
+{
+  "name": "git branch -M feature main asks",
+  "payload": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git branch -M feature main"
+    }
+  },
+  "rule": "shell.git-branch-reset",
+  "source": "BUG-2026-024"
+}
